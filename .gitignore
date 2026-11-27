@@ -23,17 +23,17 @@ HerraduraCli/herradura_cli
 HerraduraCli/herradura_cli_go
 HerraduraCli/codec_selftest_c
 
-# build_arm.sh — ARM Thumb-2 binaries (run under qemu-arm)
-/Herradura cryptographic suite_arm
+# build_arm.sh — ARM Thumb-2 binaries (run under qemu-arm); one per demo (TODO #425)
+/demos/arm/*_arm
 CryptosuiteTests/Herradura_tests_arm
 
-# build_asm_i386.sh — NASM i386 binaries
-/Herradura cryptographic suite_i386
+# build_asm_i386.sh — NASM i386 binaries; one per demo (TODO #425)
+/demos/i386/*_i386
 CryptosuiteTests/Herradura_tests_i386
 
 # build_arduino.sh — ATmega2560 firmware (run under simavr).  Missed by TODO
 # #229 because the AVR target was not being rebuilt at the time; same rule.
-/Herradura cryptographic suite_avr.elf
+/demos/arduino/*/*_avr.elf
 CryptosuiteTests/Herradura_tests_avr.elf
 
 # build_c_sanitize.sh (TODO #188) — ASan+UBSan build artifacts, not tracked

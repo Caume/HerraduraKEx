@@ -687,47 +687,47 @@ public final class SelfTest {
             }
         }
 
-        // HPKS-Stern-Ring (78.I): OR-composed Stern ring signature -- any one
-        // of a 4-member ring signs, verify succeeds without revealing which
-        // member, a tampered message is rejected, and a signature "signed" with
-        // a secret matching no ring member's syndrome is rejected too.
+        // [26] HPKS-Ring (TODO #415): one Stern proof over the ring's
+        // block-diagonal statement, k=4.  The accept-control is the honest
+        // verify; the ring is also verified reversed (the signature binds the
+        // canonical ring, not the order given).  Refused: the signature on
+        // another message, with one byte flipped, and a sign attempt with
+        // another member's secret.  The C/Go/Python harnesses run the same
+        // cells as their test [20].
         {
-            int k = 4;
-            // 8 rounds gives only (2/3)^8 ~= 3.9% soundness error -- enough
-            // to make rejects_forgery flake in CI (TODO #260 caught this
-            // the same way CLAUDE.md's Testing section describes for [45]:
-            // a probabilistic property was asserted as if deterministic).
-            // 32 rounds matches this suite's other Stern-F self-test round
-            // counts.  THAT ARITHMETIC WAS RIGHT IN v5.3.x AND IS NOT NOW,
-            // which TODO #321 measured: at the time, only the b = 2 branch
-            // read the syndrome, so a badE forgery survived a challenge
-            // string with no b = 2 round.  TODO #298 then gave the b = 0
-            // branch wt(respA ^ respB) == SDFT, and a uniform badE has
-            // weight ~128 against t = 16 -- so TWO of the three branches
-            // catch it, only b = 1 misses, and the error is (1/3)^rounds =
-            // 5.2e-16 here rather than (2/3)^32 = 2.4e-6.  The fix made the
-            // test 4.6 million times safer and moved no INPUT to the rate,
-            // which is why nothing in spec/ could see it: see
-            // check_language_parity.py's _RATE_MECHANISMS['ring-forgery'].
-            int demoRounds = 32;
+            int k = 4, rounds = 16;
             java.util.List<Stern.SternKeypair> keys = new java.util.ArrayList<>();
             java.util.List<SternRing.RingKey> ringPub = new java.util.ArrayList<>();
             for (int i = 0; i < k; i++) {
                 Stern.SternKeypair kp = Stern.sternFKeygen(rng);
                 keys.add(kp);
-                ringPub.add(new SternRing.RingKey(kp.seed, kp.syndrome));
+                ringPub.add(new SternRing.RingKey(kp.seed, kp.syndrome, Herradura.N));
             }
+            java.util.List<SternRing.RingKey> reversed = new java.util.ArrayList<>(ringPub);
+            java.util.Collections.reverse(reversed);
             int j = 2;
-            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            SternRing.RingSignature sig = SternRing.sign(msg, keys.get(j).e, j, ringPub, demoRounds, rng);
-            boolean ok = SternRing.verify(msg, sig, ringPub);
-            boolean rejectsTamper = !SternRing.verify(msg.xor(BigInteger.ONE), sig, ringPub);
-            BigInteger badE = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            SternRing.RingSignature forged = SternRing.sign(msg, badE, 0, ringPub, demoRounds, rng);
-            boolean rejectsForgery = !SternRing.verify(msg, forged, ringPub);
-            if (!ok || !rejectsTamper || !rejectsForgery) {
+            byte[] msg = new byte[32];
+            rng.nextBytes(msg);
+            byte[] sig = SternRing.sign(msg, keys.get(j).e, j, ringPub, Herradura.N, rounds, rng);
+            boolean ok = SternRing.verify(msg, sig, ringPub, Herradura.N, rounds);
+            boolean orderFree = SternRing.verify(msg, sig, reversed, Herradura.N, rounds);
+            byte[] other = msg.clone();
+            other[0] ^= 1;
+            boolean rejectsOther = !SternRing.verify(other, sig, ringPub, Herradura.N, rounds);
+            byte[] tampered = sig.clone();
+            tampered[tampered.length / 2] ^= 1;
+            boolean rejectsTamper = !SternRing.verify(msg, tampered, ringPub, Herradura.N, rounds);
+            boolean rejectsWrong;
+            try {
+                SternRing.sign(msg, keys.get((j + 1) % k).e, j, ringPub, Herradura.N, rounds, rng);
+                rejectsWrong = false;
+            } catch (IllegalArgumentException ex) {
+                rejectsWrong = true;
+            }
+            if (!ok || !orderFree || !rejectsOther || !rejectsTamper || !rejectsWrong) {
                 System.out.println("FAIL [26] hpks_stern_ring round-trip (verify=" + ok
-                    + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery + ")");
+                    + " order_free=" + orderFree + " rejects_other=" + rejectsOther
+                    + " rejects_tamper=" + rejectsTamper + " rejects_wrong_secret=" + rejectsWrong + ")");
                 fails++;
             } else {
                 System.out.println("PASS [26] hpks_stern_ring round-trip");
@@ -1300,23 +1300,22 @@ public final class SelfTest {
             BigInteger[] es = new BigInteger[k];
             for (int i = 0; i < k; i++) {
                 Stern.SternKeypair m = Stern.sternFKeygen(rng);
-                ring.add(new SternRing.RingKey(m.seed, m.syndrome));
+                ring.add(new SternRing.RingKey(m.seed, m.syndrome, Herradura.N));
                 es[i] = m.e;
             }
             int j = 1;
-            BigInteger rmsg = new BigInteger(Herradura.N, rng);
-            SternRing.RingSignature rsig =
-                    SternRing.sign(rmsg, es[j], j, ring, rounds, rng);
-            boolean ringOk = SternRing.verify(rmsg, rsig, ring);
-            java.util.Set<BigInteger> seen = new java.util.HashSet<>();
-            int dups = 0;
-            for (int i = 0; i < k; i++) {
-                for (int r = 0; r < rounds; r++) {
-                    BigInteger[] trio = { rsig.c0[i][r], rsig.c1[i][r], rsig.c2[i][r] };
-                    for (BigInteger c : trio) {
-                        if (!seen.add(c)) dups++;
-                    }
-                }
+            byte[] rmsg = new byte[32];
+            rng.nextBytes(rmsg);
+            byte[] rsig = SternRing.sign(rmsg, es[j], j, ring, Herradura.N, rounds, rng);
+            boolean ringOk = SternRing.verify(rmsg, rsig, ring, Herradura.N, rounds);
+            // TODO #415: the signature carries D and, per round, ONE unopened
+            // commitment; all rounds + 1 must differ (fresh randomness).
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            int dups = 0, vlen = k * (Herradura.N / 8) + (k + 7) / 8, pos = 32;
+            seen.add(java.util.Arrays.toString(java.util.Arrays.copyOf(rsig, 32)));
+            for (int b : SternRing.challenges(rsig, rounds)) {
+                if (!seen.add(java.util.Arrays.toString(java.util.Arrays.copyOfRange(rsig, pos, pos + 32)))) dups++;
+                pos += 96 + (b == 0 ? 2 * vlen : vlen);
             }
 
             if (!(honestOk && solved && offWeight && !forgedOk

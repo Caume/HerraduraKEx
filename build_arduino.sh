@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # HerraduraKEx — Arduino (AVR) build script
-# Compiles the suite and test .ino files to ATmega2560 ELF binaries
-# by linking against the Arduino core library.
+# Compiles the demo sketches (demos/arduino/<name>/<name>.ino, one per
+# algorithm, over the Herradura32 library; TODO #425) and the test harness to
+# ATmega2560 ELF binaries by linking against the Arduino core library.
 #
 # Target board: Arduino Mega 2560 (ATmega2560, 8 KB SRAM)
 # Note: ATmega328P (Uno, 2 KB SRAM) is insufficient — the Ring-LWR
@@ -21,8 +22,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
 : "${VERSION:=unknown}"
 
-SUITE_INO="Herradura cryptographic suite.ino"
-SUITE_ELF="Herradura cryptographic suite_avr.elf"
+DEMO_DIR="demos/arduino"
+DEMO_LIB="${DEMO_DIR}/libraries/Herradura32/src"
 TESTS_INO="CryptosuiteTests/Herradura_tests.ino"
 TESTS_ELF="CryptosuiteTests/Herradura_tests_avr.elf"
 
@@ -32,7 +33,7 @@ ARDUINO_CORE="/usr/share/arduino/hardware/arduino/avr/cores/arduino"
 ARDUINO_VARIANT="/usr/share/arduino/hardware/arduino/avr/variants/mega"
 BUILD_DIR="/tmp/herr_avr_build"
 
-AVR_FLAGS="-O2 -mmcu=${MCU} -DF_CPU=${F_CPU} -I${ARDUINO_CORE} -I${ARDUINO_VARIANT}"
+AVR_FLAGS="-O2 -mmcu=${MCU} -DF_CPU=${F_CPU} -I${ARDUINO_CORE} -I${ARDUINO_VARIANT} -I${DEMO_LIB}"
 
 # ── dependency checks ─────────────────────────────────────────────────────────
 if ! command -v avr-gcc &>/dev/null; then
@@ -114,7 +115,7 @@ build_ino() {
 # grows down towards them, with nothing to stop it.  Until TODO #350 the suite's
 # string literals alone took 3.4 KB of .data (a literal without F() is copied to
 # RAM at boot), which left ~360 bytes of stack: the demo hung in its first
-# HKEX-RNL multiply, silently.  Keep the headroom below in both firmwares, and
+# HKEX-RNL multiply, silently.  Keep the headroom below in every firmware, and
 # put new strings in flash with F().
 RAM_BYTES=8192
 MIN_STACK_BYTES=2048
@@ -134,8 +135,16 @@ ram_guard() {
     echo "    RAM: ${FREE} of ${RAM_BYTES} bytes left for the stack (guard: >= ${MIN_STACK_BYTES})"
 }
 
-# ── build suite and tests ─────────────────────────────────────────────────────
-build_ino "${SUITE_INO}" "${SUITE_ELF}" "suite"
+# ── build the demos and the tests ─────────────────────────────────────────────
+N_DEMOS=0
+for INO in "${DEMO_DIR}"/*/*.ino; do
+    NAME="$(basename "${INO}" .ino)"
+    [ "$(basename "$(dirname "${INO}")")" = "${NAME}" ] || {
+        echo "ERROR: ${INO}: an Arduino sketch must sit in a directory of its own name"; exit 1; }
+    build_ino "${INO}" "${DEMO_DIR}/${NAME}/${NAME}_avr.elf" "demo ${NAME}"
+    N_DEMOS=$((N_DEMOS + 1))
+done
+(( N_DEMOS > 0 )) || { echo "ERROR: no demo sketches under ${DEMO_DIR}"; exit 1; }
 echo ""
 build_ino "${TESTS_INO}" "${TESTS_ELF}" "tests"
 

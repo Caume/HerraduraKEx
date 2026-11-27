@@ -2,320 +2,312 @@ package herradurakex;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.List;
 
 /**
- * TODO #260: pure-Java port of TODO #78.I — HPKS-Stern-Ring, a code-based
- * ring/group signature built by OR-composing {@code k} HPKS-Stern-F
- * identification instances: prove knowledge of one secret key in a ring of
- * {@code k} public keys without revealing which one. C/Go/Python have
- * carried this since it was added ("Herradura cryptographic suite.{c,go,py}"'s
- * #78.I section); Java had neither the primitive nor a demo/test for it
- * until this file — the last of TODO #260's seven missing primitives.
+ * HPKS-Ring: ONE Stern proof over a block-diagonal statement (TODO #415,
+ * v20.0.0).  The pure-Java port of herradura.h's {@code stern_ring_sign} and
+ * Python's {@code hpks_stern_ring_sign}, draw for draw; SPEC.md §11.2 is
+ * normative and KAT/operation_replay.json pins both widths in all four ports.
  *
- * <p>Proof size: O(k * rounds). Security: EUF-CMA under SD(N,t) per ring
- * member. Reuses {@link Stern}'s package-visible helpers
- * ({@code csprngWeightT}, {@code sternHash}, {@code sternBuildH},
- * {@code sternSyndromeH}, {@code sternGenPerm}, {@code sternApplyPerm},
- * {@code SDFNR}/{@code SDFT}) rather than duplicating the underlying Stern
- * identification machinery — the ring construction adds only the
- * OR-composition (simulate every non-signer round, then splice the real
- * signer's per-round challenge in via challenge splitting) on top.
+ * <p>Replaces the OR-composition of k Stern proofs (TODO #78.I, #260), which
+ * was existentially forgeable with no member's key: it split each round's
+ * challenge across the members mod 3, and a party without the witness answers
+ * two of Stern's three challenges, so two keyless members covered every
+ * residue.  Here each round has ONE challenge for one statement only a
+ * member's key satisfies.
  *
- * <p>Non-signer rounds are simulated with a pre-chosen challenge {@code b}
- * (the standard Sigma-protocol HVZK simulator): draw whichever of
- * {@code (sr, sy)} / {@code (pi, r)} / {@code (pi, y)} that challenge's
- * response needs for real, fill the rest with uniform dummy values, and
- * compute the three commitments the same way the real signer would — so a
- * verifier cannot distinguish a simulated round from a genuine one without
- * the witness. The real signer's own per-round challenge is then fixed
- * <em>after</em> every commitment is on the transcript, via challenge
- * splitting (sum of all k challenges at round r must equal the joint
- * Fiat-Shamir challenge mod 3): {@code b_signer = joint_b - sum(other b's) (mod 3)}.
+ * <ul>
+ * <li>statement: H~ = diag([H_1|s_1], ..., [H_k|s_k]) with the members sorted
+ *     by seed || syndrome (duplicates refused); z = (x_1..x_k ; c), c a k-bit
+ *     indicator, H~ z = 0 and z in S = { one c_p = 1, wt(x_p) = t, every other
+ *     x_q = 0 }.</li>
+ * <li>round: draws r (k blocks, then the indicator masked to k bits), pi_seed,
+ *     salt1, salt2; c0 = H_1(pi_seed || H~ r), c1 = H_2(salt1 || Pi r),
+ *     c2 = H_3(salt2 || Pi y), y = r + z.</li>
+ * <li>wire: D = H_0(0x02 || n || k || rounds || msg || ring || c0 c1 c2 ...),
+ *     then per round the unopened commitment and the opening; trits from
+ *     H_6(D || ctr) bytes, 255 rejected; H_tag(x) = HFSCX-256-DS(0x32, tag || x).</li>
+ * </ul>
+ * Every vector is big-endian bytes: an n-bit block n/8, a syndrome n/16.
  */
 public final class SternRing {
     private SternRing() { }
 
-    private static final int N = Herradura.N; // 256
+    static final int DS = 0x32;
+    static final int VERSION = 2;
+    public static final int MAX_MEMBERS = 1024;
+    static final int T_CH = 0;
+    static final int T_C0 = 1;
+    static final int T_C1 = 2;
+    static final int T_C2 = 3;
+    static final int T_TAU = 4;
+    static final int T_PI = 5;
+    static final int T_XOF = 6;
 
-    /** One ring member's public key: {@code (seed, syndrome)}, matching
-     * {@link Stern.SternKeypair}'s public half. */
+    /** One ring member's public key: the n/8-byte seed and the n/16-byte
+     * big-endian syndrome. */
     public static final class RingKey {
-        public final BigInteger seed;
-        public final BigInteger syndrome;
-        public RingKey(BigInteger seed, BigInteger syndrome) {
-            this.seed = seed;
-            this.syndrome = syndrome;
+        public final byte[] seed;
+        public final byte[] syndrome;
+        public RingKey(BigInteger seed, BigInteger syndrome, int n) {
+            this.seed = SternL.fixed(seed, n / 8);
+            this.syndrome = SternL.fixed(syndrome, n / 16);
         }
     }
 
-    /** A ring signature over {@code k} members and {@code rounds} rounds.
-     * {@code commits0/1/2[i][r]}, {@code challenges[i][r]},
-     * {@code resp0/1[i][r]} — indexed member-major, matching Python's
-     * {@code all_commits}/{@code all_challenges}/{@code all_responses}. */
-    public static final class RingSignature {
-        public final BigInteger[][] c0, c1, c2;
-        public final int[][] challenges;
-        public final BigInteger[][] resp0, resp1;
-        RingSignature(BigInteger[][] c0, BigInteger[][] c1, BigInteger[][] c2,
-                      int[][] challenges, BigInteger[][] resp0, BigInteger[][] resp1) {
-            this.c0 = c0; this.c1 = c1; this.c2 = c2;
-            this.challenges = challenges; this.resp0 = resp0; this.resp1 = resp1;
-        }
-        public int ringSize() { return challenges.length; }
-        public int rounds() { return challenges.length == 0 ? 0 : challenges[0].length; }
+    static byte[] h(int tag, byte[]... items) {
+        int len = 1;
+        for (byte[] it : items) len += it.length;
+        byte[] buf = new byte[len];
+        buf[0] = (byte) tag;
+        int off = 1;
+        for (byte[] it : items) { System.arraycopy(it, 0, buf, off, it.length); off += it.length; }
+        return Hfscx256.hashDs(DS, buf);
     }
 
-    private static int floorMod3(int v) {
-        int m = v % 3;
-        return m < 0 ? m + 3 : m;
+    static boolean nOk(int n) {
+        return n == 32 || n == 64 || n == 128 || n == 256
+            || (n > Herradura.N && n % 256 == 0 && n <= SternL.STERN_LONG_N);
     }
 
-    /** A uniform challenge in {0, 1, 2} for a SIMULATED ring member.
-     *
-     * TODO #297: this was Random.nextInt(3), which is correct but is a THIRD
-     * scheme -- C and Python draw ONE byte and reject the single value 255,
-     * while Go drew a whole n-bit BitArray and reduced it modulo 3.  Four
-     * ports, three schemes, one trit, and nothing in the repo could see it: a
-     * simulated member's challenge is local randomness that reaches no
-     * artifact, and the signature verifies whichever value it takes, so no
-     * round-trip or interop pair compares two samplers.  C's and Python's
-     * scheme is adopted VERBATIM rather than a fourth invented (#294's
-     * precedent).
-     *
-     * Not a correctness fix on this side -- nextInt(3) is unbiased -- but a
-     * consumption-order one, which is the whole point of
-     * KAT/operation_replay.json: four ports that agree on a distribution and
-     * not on how they spend the stream cannot be pinned against each other. */
-    static int ringTrit(SecureRandom rng) {   // SternL's too (TODO #382)
-        byte[] one = new byte[1];
-        for (;;) {
-            rng.nextBytes(one);
-            int v = one[0] & 0xFF;
-            if (v != 255) return v % 3;
+    static int t(int n) { return Math.max(2, n / 16); }
+
+    private static int[] perm(byte[] key, int N) {
+        return SternL.genPermOnKey(BitArray.fromBytes(key, 256), N);
+    }
+
+    /** out[perm[i]] = v[i] over the bits of a big-endian byte string. */
+    private static void applyPerm(byte[] out, int off, int[] perm, byte[] v, int voff, int nb) {
+        for (int i = 0; i < nb * 8; i++) {
+            int bit = (v[voff + nb - 1 - i / 8] >> (i % 8)) & 1;
+            int p = perm[i];
+            out[off + nb - 1 - p / 8] |= (byte) (bit << (p % 8));
         }
     }
 
-    /** HVZK simulator for one Stern round given a pre-chosen challenge
-     * {@code b}. Returns {@code {c0, c1, c2, resp0, resp1}}. Matches
-     * Python's {@code _stern_simulate_round}. */
-    private static Object[] simulateRound(int b, BigInteger syn, BigInteger[] hRows, int n, SecureRandom rng) {
-        BigInteger mask = Stern.maskFor(n);
-        if (b == 0) {
-            // srSim UNIFORM and sySim = srSim ^ (weight-t): a PERFECT
-            // simulation of the real (sigma(r), sigma(r) ^ sigma(e)) now that
-            // r is uniform.  Until v8.0.0 srSim was weight-t and sySim
-            // uniform, so wt(sr ^ sy) was ~N/2 on every simulated round and
-            // exactly t on the signer's -- ONE b = 0 round named the signer
-            // straight off the public signature (TODO #298).
-            BigInteger srSim = new BigInteger(n, rng).and(mask);
-            BigInteger sySim = srSim.xor(Stern.csprngWeightT(n, Stern.tFor(n), rng));
-            BigInteger piDum = new BigInteger(n, rng).and(mask);
-            BigInteger c0 = Stern.sternHashN(n, 1, piDum, BigInteger.ZERO);
-            BigInteger c1 = Stern.sternHashN(n, 2, srSim);
-            BigInteger c2 = Stern.sternHashN(n, 3, sySim);
-            return new Object[] { c0, c1, c2, srSim, sySim };
-        } else if (b == 1) {
-            BigInteger piSim = new BigInteger(n, rng).and(mask);
-            // UNIFORM: the b = 1 response reveals r, and the real r is now
-            // uniform (TODO #298).
-            BigInteger rSim = new BigInteger(n, rng).and(mask);
-            int[] perm = Stern.sternGenPerm(piSim, n);
-            BigInteger hrSim = Stern.sternSyndromeH(hRows, rSim);
-            BigInteger srSim = Stern.sternApplyPerm(perm, rSim);
-            BigInteger syDum = new BigInteger(n, rng).and(mask);
-            BigInteger c0 = Stern.sternHashN(n, 1, piSim, hrSim);
-            BigInteger c1 = Stern.sternHashN(n, 2, srSim);
-            BigInteger c2 = Stern.sternHashN(n, 3, syDum);
-            return new Object[] { c0, c1, c2, piSim, rSim };
-        } else {
-            BigInteger piSim = new BigInteger(n, rng).and(mask);
-            BigInteger ySim = new BigInteger(n, rng).and(mask);
-            int[] perm = Stern.sternGenPerm(piSim, n);
-            BigInteger hySim = Stern.sternSyndromeH(hRows, ySim);
-            BigInteger sySim = Stern.sternApplyPerm(perm, ySim);
-            BigInteger srDum = new BigInteger(n, rng).and(mask);
-            BigInteger c0 = Stern.sternHashN(n, 1, piSim, hySim.xor(syn));
-            BigInteger c1 = Stern.sternHashN(n, 2, srDum);
-            BigInteger c2 = Stern.sternHashN(n, 3, sySim);
-            return new Object[] { c0, c1, c2, piSim, ySim };
-        }
-    }
+    /** A ring in canonical order. */
+    static final class Ring {
+        final int n, k, nb, sb, kb, vlen;
+        final byte[] enc;
+        final byte[][] syns;
+        final byte[][][] H;
+        final int[] pos;
 
-    /** Member-major Fiat-Shamir seed hash over {@code (msg, all k*rounds*3
-     * commits)}, matching Python's {@code flat} construction order (for i
-     * in range(k): for r in range(rounds): flat += commits[i][r]) — the
-     * ring construction, unlike single-party HPKS-Stern-F, cannot reuse
-     * {@code Stern}'s round-major {@code deriveChallenges} helper. */
-    private static BigInteger fiatShamirSeed(BigInteger msg, BigInteger[][] c0, BigInteger[][] c1, BigInteger[][] c2, int n) {
-        int k = c0.length, rounds = c0[0].length;
-        BigInteger[] flat = new BigInteger[1 + 3 * k * rounds];
-        flat[0] = msg;
-        int idx = 1;
-        for (int i = 0; i < k; i++) {
-            for (int r = 0; r < rounds; r++) {
-                flat[idx++] = c0[i][r];
-                flat[idx++] = c1[i][r];
-                flat[idx++] = c2[i][r];
+        Ring(List<RingKey> ring, int n) {
+            if (!nOk(n)) throw new IllegalArgumentException("hpks-ring: n = " + n + " is not a Stern-F width");
+            int k = ring.size();
+            if (k < 1 || k > MAX_MEMBERS)
+                throw new IllegalArgumentException("hpks-ring: ring has " + k + " members (expected 1.." + MAX_MEMBERS + ")");
+            this.n = n; this.k = k; nb = n / 8; sb = n / 16; kb = (k + 7) / 8;
+            vlen = k * nb + kb;
+            byte[][] encs = new byte[k][];
+            for (int i = 0; i < k; i++) {
+                RingKey m = ring.get(i);
+                if (m.seed.length != nb || m.syndrome.length != sb)
+                    throw new IllegalArgumentException("hpks-ring: a ring member is not an n-bit Stern-F key");
+                encs[i] = new byte[nb + sb];
+                System.arraycopy(m.seed, 0, encs[i], 0, nb);
+                System.arraycopy(m.syndrome, 0, encs[i], nb, sb);
             }
-        }
-        return Stern.sternHashN(n, 0, flat);
-    }
-
-    /** {@code joint_b[r]} for every round, derived by chaining
-     * {@code ch_st = nl_fscx_v1(ch_st, r)} from the Fiat-Shamir seed —
-     * matches Python's {@code hpks_stern_ring_sign}/{@code _verify}
-     * shared derivation loop. */
-    private static int[] jointChallenges(BitArray seed, int rounds) {
-        BitArray chSt = seed;
-        BigInteger word32 = BigInteger.valueOf(0xFFFFFFFFL);
-        int[] joint = new int[rounds];
-        for (int r = 0; r < rounds; r++) {
-            chSt = Hfscx256.nlFscxV1(chSt, BitArray.fromUint(r, chSt.size()));
-            joint[r] = chSt.toBigInteger().and(word32).mod(BigInteger.valueOf(3)).intValueExact();
-        }
-        return joint;
-    }
-
-    /** Ring signature: prove knowledge of one HPKS-Stern-F key in a ring.
-     *
-     * @param eInt     the signer's weight-t error vector (secret key for {@code ringKeys.get(j)})
-     * @param j        0-based index of the actual signer
-     * @param ringKeys the ring's public keys
-     */
-    public static RingSignature sign(BigInteger msg, BigInteger eInt, int j, List<RingKey> ringKeys, int rounds, SecureRandom rng) {
-        return sign(msg, eInt, j, ringKeys, rounds, N, rng);
-    }
-
-    /** Signs over a ring of n-bit keys (TODO #384). */
-    public static RingSignature sign(BigInteger msg, BigInteger eInt, int j, List<RingKey> ringKeys, int rounds, int n, SecureRandom rng) {
-        BigInteger mask = Stern.maskFor(n);
-        int k = ringKeys.size();
-        BigInteger[][] c0 = new BigInteger[k][rounds];
-        BigInteger[][] c1 = new BigInteger[k][rounds];
-        BigInteger[][] c2 = new BigInteger[k][rounds];
-        int[][] challenges = new int[k][rounds];
-        BigInteger[][] resp0 = new BigInteger[k][rounds];
-        BigInteger[][] resp1 = new BigInteger[k][rounds];
-
-        // Step 1 — simulate non-signer members with pre-chosen challenges.
-        for (int i = 0; i < k; i++) {
-            if (i == j) continue;
-            RingKey member = ringKeys.get(i);
-            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.rowsFor(n), n);
-            for (int r = 0; r < rounds; r++) {
-                int b = ringTrit(rng);
-                challenges[i][r] = b;
-                Object[] sim = simulateRound(b, member.syndrome, hRowsI, n, rng);
-                c0[i][r] = (BigInteger) sim[0];
-                c1[i][r] = (BigInteger) sim[1];
-                c2[i][r] = (BigInteger) sim[2];
-                resp0[i][r] = (BigInteger) sim[3];
-                resp1[i][r] = (BigInteger) sim[4];
+            Integer[] ord = new Integer[k];
+            for (int i = 0; i < k; i++) ord[i] = i;
+            Arrays.sort(ord, (a, b) -> Arrays.compareUnsigned(encs[a], encs[b]));
+            enc = new byte[k * (nb + sb)];
+            syns = new byte[k][];
+            H = new byte[k][][];
+            pos = new int[k];
+            for (int i = 0; i < k; i++) {
+                int o = ord[i];
+                if (i > 0 && Arrays.equals(encs[o], encs[ord[i - 1]]))
+                    throw new IllegalArgumentException("hpks-ring: the ring lists a member twice");
+                pos[o] = i;
+                System.arraycopy(encs[o], 0, enc, i * (nb + sb), nb + sb);
+                syns[i] = Arrays.copyOfRange(encs[o], nb, nb + sb);
+                BigInteger seed = new BigInteger(1, Arrays.copyOfRange(encs[o], 0, nb));
+                BigInteger[] rows = n > Herradura.N ? SternL.buildH(seed, n) : Stern.sternBuildH(seed, n / 2, n);
+                H[i] = new byte[rows.length][];
+                for (int r = 0; r < rows.length; r++) H[i][r] = SternL.fixed(rows[r], nb);
             }
         }
 
-        // Step 2 — commit phase for the real signer j.
-        RingKey signerKey = ringKeys.get(j);
-        BigInteger[] hRowsJ = Stern.sternBuildH(signerKey.seed, Stern.rowsFor(n), n);
-        BigInteger[] rArr = new BigInteger[rounds];
-        BigInteger[] yArr = new BigInteger[rounds];
-        BigInteger[] piArr = new BigInteger[rounds];
-        BigInteger[] srArr = new BigInteger[rounds];
-        BigInteger[] syArr = new BigInteger[rounds];
-        for (int r = 0; r < rounds; r++) {
-            BigInteger rInt = new BigInteger(n, rng).and(mask);
-            BigInteger yInt = eInt.xor(rInt).and(mask);
-            BigInteger piSeed = new BigInteger(n, rng).and(mask);
-            int[] perm = Stern.sternGenPerm(piSeed, n);
-            BigInteger hr = Stern.sternSyndromeH(hRowsJ, rInt);
-            BigInteger sr = Stern.sternApplyPerm(perm, rInt);
-            BigInteger sy = Stern.sternApplyPerm(perm, yInt);
-            c0[j][r] = Stern.sternHashN(n, 1, piSeed, hr);
-            c1[j][r] = Stern.sternHashN(n, 2, sr);
-            c2[j][r] = Stern.sternHashN(n, 3, sy);
-            rArr[r] = rInt; yArr[r] = yInt; piArr[r] = piSeed; srArr[r] = sr; syArr[r] = sy;
+        byte[] syn(int i, byte[] v, int off) {
+            byte[] out = new byte[sb];
+            for (int row = 0; row < n / 2; row++) {
+                int p = 0;
+                byte[] hr = H[i][row];
+                for (int b = 0; b < nb; b++) p ^= Integer.bitCount((hr[b] & v[off + b]) & 0xff);
+                if ((p & 1) == 1) out[sb - 1 - row / 8] |= (byte) (1 << (row % 8));
+            }
+            return out;
         }
 
-        // Step 3 — Fiat-Shamir over msg + all k*rounds*3 commits (member-major).
-        BigInteger seed = fiatShamirSeed(msg, c0, c1, c2, n);
+        int indBit(byte[] v, int i) { return (v[k * nb + kb - 1 - i / 8] >> (i % 8)) & 1; }
 
-        // Step 4 — assign the real signer's per-round challenge via challenge splitting.
-        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, n), rounds);
-        for (int r = 0; r < rounds; r++) {
-            int simSum = 0;
-            for (int i = 0; i < k; i++) if (i != j) simSum += challenges[i][r];
-            challenges[j][r] = floorMod3(joint[r] - floorMod3(simSum));
+        byte[] htilde(byte[] v) {
+            byte[] out = new byte[k * sb];
+            for (int i = 0; i < k; i++) {
+                byte[] s = syn(i, v, i * nb);
+                if (indBit(v, i) == 1) for (int b = 0; b < sb; b++) s[b] ^= syns[i][b];
+                System.arraycopy(s, 0, out, i * sb, sb);
+            }
+            return out;
         }
 
-        // Step 5 — complete the real signer's responses.
-        for (int r = 0; r < rounds; r++) {
-            int b = challenges[j][r];
-            if (b == 0) {
-                resp0[j][r] = srArr[r]; resp1[j][r] = syArr[r];
-            } else if (b == 1) {
-                resp0[j][r] = piArr[r]; resp1[j][r] = rArr[r];
+        int[][] perms(byte[] piSeed) {
+            int[][] p = new int[k + 1][];
+            p[k] = perm(h(T_TAU, piSeed), k);
+            for (int i = 0; i < k; i++)
+                p[i] = perm(h(T_PI, piSeed, new byte[] { (byte) (i >> 8), (byte) i }), n);
+            return p;
+        }
+
+        byte[] apply(int[][] P, byte[] v) {
+            int[] tau = P[k];
+            byte[] out = new byte[vlen];
+            for (int i = 0; i < k; i++) {
+                applyPerm(out, tau[i] * nb, P[i], v, i * nb, nb);
+                if (indBit(v, i) == 1) out[k * nb + kb - 1 - tau[i] / 8] |= (byte) (1 << (tau[i] % 8));
+            }
+            return out;
+        }
+
+        boolean indCanonical(byte[] v, int off) {
+            int top = 8 * kb - k;
+            return top == 0 || ((v[off + k * nb] & 0xff) >> (8 - top)) == 0;
+        }
+
+        boolean inS(byte[] u, byte[] v) {
+            int p = -1, count = 0;
+            for (int i = 0; i < k; i++) if ((indBit(u, i) ^ indBit(v, i)) == 1) { p = i; count++; }
+            if (count != 1) return false;
+            for (int i = 0; i < k; i++) {
+                int w = 0;
+                for (int b = i * nb; b < (i + 1) * nb; b++) w += Integer.bitCount((u[b] ^ v[b]) & 0xff);
+                if (i == p ? w != t(n) : w != 0) return false;
+            }
+            return true;
+        }
+
+        byte[] digest(int rounds, byte[] msg, byte[] commits) {
+            byte[] hdr = { (byte) VERSION, (byte) (n >> 8), (byte) n, (byte) (k >> 8), (byte) k,
+                           (byte) (rounds >> 8), (byte) rounds };
+            return h(T_CH, hdr, msg, enc, commits);
+        }
+    }
+
+    static int[] challenges(byte[] d, int rounds) {
+        int[] out = new int[rounds];
+        int got = 0;
+        for (int ctr = 0; got < rounds; ctr++) {
+            byte[] blk = h(T_XOF, Arrays.copyOf(d, 32),
+                           new byte[] { (byte) (ctr >>> 24), (byte) (ctr >>> 16), (byte) (ctr >>> 8), (byte) ctr });
+            for (int i = 0; i < 32 && got < rounds; i++) {
+                int v = blk[i] & 0xff;
+                if (v != 255) out[got++] = v % 3;
+            }
+        }
+        return out;
+    }
+
+    /** The byte length of a ring signature whose digest is the first 32 bytes of d. */
+    public static int sigLen(byte[] d, int k, int n, int rounds) {
+        int vlen = k * (n / 8) + (k + 7) / 8;
+        int len = 32;
+        for (int b : challenges(d, rounds)) len += 96 + (b == 0 ? 2 * vlen : vlen);
+        return len;
+    }
+
+    /** Ring-sign the 32-byte msg as ring member j (secret e); the ring may be
+     * in any order.  Returns D, then per round the unopened commitment and the
+     * opening. */
+    public static byte[] sign(byte[] msg, BigInteger e, int j, List<RingKey> ringKeys, int n, int rounds,
+                              SecureRandom rng) {
+        if (msg.length != 32) throw new IllegalArgumentException("hpks-ring: the message is a 256-bit digest");
+        if (rounds < 1 || rounds > 0xFFFF) throw new IllegalArgumentException("hpks-ring: rounds out of range");
+        Ring R = new Ring(ringKeys, n);
+        if (j < 0 || j >= R.k) throw new IllegalArgumentException("hpks-ring: signer index out of range");
+        int jj = R.pos[j];
+        if (e.signum() < 0 || e.bitLength() > n || e.bitCount() != t(n))
+            throw new IllegalArgumentException("hpks-ring: the secret is not a weight-t n-bit vector");
+        byte[] eb = SternL.fixed(e, R.nb);
+        if (!Arrays.equals(R.syn(jj, eb, 0), R.syns[jj]))
+            throw new IllegalArgumentException("hpks-ring: the secret key is not ring member j's");
+        int vl = R.vlen, top = 8 * R.kb - R.k;
+        byte[] z = new byte[vl];
+        System.arraycopy(eb, 0, z, jj * R.nb, R.nb);
+        z[R.k * R.nb + R.kb - 1 - jj / 8] |= (byte) (1 << (jj % 8));
+        byte[][] rr = new byte[rounds][], yy = new byte[rounds][], uu = new byte[rounds][], vv = new byte[rounds][];
+        byte[][] ps = new byte[rounds][], s1 = new byte[rounds][], s2 = new byte[rounds][];
+        byte[] commits = new byte[96 * rounds];
+        for (int i = 0; i < rounds; i++) {
+            byte[] r = new byte[vl];
+            rng.nextBytes(r);
+            if (top > 0) r[R.k * R.nb] &= (byte) (0xff >>> top);
+            ps[i] = new byte[32]; rng.nextBytes(ps[i]);
+            s1[i] = new byte[32]; rng.nextBytes(s1[i]);
+            s2[i] = new byte[32]; rng.nextBytes(s2[i]);
+            byte[] y = new byte[vl];
+            for (int a = 0; a < vl; a++) y[a] = (byte) (r[a] ^ z[a]);
+            int[][] P = R.perms(ps[i]);
+            rr[i] = r; yy[i] = y; uu[i] = R.apply(P, r); vv[i] = R.apply(P, y);
+            System.arraycopy(h(T_C0, ps[i], R.htilde(r)), 0, commits, 96 * i, 32);
+            System.arraycopy(h(T_C1, s1[i], uu[i]), 0, commits, 96 * i + 32, 32);
+            System.arraycopy(h(T_C2, s2[i], vv[i]), 0, commits, 96 * i + 64, 32);
+        }
+        byte[] d = R.digest(rounds, msg, commits);
+        int[] b = challenges(d, rounds);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(d, 0, 32);
+        for (int i = 0; i < rounds; i++) {
+            if (b[i] == 0) {
+                out.write(commits, 96 * i, 32);
+                out.write(s1[i], 0, 32); out.write(s2[i], 0, 32);
+                out.write(uu[i], 0, vl); out.write(vv[i], 0, vl);
             } else {
-                resp0[j][r] = piArr[r]; resp1[j][r] = yArr[r];
+                out.write(commits, 96 * i + (b[i] == 1 ? 64 : 32), 32);
+                out.write(ps[i], 0, 32);
+                out.write(b[i] == 1 ? s1[i] : s2[i], 0, 32);
+                out.write(b[i] == 1 ? rr[i] : yy[i], 0, vl);
             }
         }
-
-        return new RingSignature(c0, c1, c2, challenges, resp0, resp1);
+        return out.toByteArray();
     }
 
-    public static RingSignature sign(BigInteger msg, BigInteger eInt, int j, List<RingKey> ringKeys, SecureRandom rng) {
-        return sign(msg, eInt, j, ringKeys, Stern.SDFR, rng);
-    }
-
-    /** Verify an HPKS-Stern-Ring signature. Accepts any signature produced
-     * by {@link #sign} for any member of {@code ringKeys} without
-     * revealing which member signed. */
-    public static boolean verify(BigInteger msg, RingSignature sig, List<RingKey> ringKeys) {
-        return verify(msg, sig, ringKeys, N);
-    }
-
-    /** Verifies over a ring of n-bit keys (TODO #384). */
-    public static boolean verify(BigInteger msg, RingSignature sig, List<RingKey> ringKeys, int n) {
-        int k = ringKeys.size();
-        int rounds = sig.rounds();
-        if (k != sig.ringSize()) return false;
-
-        BigInteger seed = fiatShamirSeed(msg, sig.c0, sig.c1, sig.c2, n);
-        int[] joint = jointChallenges(BitArray.fromBigInteger(seed, n), rounds);
-        for (int r = 0; r < rounds; r++) {
-            int sum = 0;
-            for (int i = 0; i < k; i++) sum += sig.challenges[i][r];
-            if (floorMod3(sum) != joint[r]) return false;
+    /** True iff sig is a ring signature on the 32-byte msg by some member of
+     * the ring (any order) at width n and this round count. */
+    public static boolean verify(byte[] msg, byte[] sig, List<RingKey> ringKeys, int n, int rounds) {
+        if (msg == null || msg.length != 32 || sig == null || sig.length < 32 || rounds < 1 || rounds > 0xFFFF)
+            return false;
+        Ring R;
+        try {
+            R = new Ring(ringKeys, n);
+        } catch (IllegalArgumentException ex) {
+            return false;
         }
-
-        for (int i = 0; i < k; i++) {
-            RingKey member = ringKeys.get(i);
-            BigInteger[] hRowsI = Stern.sternBuildH(member.seed, Stern.rowsFor(n), n);
-            for (int r = 0; r < rounds; r++) {
-                int b = sig.challenges[i][r];
-                if (b == 0) {
-                    BigInteger sr = sig.resp0[i][r], sy = sig.resp1[i][r];
-                    if (!Stern.sternHashN(n, 2, sr).equals(sig.c1[i][r])) return false;
-                    if (!Stern.sternHashN(n, 3, sy).equals(sig.c2[i][r])) return false;
-                    // binds wt(e) -- see Stern.hpksSternFVerify (TODO #298)
-                    if (sr.xor(sy).bitCount() != Stern.tFor(n)) return false;
-                } else if (b == 1) {
-                    BigInteger piSeed = sig.resp0[i][r], rInt = sig.resp1[i][r];
-                    int[] perm = Stern.sternGenPerm(piSeed, n);
-                    BigInteger hr = Stern.sternSyndromeH(hRowsI, rInt);
-                    if (!Stern.sternHashN(n, 1, piSeed, hr).equals(sig.c0[i][r])) return false;
-                    BigInteger sr = Stern.sternApplyPerm(perm, rInt);
-                    if (!Stern.sternHashN(n, 2, sr).equals(sig.c1[i][r])) return false;
-                } else {
-                    BigInteger piSeed = sig.resp0[i][r], yInt = sig.resp1[i][r];
-                    int[] perm = Stern.sternGenPerm(piSeed, n);
-                    BigInteger hy = Stern.sternSyndromeH(hRowsI, yInt);
-                    if (!Stern.sternHashN(n, 1, piSeed, hy.xor(member.syndrome)).equals(sig.c0[i][r])) return false;
-                    BigInteger sy = Stern.sternApplyPerm(perm, yInt);
-                    if (!Stern.sternHashN(n, 3, sy).equals(sig.c2[i][r])) return false;
-                }
+        if (sig.length != sigLen(sig, R.k, n, rounds)) return false;
+        int vl = R.vlen, pos = 32;
+        int[] b = challenges(sig, rounds);
+        byte[] commits = new byte[96 * rounds];
+        for (int i = 0; i < rounds; i++) {
+            byte[] a = Arrays.copyOfRange(sig, pos + 32, pos + 64), c = Arrays.copyOfRange(sig, pos + 64, pos + 96);
+            byte[] w = Arrays.copyOfRange(sig, pos + 96, pos + 96 + vl);
+            System.arraycopy(sig, pos, commits, 96 * i + (b[i] == 0 ? 0 : b[i] == 1 ? 64 : 32), 32);
+            if (b[i] == 0) {
+                byte[] w2 = Arrays.copyOfRange(sig, pos + 96 + vl, pos + 96 + 2 * vl);
+                if (!R.indCanonical(w, 0) || !R.indCanonical(w2, 0) || !R.inS(w, w2)) return false;
+                System.arraycopy(h(T_C1, a, w), 0, commits, 96 * i + 32, 32);
+                System.arraycopy(h(T_C2, c, w2), 0, commits, 96 * i + 64, 32);
+                pos += 96 + 2 * vl;
+            } else {
+                if (!R.indCanonical(w, 0)) return false;
+                System.arraycopy(h(T_C0, a, R.htilde(w)), 0, commits, 96 * i, 32);
+                byte[] pw = R.apply(R.perms(a), w);
+                System.arraycopy(h(b[i] == 1 ? T_C1 : T_C2, c, pw), 0, commits, 96 * i + (b[i] == 1 ? 32 : 64), 32);
+                pos += 96 + vl;
             }
         }
-        return true;
+        return Arrays.equals(R.digest(rounds, msg, commits), Arrays.copyOf(sig, 32));
     }
 }

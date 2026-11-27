@@ -15,6 +15,11 @@ echo "Hello threshold world" > "$TMPDIR/msg.txt"
 $HERRADURA genpkey --algo hpks-nl --out "$TMPDIR/alice.pem"
 $HERRADURA genpkey --algo hpks-nl --out "$TMPDIR/bob.pem"
 $HERRADURA genpkey --algo hpks-nl --out "$TMPDIR/carol.pem"
+for k in alice bob carol; do
+  $HERRADURA pkey --in "$TMPDIR/$k.pem" --pubout --out "$TMPDIR/${k}_pub.pem"
+done
+# TODO #412: the group a signature is verified against.
+GROUP="$TMPDIR/alice_pub.pem,$TMPDIR/bob_pub.pem,$TMPDIR/carol_pub.pem"
 
 # Phase 1: commit
 $HERRADURA threshold-commit \
@@ -67,7 +72,7 @@ $HERRADURA threshold-combine \
   --out "$TMPDIR/final_sig.pem"
 
 # Verify
-result=$($HERRADURA verify --algo hpks-t --in "$TMPDIR/msg.txt" --sig "$TMPDIR/final_sig.pem")
+result=$($HERRADURA verify --algo hpks-t --pubkey "$GROUP" --in "$TMPDIR/msg.txt" --sig "$TMPDIR/final_sig.pem")
 if [ "$result" = "Signature OK" ]; then
   echo "[PASS] 3-of-3 threshold sign + verify"
 else
@@ -77,12 +82,29 @@ fi
 
 # Tamper test: wrong message should fail
 echo "tampered" > "$TMPDIR/tampered.txt"
-result=$($HERRADURA verify --algo hpks-t --in "$TMPDIR/tampered.txt" --sig "$TMPDIR/final_sig.pem" 2>&1 || true)
+result=$($HERRADURA verify --algo hpks-t --pubkey "$GROUP" --in "$TMPDIR/tampered.txt" --sig "$TMPDIR/final_sig.pem" 2>&1 || true)
 if echo "$result" | grep -q "FAILED"; then
   echo "[PASS] tampered message correctly rejected"
 else
   echo "[FAIL] tampered message was not rejected: $result"
   exit 1
+fi
+
+# TODO #412: the signature must be the group's -- two of its three members are
+# another group, and so is the group with no --pubkey at all.
+result=$($HERRADURA verify --algo hpks-t --pubkey "$TMPDIR/alice_pub.pem,$TMPDIR/bob_pub.pem" \
+  --in "$TMPDIR/msg.txt" --sig "$TMPDIR/final_sig.pem" 2>&1 || true)
+if echo "$result" | grep -q "FAILED"; then
+  echo "[PASS] a signature verified against another group is rejected"
+else
+  echo "[FAIL] a signature verified against another group was not rejected: $result"
+  exit 1
+fi
+if $HERRADURA verify --algo hpks-t --in "$TMPDIR/msg.txt" --sig "$TMPDIR/final_sig.pem" >/dev/null 2>&1; then
+  echo "[FAIL] verify --algo hpks-t without --pubkey still verifies"
+  exit 1
+else
+  echo "[PASS] verify --algo hpks-t without --pubkey is refused"
 fi
 
 echo "=== All Python threshold tests PASSED ==="

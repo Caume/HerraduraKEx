@@ -1031,28 +1031,34 @@ int main(void)
         ratchet_erase(&state);
     }
 
-    /* 78.I — Ring signature demo (k=3, sign as member 1) */
+    /* HPKS-Ring demo (TODO #415): k=3, sign as member 1, then Eve presents the
+     * signature for another message */
     {
 #define RING_K 3
-        BitArray ring_seeds[RING_K]; ba_init_array(ring_seeds, RING_K);
-        BitArray ring_e[RING_K]; ba_init_array(ring_e, RING_K);
-        uint8_t   ring_syndrs[RING_K * SDF_SYNBYTES];
-        SternRingSig rsig;
+        BitArray seed = BA_INIT, ring_e[RING_K], other = BA_INIT; ba_init_array(ring_e, RING_K);
+        uint8_t  seeds[RING_K * KEYBYTES], syns[RING_K * SDF_SYNBYTES], syndr[SDF_SYNBYTES], *rsig;
+        size_t   rlen = 0;
         int ring_j = 1, i;
 
         for (i = 0; i < RING_K; i++) {
-            ba_rand(&ring_seeds[i], urnd);
+            ba_rand(&seed, urnd);
             stern_rand_error(&ring_e[i], urnd);
-            stern_syndrome(ring_syndrs + i * SDF_SYNBYTES, &ring_seeds[i], &ring_e[i]);
+            stern_syndrome(syndr, &seed, &ring_e[i]);
+            memcpy(seeds + i * KEYBYTES, seed.b, KEYBYTES);
+            stern_syndr_be(syns + i * SDF_SYNBYTES, syndr, KEYBITS);
         }
-        stern_ring_alloc(&rsig, RING_K, SDF_ROUNDS);
-        stern_ring_sign(&rsig, &plaintext, &ring_e[ring_j], ring_j,
-                         ring_seeds, ring_syndrs, urnd);
-        if (stern_ring_verify(&rsig, &plaintext, ring_seeds, ring_syndrs))
-            puts("+ Ring sig (78.I): signature verified (k=3, signer=1)");
+        rsig = stern_ring_sign(&rlen, plaintext.b, ring_e[ring_j].b, ring_j, seeds, syns,
+                               RING_K, KEYBITS, SDF_ROUNDS, urnd);
+        if (rsig && stern_ring_verify(rsig, rlen, plaintext.b, seeds, syns, RING_K, KEYBITS, SDF_ROUNDS))
+            printf("+ Ring sig: signature verified (k=3, signer=1, %zu bytes)\n", rlen);
         else
-            printf("[FAIL] Ring sig (78.I): verification failed\n");
-        stern_ring_free(&rsig);
+            printf("[FAIL] Ring sig: verification failed\n");
+        ba_rand(&other, urnd);
+        if (rsig && stern_ring_verify(rsig, rlen, other.b, seeds, syns, RING_K, KEYBITS, SDF_ROUNDS))
+            printf("[FAIL] Eve passed the ring signature off for another message\n");
+        else
+            puts("- Eve cannot reuse the ring signature for another message  (SD + hash protection)");
+        free(rsig);
         for (i = 0; i < RING_K; i++) explicit_bzero(&ring_e[i], sizeof(ring_e[i]));
 #undef RING_K
     }

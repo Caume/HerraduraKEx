@@ -37,6 +37,7 @@ Run:  python3 SecurityProofsCode/v1_mode_rounds.py [--quick]
 """
 
 import importlib.util
+import glob
 import os
 import re
 import sys
@@ -75,18 +76,30 @@ H = FL.H
 
 
 def _src(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+    """A file's text.  A 32-bit target (demos/arm, demos/i386, demos/arduino) is
+    read as its shared core followed by every one-algorithm program, in name
+    order: TODO #425 split each single-file suite that way, and the sites a
+    check counts sit in both halves."""
+    path = os.path.join(ROOT, rel)
+    if os.path.isdir(path):
+        core = {"demos/arm": "core.s", "demos/i386": "core.asm",
+                "demos/arduino": "libraries/Herradura32/src/Herradura32.h"}[rel]
+        progs = sorted(glob.glob(os.path.join(path, "*.s" if rel.endswith("arm") else "*.asm"))
+                       if not rel.endswith("arduino") else glob.glob(os.path.join(path, "*", "*.ino")))
+        files = [os.path.join(path, core)] + [p for p in progs if not p.endswith(core)]
+        return "\n".join(open(p, encoding="utf-8").read() for p in files)
+    with open(path, encoding="utf-8") as fh:
         return fh.read()
 
 
 _ASM32 = {  # file -> (constant definition, the step operand, A1 keystream checked?)
-    "Herradura cryptographic suite.s": (r"\.equ V1_MODE_STEPS, 24", "#V1_MODE_STEPS", True),
+    "demos/arm": (r"\.equ V1_MODE_STEPS, 24", "#V1_MODE_STEPS", True),
     "CryptosuiteTests/Herradura_tests.s": (r"\.equ V1_MODE_STEPS, 24", "#V1_MODE_STEPS",
                                            False),
-    "Herradura cryptographic suite.asm": (r"%define V1_MODE_STEPS 24", "V1_MODE_STEPS", True),
+    "demos/i386": (r"%define V1_MODE_STEPS 24", "V1_MODE_STEPS", True),
     "CryptosuiteTests/Herradura_tests.asm": (r"%define V1_MODE_STEPS 24", "V1_MODE_STEPS",
                                              False),
-    "Herradura cryptographic suite.ino": (r"#define V1_MODE_STEPS \(3 \* KEYBITS / 4\)",
+    "demos/arduino": (r"#define V1_MODE_STEPS \(3 \* KEYBITS / 4\)",
                                           "V1_MODE_STEPS", True),
 }
 
@@ -101,14 +114,14 @@ def _check_32bit(override=None):
         s = (override or {}).get(f) or _src(f)
         if not re.search(const, s):
             bad.append("%s: no V1_MODE_STEPS = 24" % f)
-        if f.endswith(".ino"):
+        if f.endswith((".ino", "arduino")):
             body = s[s.index("static uint32 hfscx_32("):]
             body = body[:body.index("\n}")]
             ok = body.count("V1_MODE_STEPS)") == 2 and ", 8)" not in body
             a1_ok = "RNL_KDF_DC, base, V1_MODE_STEPS)" in s
         else:
             body = s[s.index("\nhfscx_32:\n"):]
-            body = body[:body.index("pop     {r4, r5, pc}" if f.endswith(".s") else "ret")]
+            body = body[:body.index("pop     {r4, r5, pc}" if f.endswith((".s", "arm")) else "ret")]
             ok = body.count(op + "\n") == 2 and not re.search(r"(#8|ecx, 8)\n", body)
             a1_ok = re.search(re.escape(op) + r"\s+[@;] 3n/4 \(TODO #349\)\n\s+"
                               r"(bl|call)\s+nl_fscx_revolve_v1\s+[@;] \w+ +=\s+ks", s)
@@ -169,8 +182,8 @@ def section_1():
     check(not bad32, "TODO #349: the 32-bit targets mirror it at 3n/4 = 24 -- hfscx_32's "
           "two blocks in the ARM / NASM suites and harnesses and the Arduino suite, and "
           "A1's keystream in the three suites (%s)" % bad32[:3])
-    ctl = _check_32bit({"Herradura cryptographic suite.ino":
-                        _src("Herradura cryptographic suite.ino").replace(
+    ctl = _check_32bit({"demos/arduino":
+                        _src("demos/arduino").replace(
                             "nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, V1_MODE_STEPS)",
                             "nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, 8)")})
     check(ctl, "CONTROL: the 32-bit check FIRES on an hfscx_32 block put back at 8 rounds")

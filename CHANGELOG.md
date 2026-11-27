@@ -2,6 +2,590 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [20.0.0] - 2026-11-27
+
+**One release for seventeen development steps (TODO #410–#426, and #415's redesign of
+HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
+section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
+(§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
+#415's redesign supersedes in this same release; their sections say so.  The first eleven
+were developed on `devtest` as v19.0.1–v24.0.0, and were folded into this one release
+before it shipped; those numbers appear only in commit messages.  The sections below
+follow the order the work was done.
+
+### #410: a wrong-secret matrix for every acceptance decision
+
+**TODO #410: every acceptance decision probed with a wrong secret (new test; five defects
+filed).**  #409's universal forgery survived because every check tampered an honest
+artifact or ran a weaker cheat than an adversary's.  The new
+`CliTest/test_wrong_secret_matrix.sh` runs the adversary's first move against every
+decision a CLI makes, through all four CLIs.  It makes each artifact with a secret that
+does not match the public statement:
+- another key pair's secret;
+- a private key spliced from the target's public fields and another secret
+  (`CliTest/wrong_secret/splice.py`);
+- #409's own cheat, a wrong witness for the TRUE statement.  The honest CLIs never
+  produce that, so `CliTest/wrong_secret/cheat_sign.py` runs the Python CLI with its
+  statement derivation patched, and exits 3 when the patch is not reached.
+
+It covers hpks, hpks-nl, rnl-sigma, hpks-stern and hpks-ring at N = 256 and 2304,
+hpks-wots, hpks-xmss, HCRED proofs and credentials, hske-nla1 --aead, hske-duplex(3),
+encfile/decfile and the passphrase envelope.  Every cell has an accept-control, and an
+accept-everything stand-in verifier is shown to fail the wrong-secret cells.  Cheats are
+made at shipped round counts, so no cell is a sampled verdict.  It runs in CI's
+cross-lang-compat job: 81 PASS and 2 KNOWN, in about 4 minutes on an SBC.
+
+Every proof system, signature and authenticated decryption rejects every wrong secret in
+all four CLIs.  The probes, a dead-value pass (an AST scan of the shipped Python, gcc's
+unused-variable warnings over the C) and a transcript review found five defects, each
+filed as an open TODO and none fixed here:
+
+- **#412:** `verify --algo hpks-t` checks the signature against the aggregate key it
+  carries and ignores `--pubkey`, so a threshold signature from ANY group verifies (a
+  KNOWN cell).
+- **#413:** an `hpke-stern` ciphertext carries e', so its plaintext is recovered from the
+  ciphertext and the public key alone, with no private key (a KNOWN cell; found from a
+  `K_int` the Python decoder read and ignored).
+- **#414:** every unauthenticated mode (hske, hske-nla1 without --aead, hske-nla2/3,
+  hpke, hpke-nl, hpke-nl3, hpke-stern) decrypts under the wrong key with exit 0, and
+  nothing documents that they carry no integrity.
+- **#415:** the Stern-F (both forms), ring and Schnorr-family Fiat-Shamir challenges omit
+  the public key: no forgery under a fixed key, but the weak Fiat-Shamir pattern.
+- **#416:** the Python test harness reimplements 79 suite functions, every verifier its
+  tests use among them, and imports none, so its numbered tests check the copies.
+
+#411 gains the by-hand reading of the Go and Java verifiers, which no compiler flag covers.
+
+### #412: `verify --algo hpks-t` needs the signing group (breaking, MIGRATING §54)
+
+**BREAKING (CLI accept surface): `verify --algo hpks-t` needs the signing group's public
+keys (TODO #412; MIGRATING.md section 54).**  Found by #410's wrong-secret matrix.  An
+HPKS-T signature carries its aggregate key C_agg, and every CLI verified it against that
+embedded key and nothing else, ignoring `--pubkey`.  So a threshold signature made by ANY
+group verified, even beside an unrelated `--pubkey`, in all four CLIs.
+
+What changed, in all four CLIs (C's `cmd_threshold_verify`, Go's `threshold-verify`, which
+`verify` forwards to, and Python's and Java's `verify` branch):
+- **The group:** `--pubkey` is required, as the group's member public keys,
+  comma-separated.  Their order does not matter, since L is built sorted.
+- **The check:** each key must be an HPKS or HPKS-NL public key at 256 bits that passes
+  `gf_pub_is_valid`.  The verifier recomputes C_agg = Π C_j^μ_j with the signers'
+  MuSig-style μ_j = H(L, C_j), the same function `threshold-aggregate` uses, so no
+  member's key choice can set the aggregate on its own.
+- **The verdict:** a signature carrying any other C_agg fails, with `verify: the
+  signature's aggregate key is not the one --pubkey gives` and `Verification FAILED`, exit
+  1.  No `--pubkey` gives `verify: hpks-t needs --pubkey: the signing group's public keys,
+  comma-separated`.
+
+The key-label checkers split hpks-t's `--pubkey` the way they split `--ring`, and
+`KEY_LABEL_SITES` gains the row (hpks, hpks-nl).  No signature file changes, and an honest
+group's signatures verify against that group.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes six ordinary ones: the group in
+  either order verifies; an unrelated key, one member alone, the group plus an outsider,
+  and no `--pubkey` are each refused or FAILED in every CLI.
+- `test_threshold_sign.sh` checks another group and a missing key.
+- `test_key_label_matrix.sh` gets a one-member threshold signature for its template.
+- `test_threshold_interop.sh`, `test_digest_matrix.sh` and `lib_der_fixtures.sh` pass the
+  group.
+
+### #413: `enc` / `dec --algo hpke-stern` are removed (breaking, MIGRATING §55)
+
+**BREAKING (CLI accept surface): `enc` / `dec --algo hpke-stern` are removed (TODO #413;
+MIGRATING.md section 55).**  Found by #410's wrong-secret matrix.  The HPKE-Stern-F demo
+ciphertext carried the error vector e′, and K = hash(seed, e′) needs only the public
+seed, so anyone holding a ciphertext and the public key decrypted it.  This was true in
+all four CLIs, at every width, the N = 2304 form included.  Of #413's two fixes, the mode
+is removed rather than kept behind a flag: its format had no confidentiality to label.
+`hpke-stern-kem`, which decodes with the private key, is the Stern-family encryption mode.
+
+What changed, in all four CLIs:
+- **Refused:** `enc` and `dec --algo hpke-stern` exit non-zero, naming the reason and
+  `hpke-stern-kem`, before any key or ciphertext is read.  Python's argparse `--algo`
+  choices drop the tag, so the generated C, Go and Java synopses drop it too.
+- **Removed:** the encap/decap branches, and the ciphertext codecs: Python's
+  `_encode_stern_ct`/`_decode_stern_ct`, Go's `encodeSternCT`/`encodeSternCTInts`, and
+  Java's `Codec.encodeSternCt`/`decodeSternCt`/`SternCt`.
+- **Spec tables:** `KEY_LABEL_SITES` loses the enc/dec hpke-stern rows.
+  `PEM_DER_FIELD_CAPS` loses the 5-item HPKE-Stern ciphertext layout, so a 5-item
+  CIPHERTEXT is held to hske-nla1's layout.
+- **Kept:** `hpke-stern` keys.  `genpkey --algo hpke-stern` still works, and the key
+  signs as a Stern key, as before.  The suites keep `hpke_stern_f_*` / `hpke_stern_l_*` as
+  library demonstrations.
+
+SECURITY.md's Stern-F row and the spec's hpke-stern note now say the mode gave no
+confidentiality.
+
+Tests:
+- `test_wrong_secret_matrix.sh`'s KNOWN cell becomes ordinary ones: the key still signs
+  (the control); `enc` is refused; `dec` of a v20-format ciphertext, with the right key,
+  is refused.  No KNOWN cell remains.
+- `test_encrypt.sh`, `test_c_encrypt.sh` and `test_go_encrypt.sh` check both refusals,
+  that the refusal points to hpke-stern-kem and writes nothing, and that the key signs.
+- `test_stern_128.sh` checks the refusal at N = 2304 in every CLI.
+- `test_java_stern_interop.sh` swaps hpke-stern keys between Java and Python and signs.
+- `test_width_matrix.sh` runs sign/verify on hpke-stern keys at every width.
+- `test_cross_lang_matrix.sh`, `test_canonical_encoding_matrix.sh`, the DER fixtures, the
+  key-label matrix and the CLI fuzzer drop the hpke-stern enc/dec cells.
+
+### #414: the unauthenticated encryption modes say so
+
+**The unauthenticated encryption modes now say so (TODO #414).**  Found by #410's
+wrong-secret matrix: `dec` under the wrong key, or of a modified ciphertext, exits 0 and
+writes wrong bytes in all four CLIs for every mode without a tag, and neither SECURITY.md
+nor `--help` said which modes those are.
+
+- **Measured.**  Flipping one bit of the ciphertext's E field, in all four CLIs:
+  `hske`, `hpke` and `hpke-stern-kem` flip plaintext bits j and j ± n/4 (E's part of
+  `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕ ROR^(n/4)), and `hske-nla1`
+  without `--aead` flips bit j, the same under every key, so anyone holding a ciphertext
+  can change chosen plaintext bits.  `hske-nla2`, `hske-nla3`, `hpke-nl` and `hpke-nl3`
+  change about half the block, which nothing detects either.
+- **One table.**  `ENC_INTEGRITY` in `spec/generate_spec.py` states each enc/dec `--algo`'s
+  integrity (`tag`, `none`, or `aead-flag` for hske-nla1) and malleability.  It is the
+  spec's new `enc_integrity` array and is generated into all four CLIs beside the
+  key-label table.
+- **A warning.**  `enc` and `dec` of an untagged mode print `<sub>: warning: --algo <a>
+  has no integrity check: ...` to stderr, with what a flip does and what to use instead.
+  `dec --algo hske-nla1` warns only for a format-tag-1 ciphertext.  Exit status and output
+  are unchanged.
+- **Documented.**  The C, Go and Java `--help` synopses gain a generated `NO INTEGRITY`
+  line under `enc` and `dec`, and Python's gains an epilog.  SECURITY.md has a new
+  "Integrity of the encryption modes" section, and SPEC.md §12 and llms.txt say the same.
+- **Tested.**  `CliTest/test_wrong_secret_matrix.sh` (89 to 134 checks) gains four cells
+  per untagged mode, read from the spec table:
+  - `enc` warns;
+  - the control decrypts and warns;
+  - the wrong key gives exit 0, garbage and the warning;
+  - the measured malleability class matches the table, and a predictable mode's flip
+    pattern matches the warning's text exactly.
+
+  Tagged modes must print no warning.  Negative controls show that a CLI with its
+  stderr dropped fails three cells, and that a wrong malleability claim fails in both
+  directions.
+- **A #413 leftover.**  `CliTest/test_single_block_enc.sh` still ran `enc`/`dec --algo
+  hpke-stern`, removed by #413 above, so 24 of its cells failed.  It drops hpke-stern from
+  its lists and passes 392 of 392.
+- **Not done: `--aead` as hske-nla1's default.**  #414's fourth item was considered and
+  declined.  It is MAJOR, it changes what `enc --algo hske-nla1` writes, and `--aead`
+  needs a 256-bit key where plain hske-nla1 takes any width from 16 to 256 bits.  The
+  warning now names the tagged modes instead.
+
+### #416: the Python harness copies are held to the shipped suite
+
+**The Python test harness is now held to the shipped suite (TODO #416).**
+`CryptosuiteTests/Herradura_tests.py` is standalone by design: it re-implements 72 of the
+suite's functions rather than importing them, so its `[FAIL]`-gated numbered tests held the
+COPY to its own expectations.  C's harness uses `herradura.h`, Go's the package and Java's
+`SelfTest` the shipped classes, so Python was the one port whose numbered tests did not test
+what ships.  #409 is what that cost: the harness's ZKBoo copy carried the shipped bug and
+its tests passed.
+
+- **New checker `CryptosuiteTests/check_suite_parity.py`** (run by `native-python-cli` and
+  `tools/check_fast.sh`):
+  - a CENSUS forces every harness function whose name shadows a suite function to be
+    classified (PARITY / RANDOMIZED / HELPER); a new un-classified shadow fails, as the
+    `spec/` censuses do;
+  - every deterministic primitive is run in both modules on the same inputs and compared;
+  - each verifier (`hpks_stern_f`, ZKBoo `zkp_nl`) is cross-verified BOTH WAYS and a
+    wrong-statement and a tampered artifact must be REJECTED by BOTH verifiers — the
+    rejection asserted against the SHIPPED verifier, so a shipped verifier that accepts a
+    bad proof fails here even when the harness copy shares the bug (the #409 class).  A pure
+    agreement check would not catch that.
+- **Two real drifts found and fixed** in the harness's Stern copy, which its standalone
+  tests never caught:
+  - `_stern_gen_perm` was the pre-TODO-#129 version (advance-every-swap, modulo bias); the
+    suite uses counter-mode + Lemire multiply-shift, bit-identical with C/Go.  Synced.
+  - the Stern Fiat-Shamir challenge was `ch_st.uint % 3` (full 256-bit) against the suite's
+    `(ch_st.uint & 0xFFFFFFFF) % 3` (low 32 bits), in sign, verify and the ring.  Synced.
+  The harness's `[17]`/`[20]`/`[53]` had been exercising a permutation and challenge schedule
+  that no longer ship; they now match the suite and still pass.
+- **SecurityProofsCode (item 3):** no self-contained script reimplements a shipped verifier
+  by name; the "the null is a model and nothing checked the model" risk (the
+  `zkp_pqc_exploration.py` case) is already governed by `run_findings_gates.py`'s MEASURED-
+  null requirement for `follows` gates (TODO #304).  No change needed.
+- **CLAUDE.md** gains the rule under "Rules for writing tests".
+
+### #411: a general security review of the shipped code
+
+**A general security review of the shipped code (TODO #411).** The project had had
+targeted audits — constant-time (#129, #182, #249), parser/encoding (#130, #367,
+#403-#408), file modes (#395), peer-value screening (#371) — but never one pass over the
+whole shipped surface; #409 showed the cost. This item is that pass: the four CLIs,
+`herradura.h`, the Go package, the Python suite/codec, the Java port, CI and the
+Dockerfile, one checklist area at a time, with the host's analyzers (`clang --analyze`,
+`go vet`, `javac`, an AST pass over the Python, `valgrind`) run as analysis only.
+
+Most of the surface held — randomness is OS-CSPRNG-only with fatal short reads in every
+port and no seeded PRNG on any shipped path (the `KAT/*_replay.json` hooks live only in
+the test harnesses); secret-dependent tag comparisons are constant-time everywhere;
+`decfile` bounds its attacker-controlled length field before any arithmetic and verifies
+before decrypting (#368); no CLI writes a temp file or leaks key material into an error
+message; domain-separation tags are distinct; and no shipped code imports a third-party
+dependency. The review filed two hardening findings as their own TODOs, consistent with
+#411's method (it closes when each area is reviewed and its findings filed, not when they
+are fixed):
+
+- **#417** — every CLI creates its output with `O_CREAT`/`O_TRUNC` and no `O_NOFOLLOW`,
+  so a symlinked output path is followed: the target is overwritten and, because the mode
+  applies only on creation, a private key can land in a pre-existing world-readable file,
+  defeating #395's 0600 intent. Reproduced in C and Go.
+- **#418** — CI actions are pinned to mutable tags (`actions/checkout@v4`,
+  `github/codeql-action/*@v3`), not commit SHAs. All first-party, but the checklist asks
+  for SHA pinning held by a tool.
+
+Both are local/standing hardening issues, not a forgery or key-recovery class — #410
+having already swept the acceptance decisions (yielding #412-#416) is why. No shipped
+code changed in this item.
+
+### #417: no CLI writes through a symlink; one-time signatures burn first (breaking, MIGRATING §56)
+
+**No CLI writes through a symbolic link, and a one-time signature burns its leaf
+first (TODO #417).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 56.
+
+Every writer in the four CLIs created its output with `O_CREAT | O_TRUNC` and no
+`O_NOFOLLOW`.  A symlink at the output path was followed: its target was overwritten and,
+because `O_CREAT`'s mode applies only on creation, kept its mode — so a private key written
+through a link to a world-readable file was world-readable (defeating #395's 0600 rule),
+and a dangling link created a file wherever it pointed.  Reproduced in C and Go by the
+#411 review.  The last path component may no longer be a link, in every port:
+
+```
+key.pem: is a symbolic link; refusing to write through it (use - for stdout)
+```
+
+C and Python use `O_NOFOLLOW` where the platform defines it; Java uses
+`LinkOption.NOFOLLOW_LINKS`; Go — a single-file build that cross-compiles for Windows,
+where `syscall.O_NOFOLLOW` does not exist — opens without `O_TRUNC`, checks
+`os.SameFile(opened, Lstat(path))`, and only then truncates, so no byte of a link's target
+changes even if a link is swapped in mid-call.  New paths are still created 0600 and
+existing regular files still overwritten with their mode kept.  `--out /dev/stdout`
+(itself a link) is now refused; use `--out -`.
+
+**Fixing it exposed a worse ordering defect.**  `sign --algo hpks-wots` / `hpks-xmss`
+wrote the signature BEFORE burning the leaf in `<key>.idx`, and C and Go discarded a
+failed burn, so an unwritable sidecar (read-only directory, full disk — or a symlinked
+`.idx` once refused) released a signature and left the leaf for the next `sign`: two WOTS
+signatures under one key, which is a forgery.  Python and Java raised, but only after the
+signature was on disk.  All four now write, flush and fsync the leaf before the signature
+exists, and stop if that fails; a failure after the burn wastes the leaf, the safe side.
+Java's sidecar also no longer passes through the passphrase envelope.
+
+New `CliTest/test_output_symlink.sh` (cross-lang-compat): 52 cells over four CLIs —
+accept-controls (new path 0600; regular file overwritten, mode kept; `/dev/null`; WOTS signs once,
+XMSS advances), symlink / dangling / `encfile --out` refusals with the target
+byte-identical, and an unwritable or symlinked `.idx` releasing no signature for both
+WOTS and XMSS — plus two negative controls shown to fire: a link-following writer fails
+exactly the 3 symlink cells, and a signer that burns a copy of the state fails both
+unwritable-sidecar cells.
+
+### #418: CI actions are pinned to commit SHAs
+
+**CI actions are pinned to commit SHAs, and a tool holds them there (TODO #418).**
+`ci.yml` and `codeql.yml` ran `actions/checkout@v4`, `actions/setup-node@v4` and
+`github/codeql-action/{init,analyze}@v3` — moving tags, so whoever can move one changes
+what every run here executes with `GITHUB_TOKEN` in scope.  Each of the 20 `uses:` lines is
+now `owner/action@<40-hex sha>  # vX.Y.Z`, pinned to the commit its tag pointed at when
+resolved (`git ls-remote --tags`, peeled): checkout `11d5960a…` (v4.4.0), setup-node
+`49933ea5…` (v4.4.0), codeql-action `74c1aea9…` (v3.39.5).  No action changes version, so
+no run changes behaviour.
+
+New `tools/check_action_pinning.py` (in `native-python-cli` and `tools/check_fast.sh`)
+scans every workflow under `.github/` and fails a remote `uses:` that is not a 40-hex
+lowercase SHA with a `# vX[.Y[.Z]]` comment, a `docker://` image not pinned by `sha256`,
+one action pinned two different ways, or a `uses:` line it cannot parse (so a layout it
+misreads fails rather than passes empty).  Local `./` actions are exempt.  Its controls run
+first and must fire: a tag pin, a 39-hex SHA, an uppercase SHA, a missing comment, a
+second SHA for the same action and a flow-style `{uses: …}` are each refused, and an added
+local action is accepted; against an accept-everything checker six controls fail, against
+a refuse-everything one the accept-control does.  Before the pins it reported all 20
+lines.  Known limit: it cannot check offline that a SHA is the commit its comment names.
+
+### #419, #420: one-time-signature state is read fail-closed; the key must be a file (breaking, MIGRATING §57)
+
+**A one-time-signature key's state is read fail-closed, and the key must be a file
+(TODO #419, #420).**  **MAJOR**: it refuses invocations the CLIs accepted — see
+MIGRATING.md section 57.
+
+*#419.*  `<key>.idx` is all that stops a WOTS key signing twice or an XMSS key reusing a
+leaf, and every port read it fail-open: a missing, empty or unparseable file read as `0`
+(unused).  Reproduced against the pre-fix build: an empty `.idx` let a used WOTS key sign again in
+all four CLIs, `garbage` in C, Python and Java, `1x` in Python and Java; empty or
+`garbage` made all four XMSS signers reuse leaf 0; C and Go clamped a negative count to 0.
+Each port now has ONE reader (`ots_state_read` / `otsStateRead` / `_ots_state_read` /
+`readIdxState`) shared by WOTS (max 1) and XMSS (max 2^h): the file must exist, be a
+regular file (not a link), and hold one canonical decimal (`0` or `[1-9][0-9]*`, at most
+10 digits, at most one trailing newline) within range, or `sign` refuses before a
+signature exists, naming the reason.
+
+*#420.*  With the key on stdin there is nowhere to keep its state: C and Go wrote it to
+`./-.idx`, shared by every key piped in from that directory (a fresh key was refused as
+used; the same key from another directory signed again), and Java skipped state entirely,
+so a WOTS key read from stdin signed twice.  `sign --algo hpks-wots|hpks-xmss` now refuses
+a `--key` that is `-` or not a regular file, before reading it, and `genpkey` for those
+algorithms refuses `--out -` or no `--out`, in all four CLIs (Python's refusal was a PEM
+parse side effect and is now the deliberate check).
+
+New `CliTest/test_ots_state.sh` (cross-lang-compat): per CLI, 4 accept-controls, 22
+damaged-state cells (each must exit non-zero, write no signature and leave the `.idx`
+byte-identical), 2 used/exhausted cells and 8 stdin/stdout cells — 144 cells plus two
+negative controls, both shown to fire: a stand-in that resets a refused `.idx` to `0` and
+signs fails exactly the 22 damaged cells, and one that spools a stdin key through a
+temporary file fails exactly the 8 stdin cells.  Against the pre-fix CLIs the same
+matrix fails 82 cells across all four ports.
+
+### #415: HPKS-Ring is re-rated broken; HPKS key substitution is recorded
+
+**HPKS-Ring is re-rated broken, and HPKS/HPKS-NL key substitution is recorded as accepted
+(TODO #415, documentation only).**  A fresh review of the four ports' ring verifiers
+(not the old tests) confirms #415's finding.  `hpks-ring` is existentially forgeable with
+no member's secret key, at N = 256 and N = 2304 and at 219 rounds.  The OR-composition
+splits each round's challenge across members mod 3, but a keyless party can answer two
+of Stern's three challenges, and `b = 2`, the only branch that reads the public key, is
+never forced.  SECURITY.md and `spec/` now rate it **Broken — do not use** (it was
+demo-only), and `llms.txt` says so.  The #415 line in the #410 section above ("no
+forgery under a fixed key") is superseded.  The scheme itself is unchanged; refusing it
+in the CLIs and redesigning it stay open in #415, which now records a revised fix
+direction.  HPKS and HPKS-NL omit the public key from the challenge, so about half of
+all signatures also verify under a publicly computable second key.  Reconfirmed through
+all four CLIs, with a refused negative control.  This is recorded as accepted: the
+schemes are already pedagogical, and binding the key would change the wire format.
+HPKS-T is not affected, because #412's verifier rebuilds its aggregate from the member
+list.  `spec/check_security_md.py` accepts the status prose "Broken".
+
+### #421: an HPKS-Ring challenge byte must be 0, 1 or 2 (breaking, MIGRATING §58)
+
+**An HPKS-Ring challenge byte must be a trit (TODO #421).**  **MAJOR**: it refuses
+signature files earlier builds verified — see MIGRATING.md section 58.
+
+Found by #415's code review.  Each ring-signature entry carries its challenge `b` as one
+byte.  Every verifier sent a `b` other than 0 or 1 to the `b = 2` check, while the
+per-round sum took it mod 3, so rewriting a `b = 2` round as 5 (or as any byte up to
+254 with residue 2) kept both checks and still verified.  This was confirmed against
+the pre-fix build through the CLIs: all four short-form (N = 256) verifiers accepted the
+re-encoding, and so did Python's long-form (N = 2304) verifier.  The C, Go and Java
+long-form round checkers already refused any `b` outside {0, 1, 2}.  It is
+malleability, not forgery: the responses are the signer's own.
+
+Every ring verifier now refuses any challenge outside {0, 1, 2} before the sum check:
+`hpks_stern_ring_verify` and `hpks_stern_l_ring_verify` / `_sternl_check_round` (Python),
+`stern_ring_verify` (herradura.h), `HpksSternRingVerify` (Go), `SternRing.verify`
+(Java), and the Python harness's `hpks_stern_ring_verify_local` copy.  Because it is a
+verifier invariant, it covers every CLI's decoder at once.
+
+New `CliTest/test_ring_challenge_bound.sh` (cross-lang-compat) re-encodes an honest
+signature (it never builds one).  Per CLI it has 2 accept-controls (short and long
+form) and 5 re-encodings: b = 2 → 5, b = 0 → 3, b = 1 → 4, one b = 2 → 254, and long
+b = 2 → 5.  That makes 28 cells plus a control that reduces each byte mod 3 before
+verifying, which fails exactly the 5 re-encoded cells.  The pre-fix build fails 9 of the
+cells, which is the defect exactly.
+
+### #422: `sign` and `verify --algo hpks-ring` are refused (breaking, MIGRATING §59)
+
+HPKS-Ring is forgeable with no member's secret key (#415), so all four CLIs now refuse
+`sign` and `verify --algo hpks-ring` at the dispatch, before any file is read, with one
+message that names the reason and points to `hpks-stern`.  The suite library functions
+stay for the redesign.  `spec/` drops the two `hpks-ring` key-label rows and the
+ring-signature DER rows (no subcommand reads one now), and every CliTest script's ring
+cells are removed.  `CliTest/test_ring.sh` is rewritten into the refusal test.  Per CLI
+it has an `hpks-stern` accept-control, then sign refused with no `--out` written,
+verify refused even for a GENUINE signature (made by the shipped Python library with
+the member's real key), and a refusal that comes before any file read (a missing
+`--sig` gives the same message).  It also runs the shipped Python ring verifier at
+N = 256 and 2304, where an honest signature verifies, another message is refused, and
+a b = 2 → 5 re-encoding is refused.  Two stand-ins fire as controls.  36 cells pass.
+#421's CLI test `test_ring_challenge_bound.sh` is retired.  Its bound is now asserted
+inside harness test `[20]` (C, Go, Python) and Java `SelfTest [26]`, where a run with
+no `b = 2` entry reports n/a rather than passing; `[20]`'s verdict pins are refreshed.
+
+### #423: an HPKS / HPKS-NL scalar must lie below the order of g (breaking, MIGRATING §60)
+
+Found by reviewing HPKS sign and verify.  `g = 3` generates the whole of GF(2^n)* at
+n = 64 and 256, but only a subgroup of index 15 at n = 32 and index 3 at n = 128.  The
+signers reduced `s` mod 2^n − 1, and `g^s` depends on `s mod ord(g)` only, so
+`s + ord(g)` (whenever it still fits in n bits) was a second encoding.  All four CLIs
+accepted it, for both `hpks` and `hpks-nl`, at both widths; #372's check covered a
+re-encoded e but not s.  It was malleability, not forgery.  New `gf_gen_order` /
+`gf_gen_order_w` / `GfGenOrder` / `genOrder` (a primitive-manifest entry) give
+ord(g) = (2^n − 1)/{15, 1, 3, 1}.  Every signer reduces `s` below it.  Every suite
+verifier, and every CLI verifier (after the algebra and e checks, with one shared
+message), refuses `s ≥ ord(g)`.  So does the Python harness copy
+`hpks_verify_checked`.  Keys and n = 64/256 signatures are unchanged.
+
+New `CliTest/test_hpks_s_bound.sh` (cross-lang-compat) has 164 cells:
+- a table cell that checks the shipped table is the EXACT order, i.e. g^ord = 1 and
+  g^(ord/p) ≠ 1 for every prime p dividing it, computed independently from
+  2^n − 1's factorisation;
+- per-CLI signer cells: 16 signatures each, all with s < ord(g);
+- 128 accept cells: every signer against every verifier, at all four widths and for
+  both algorithms;
+- 16 cells refusing the s + ord(g) re-encoding;
+- three controls that each fire: a wrong table, a re-encoding signer and a reducing
+  verifier.
+
+The pre-fix build fails exactly its 33 signer, refused and table cells.  The assembly
+and Arduino suites, which run 32-bit HPKS demos with no CLI, are unchanged.
+
+### #415: HPKS-Ring is one Stern proof over the ring (breaking, MIGRATING §61)
+
+The ring signature is redesigned and `sign` / `verify --algo hpks-ring` work again.  The
+OR-composition was forgeable with no member's secret key.  It split each round's
+challenge across the members mod 3, and a Stern party without the witness answers two
+of the three challenges.  It is replaced by ONE Stern proof over the ring's
+block-diagonal statement `diag([H_i | s_i])` (SPEC.md §11.2).  The witness is the
+signer's error in its block with that block's indicator set.  A per-round shuffle of the
+blocks (τ) and of the positions inside each block (π_i) hides which block.  The `b = 0`
+opening checks that the shuffled witness is one block of weight t with its indicator
+set.
+
+Every round has one challenge for one statement, and three openings of one commitment
+yield a member's key, so a forger answers at most two challenges in three:
+(2/3)^219 < 2^-128.  The transcript digest hashes the message, the canonical (sorted)
+ring and every commitment, which also closes #415's "challenge omits the keys" item for
+the ring.  `c1` and `c2` are salted, so the signer is hidden even from someone holding
+every member's key.  The wire carries D and, per round, the one unopened commitment
+with its opening; the verifier rebuilds the rest.
+
+- **Signature.**  It is about half the old size: ~57 KiB for 4 members at N = 256.
+  Rings hold 1 to 1024 members, given in any order, duplicates refused.  New PEM label
+  `HERRADURA HPKS-RING-V2 SIGNATURE`; the old label is named and refused by every CLI.
+- **Implementation.**  One code path covers both widths in each port, and the four
+  agree byte for byte.  `KAT/operation_replay.json` pins whole signatures at N = 256
+  and N = 2304, in place of the OR-composition's two member-major rows.  The
+  long-form ring functions and the simulator and trit helpers are removed.
+- **Tests.**
+  - `CliTest/test_ring.sh` is a 4x4 interop test again (62 cells, two controls that
+    fire).
+  - The ring cells #422 removed from the key-label, DER, malformed-PEM, numeric-flag,
+    round-floor, `stern_128`, width and wrong-secret matrices are back, adapted to the
+    new layout.  The wrong-secret CHEAT cell now patches the signer's two refusals to
+    reach the verifier with a wrong witness.
+  - Harness `[20]` (C, Go, Python) and Java `[26]` assert completeness, ring-order
+    independence, and refusal of another message, one changed byte and a wrong secret.
+    The Python harness's own copy matches the shipped suite byte for byte under one
+    stream and cross-verifies both ways.
+  - `[53]` and Java `[35]` check the signature's unopened commitments are distinct.
+- **Analysis gates.**  `SecurityProofsCode/stern_f_weight_binding.py` §2/§3 now score
+  the new ring's `b = 0` marker, the position of the non-zero block, against chance,
+  with a τ = identity control that fires.  `stern_ring_challenge_bias.py` anchors its
+  255-rejection check on the transcript-challenge expander.
+- **Census.**  `spec/` gains the ring's PRIMITIVES, PARAMETERS and rejection-basis rows,
+  and drops the retired ones.
+
+The assembly and Arduino suites kept the retired 32-bit demo until #424, below.
+
+### #424: the assembly and Arduino ring demos are the new construction
+
+The ARM Thumb-2, NASM i386 and Arduino suites and harnesses ran their own 32-bit
+OR-composition, which printed "signature verified" for a construction anyone can forge.
+It was worse than the 256-bit one: member 0 was always simulated with `b = 0` and the
+signer was always member 1, so the challenges named the signer.  They now run #415's
+construction at N = 32, t = 2, k = 2 and 4 rounds, with each port's 32-bit primitives
+(HFSCX-32 under tag `0x32000000 | ds`).  SPEC.md §11.2 gives the 32-bit parameters.  No
+wire format or CLI is involved: these targets have no CLI.
+- **Reference.**  A host-C copy of the Arduino code was checked before porting:
+  - 3000 signatures verified, in either ring order;
+  - all 111,000 single-bit tamperings refused, and every other message;
+  - every wrong-secret signature with a `b = 2` round refused;
+  - the `b = 0` block position about 50/50 for either signer.
+- **Suites.**  Each demo signs as one of two members, verifies, verifies with the ring
+  reordered, and refuses a changed opening word and another message.
+- **Harnesses.**  `[13]` runs 3 trials in ARM, i386 and Arduino.  Each trial is an
+  accept-control (verify in either order), the two refusals, and a signature made with a
+  wrong secret.  That last cell is exact: it is refused iff a round drew `b = 2`, and it
+  is counted n/a without one.  Each harness then pins one signature, from
+  `prng_state = 0x52494E47`, by its D and the XOR of its words.  The pin holds the three
+  ports to one construction.  Controls shown to fire, on scratch copies:
+  - an accept-everything verifier and a refuse-everything verifier, in ARM, i386 and
+    Arduino;
+  - a wrong pinned constant, in ARM and i386.
+- **Harness defect.**  The pin found that the Arduino harness's `stern_matrix_row_32`
+  lacked the HFSCX-32 finalization of TODO #88, which the Arduino suite and both
+  assembly harnesses apply.  Its Stern tests `[11]`–`[13]` had checked a different
+  parity-check matrix than the one that ships.  It is fixed.
+- **Census.**  `spec/check_language_parity.py`'s Arduino test marker accepts `F("…")`
+  literals.  `[13]` in the three reduced harnesses carries a `hash-binding` basis at
+  32 bits.
+- **SRAM.**  The Arduino suite leaves 3250 bytes for the stack (was 3342), and the
+  harness 3106 (was 3658); the guard is 2048.
+
+### #425: the 32-bit demos are one program per algorithm
+
+The ARM Thumb-2, NASM i386 and Arduino suites were each ONE program that ran about twenty
+demos in a row, with the Eve checks gathered in a block in the middle.  Each target is
+now a shared core plus one small program per algorithm, under `demos/` (`demos/README.md`
+lists them):
+- **ARM:** `demos/arm/core.s`, and `demos/arm/<name>.s`, which includes the core.
+- **i386:** `demos/i386/core.asm`, and `demos/i386/<name>.asm`, which includes the core.
+- **Arduino:** the `Herradura32` library (`demos/arduino/libraries/`), and one sketch per
+  directory, `demos/arduino/<name>/<name>.ino`, as the Arduino IDE requires.
+
+`Herradura cryptographic suite.{s,asm,ino}` are removed, and their routines are the cores
+unchanged.  The core is included rather than linked: gas and NASM labels are file-local,
+so linking would need every routine and datum exported.  No routine is copied.
+
+- **Programs.**  There are twenty per target: HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2,
+  HKEX-RNL, HPKS-NL, HPKE-NL, HPKS-Stern-F, HPKE-Stern-F, HPKS-Stern-Ring, ZKP-RNL,
+  ZKP-NL, masked HSKE, ratchet, FPE, tweakable cipher, accumulator and OPRF.  None is
+  interactive.  Each prints its sample inputs, every intermediate and its verdict.
+- **Eve checks.**  Each Eve check now sits in its algorithm's program.  New refusals,
+  each exact:
+  - HPKS and HPKS-NL refuse the same (R, s) for `plain ^ 1`;
+  - the accumulator refuses a member's proof path for a leaf outside the set.
+
+  ZKP-NL and ZKP-RNL gain no tamper check.  A tampered message passes ZKP-NL with
+  probability 1/81 (3^4 challenges) and ZKP-RNL with about 1.7·10⁻⁶ (C(32,4)·2^4
+  challenges), which is a flaky verdict in a gated demo.  OPRF has no verifier.
+- **Programs that reuse another's keys.**  HPKE-Stern-F and the ring start from the
+  Stern-F keygen; ZKP-RNL from the HKEX-RNL keygen; HPKS, HPKE, HPKS-NL and HPKE-NL from
+  Alice's public key.  The split checked each program for a value read with no writer
+  in it.
+- **Build and run.**  The three build scripts build every program, found by glob, and
+  the ungated-call and IT-flag guards cover the core and every program.
+  `run_{arm,asm_i386,arduino}.sh suite [name...]` runs them all, or the named ones, and
+  fails on a non-zero exit, a `[FAIL]` or a missing OK line.  The Arduino runner stops
+  each firmware at its first verdict: twenty firmwares take ~7 s, not twenty timeouts.
+  Controls shown to fire, in scratch copies of the tree:
+  - a demo that reports `[FAIL]`, and one that exits 0 without the OK line, fail the ARM
+    and i386 runners;
+  - a `[FAIL]` sketch and a sketch that never prints a verdict fail the Arduino runner.
+
+  Each new Eve check fails, as it must, with its tamper removed.
+- **SRAM.**  Smaller firmwares leave 5100–7402 bytes of the ATmega2560's 8 KB for the
+  stack; the single suite left 3250.
+- **Gates.**  `SecurityProofsCode/hfscx_mmo_compression.py`, `v1_remaining_sites.py`,
+  `v1_mode_rounds.py` and `v2_v3_b_setter.py` read a 32-bit target as its core followed
+  by every program.  `v2_v3_b_setter.py`'s per-target count stays 10, and its planted-call
+  control and `v1_mode_rounds.py`'s 8-round control still fire.
+- **Unchanged.**  The test harnesses `CryptosuiteTests/Herradura_tests.{s,asm,ino}` stay
+  single programs.  Their `[13]` pins the ring vector that #424 added.
+
+### #426: the one-time-signature state reader checks what it opened
+
+CodeQL (`cpp/toctou-race-condition`, high) flagged `ots_state_read` in
+`HerraduraCli/herradura_cli.c` on PR #389.  #419's fail-closed reader `lstat`ed
+`<key>.idx` and then `fopen`ed the same name, so the entry could be swapped between the
+check and the open.  The Go and Python readers had the same check-then-open shape.
+Java already opened with `NOFOLLOW_LINKS`, which refuses a link at the open itself.
+
+The exposure was small.  Whoever can swap `<key>.idx` can write the key's directory,
+and so could simply write `0` into it.  But the fix is cheap and makes #419's check
+atomic, as it was meant to be:
+- **C, Python:** `open(O_RDONLY | O_NOFOLLOW | O_NONBLOCK)`, then `fstat` the
+  descriptor that was opened.  A link fails at the open (ELOOP, or EMLINK on FreeBSD).
+  `O_NONBLOCK` keeps a FIFO from hanging the open before `fstat` refuses it.
+- **Go:** after the pre-check, open, then require the opened file to be the same
+  regular, non-link entry that `Lstat` names (`os.SameFile`).  This is `writeOutFile`'s
+  #417 pattern, since `syscall.O_NOFOLLOW` is not on every GOOS.
+- **Java:** unchanged.
+
+`CliTest/test_ots_state.sh` gains a cell: a FIFO as `.idx` must be refused, not hang,
+in all four CLIs (150 cells).  Its fail-open control now fails all 23 damaged cells.
+The FIFO cell is shown to fire: a C CLI built without `O_NONBLOCK` hangs on it and
+times out.  Not MAJOR: refusals and messages are unchanged.
+
 ## [19.0.0] - 2026-11-24
 
 Two breaking changes: the raw-body ZKP-NL and HCRED encodings (TODO #408) and the ZKBoo

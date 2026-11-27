@@ -1,24 +1,21 @@
-/*  Herradura Cryptographic Suite
-    ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
-                                       HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-                                       HPKS-Stern-F, HPKE-Stern-F, ZKP-RNL
-    KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
+/*  Herradura Cryptographic Suite -- ARM Thumb-2 core (TODO #425)
+    ARM 32-bit Thumb Assembly (GAS), KEYBITS = 32, I_VALUE = 8, R_VALUE = 24.
+    Every primitive and protocol routine of the 32-bit ARM target, its data, the
+    hprintf [FAIL] gate, demo_start and demo_finish.  It has no main: each
+    demos/arm/<algorithm>.s includes it (.include "core.s") and runs ONE
+    algorithm end to end.  Was "Herradura cryptographic suite.s" (one program
+    running every demo) until TODO #425; its version history is in CHANGELOG.md.
+
     HKEX-GF:   DH over GF(2^32)*, poly x^32+x^22+x^2+x+1, generator g=3
     HPKS:      Schnorr; s=(k-a*e) mod ORD; verify g^s*C^e==R
     HPKE:      El Gamal + fscx_revolve; enc_key=C^r; dec_key=R^a
     NL-FSCX v2: nl_v2(A,B) = fscx(A,B) + ROL32(B*((B+1)>>1), 8)  mod 2^32
-                inv: B XOR M^{-1}((Y-delta(B)) mod 2^32)
     HKEX-RNL:  Ring-LWR; N=32, q=65537, p=4096, pp=2
-
-    v1.5.13: HSKE-NL-A1 seed=ROR(base,28) [=ROL(base,4)=ROL(base,n/8)] fixes counter=0 degeneracy.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
     MIT License / GPL v3.0 — choose either.
 
-    Build: arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" \
-               "Herradura cryptographic suite.s"
-    Run:   qemu-arm "./Herradura cryptographic suite_arm"
-        or directly on ARM hardware
+    Build: ./build_arm.sh     Run: ./run_arm.sh suite
 */
 
     .syntax unified
@@ -47,6 +44,7 @@
     .equ SDF_T,    2
     .equ SDF_NROWS,16
     .equ SDF_ROUNDS,4
+    .equ RING_DW,  20         /* ring digest words: 8 + 3*SDF_ROUNDS */
     /* ZKP-RNL parameters (n=32) */
     .equ SIGMA_GAMMA, 4096
     .equ SIGMA_T,     4
@@ -61,7 +59,11 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_eve_msg_ok:   .asciz "- Eve's signature for another message refused (g^s * C^e' != R)\n"
+fmt_eve_msg_fail: .asciz "[FAIL] the signature verified another message!\n"
+fmt_eve_acc_ok:   .asciz "- Eve's leaf with a member's proof path refused (the root differs)\n"
+fmt_eve_acc_fail: .asciz "[FAIL] a leaf outside the set verified!\n"
+fmt_demo_hdr: .asciz "=== Herradura KEx demo: %s (ARM Thumb-2, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -115,11 +117,15 @@ lbl_oprf_hx:    .asciz "H(x)   "
 lbl_oprf_alpha: .asciz "alpha  "
 lbl_oprf_beta:  .asciz "beta   "
 lbl_oprf_F:     .asciz "F      "
-fmt_ring_hdr:    .asciz "\n-- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG -- OR-composed Stern, k=2] --\n"
-fmt_ring_ok:     .asciz "+ HPKS-Stern-Ring signature verified (k=2, signer=1)\n"
+fmt_ring_hdr:    .asciz "\n-- HPKS-Stern-Ring [CODE-BASED RING SIG -- one Stern proof over a k=2 ring, N=32, rounds=4] --\n"
+fmt_ring_ok:     .asciz "+ HPKS-Stern-Ring signature verified (k=2; it does not name the signer)\n"
 fmt_ring_fail:   .asciz "[FAIL] HPKS-Stern-Ring verification FAILED\n"
-fmt_eve_ring_ok: .asciz "- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)\n"
-fmt_eve_ring_fail:.asciz "[FAIL] Eve forged HPKS-Stern-Ring (Eve wins!)\n"
+fmt_ring_rev_ok: .asciz "+ HPKS-Stern-Ring verified with the ring in the other order\n"
+fmt_ring_rev_fail:.asciz "[FAIL] HPKS-Stern-Ring refused the reordered ring\n"
+fmt_eve_ring_ok: .asciz "- Eve's altered ring signature refused (the digest no longer matches)\n"
+fmt_eve_ring_fail:.asciz "[FAIL] Eve's altered ring signature verified!\n"
+fmt_eve_ring_msg_ok:  .asciz "- Eve's other message refused\n"
+fmt_eve_ring_msg_fail:.asciz "[FAIL] ring signature verified another message!\n"
     .balign 4
 ratchet_domain_32: .word 0x4E4C2D46   @ 'N','L','-','F' (first 4 bytes of NL-FSCX-RATCHET-V1)
 lbl_sigma_msg:   .asciz "msg (sigma) "
@@ -297,14 +303,29 @@ sdf_pi_tmp:   .space 16   /* pi[0..3] perm seeds */
 sdf_sr_tmp:   .space 16   /* sigma(r)[0..3] */
 sdf_sy_tmp:   .space 16   /* sigma(y)[0..3] */
 sdf_chals_tmp:.space 16   /* verify: re-derived challenges */
-/* Ring-Sig (78.I) scratch: k=2, rounds=4 */
-ring0_c0:     .space 16   /* member 0: c0[0..3] */
-ring0_c1:     .space 16   /* member 0: c1[0..3] */
-ring0_c2:     .space 16   /* member 0: c2[0..3] */
-ring0_b:      .space 16   /* member 0: b[0..3] (always 0 for HVZK sim) */
-ring0_respA:  .space 16   /* member 0: respA[0..3] */
-ring0_respB:  .space 16   /* member 0: respB[0..3] */
-ring_joint_b: .space 16   /* joint FS challenges[0..3] */
+/* HPKS-Stern-Ring (TODO #424) scratch: k=2, rounds=4 */
+    .balign 4
+ring_in:      .space 16   /* the ring as given: seed0, syn0, seed1, syn1 */
+ring_canon:   .space 16   /* sorted by (seed, syndrome) */
+ring_msg:     .space 4
+ring_e:       .space 4    /* the signer's secret */
+ring_j:       .space 4    /* its index in ring_in */
+ring_tau:     .space 4    /* block shuffle bit */
+ring_z:       .space 12   /* witness (x0, x1, c) */
+ring_v:       .space 12   /* verify: PI z / PI v */
+ring_hw:      .space 16   /* hash input words */
+ring_cw:      .space 8    /* challenge hash input (D, ctr) */
+ring_b:       .space 16   /* challenges[0..3] */
+ring_r:       .space 48   /* r[4][3] */
+ring_y:       .space 48   /* y[4][3] = z ^ r */
+ring_pr:      .space 48   /* PI r */
+ring_py:      .space 48   /* PI y */
+ring_ps:      .space 16   /* permutation seeds */
+ring_s1:      .space 16   /* c1 salts */
+ring_s2:      .space 16   /* c2 salts */
+ring_dbuf:    .space 80   /* digest input: 8 header words + 3 commitments/round */
+ring_sig:     .space 148  /* D + 4 rounds x 9 words */
+ring_perm:    .space 64   /* pi_0, pi_1 */
 /* ZKP-RNL scratch (n=32, 4 bytes per coeff) */
 sig_y:           .space 128  /* y poly (signed int32, [-gamma,gamma]) */
 sig_w:           .space 128  /* w = centered(m*y) (signed int32) */
@@ -344,12 +365,15 @@ zkp_ev_ao:   .space 12    /* eval gate outputs ao[p] for current bit */
 /* .text                                                               */
 /* ------------------------------------------------------------------ */
     .text
-    .global main
+/* ------------------------------------------------------------------ */
+/* demo_start: seed lcg_state from /dev/urandom (SA-01; fallback:     */
+/* keep the default if open fails).  Every demo calls it first.       */
+/* demo_finish: the TODO #350 [FAIL] gate -- exit 1 and say how many  */
+/* checks failed, else exit 0 with the OK line.  Never returns.       */
+/* ------------------------------------------------------------------ */
     .thumb_func
-
-main:
-    push    {r4-r11, lr}
-
+demo_start:
+    push    {r4, lr}
     @ SA-01: seed lcg_state from /dev/urandom (fallback: keep default if open fails)
     ldr     r0, =str_urandom
     ldr     r1, =str_mode_r
@@ -365,1280 +389,10 @@ main:
     mov     r0, r4
     bl      fclose
 prng_seeded:
+    pop     {r4, pc}
 
-    ldr     r0, =fmt_header
-    bl      hprintf
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_apriv
-    ldr     r2, =val_a_priv
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_bpriv
-    ldr     r2, =val_b_priv
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_key
-    ldr     r2, =val_key
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_plain
-    ldr     r2, =val_plain
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================ HKEX-GF */
-    ldr     r0, =fmt_hkex_hdr
-    bl      hprintf
-
-    mov     r0, #3
-    ldr     r1, =val_a_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_C
-    str     r0, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_b_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_C2
-    str     r0, [r3]
-
-    ldr     r0, =val_C2
-    ldr     r0, [r0]
-    ldr     r1, =val_a_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_sk
-    str     r0, [r3]
-
-    ldr     r0, =val_C
-    ldr     r0, [r0]
-    ldr     r1, =val_b_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_skB
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_C
-    ldr     r2, =val_C
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_C2
-    ldr     r2, =val_C2
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_skeyA
-    ldr     r2, =val_sk
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_skeyB
-    ldr     r2, =val_skB
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_sk
-    ldr     r0, [r0]
-    ldr     r1, =val_skB
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hkex_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hkex_done
-hkex_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hkex_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================ HSKE */
-    ldr     r0, =fmt_hske_hdr
-    bl      hprintf
-
-    ldr     r0, =val_plain
-    ldr     r0, [r0]
-    ldr     r1, =val_key
-    ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      fscx_revolve
-    ldr     r3, =val_E_hske
-    str     r0, [r3]
-
-    ldr     r0, =val_E_hske
-    ldr     r0, [r0]
-    ldr     r1, =val_key
-    ldr     r1, [r1]
-    mov     r2, #R_VALUE
-    bl      fscx_revolve
-    ldr     r3, =val_D_hske
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_E_hske
-    ldr     r2, =val_E_hske
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_D_hske
-    ldr     r2, =val_D_hske
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_D_hske
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hske_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hske_done
-hske_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hske_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================ HPKS Schnorr */
-    ldr     r0, =fmt_hpks_hdr
-    bl      hprintf
-
-    bl      prng_next
-    ldr     r3, =val_k_hpks
-    str     r0, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_k_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_R_hpks
-    str     r0, [r3]
-
-    ldr     r0, =val_R_hpks
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      fscx_revolve
-    ldr     r3, =val_e_hpks
-    str     r0, [r3]
-
-    ldr     r4, =val_a_priv
-    ldr     r4, [r4]
-    ldr     r5, =val_e_hpks
-    ldr     r5, [r5]
-    umull   r6, r7, r4, r5
-    adds    r6, r6, r7
-    it      cs
-    addcs   r6, r6, #1
-    ldr     r3, =val_ae_hpks
-    str     r6, [r3]
-
-    ldr     r4, =val_k_hpks
-    ldr     r4, [r4]
-    subs    r4, r4, r6
-    it      cc
-    subcc   r4, r4, #1
-    ldr     r3, =val_s_hpks
-    str     r4, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_s_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_gs_hpks
-    str     r0, [r3]
-
-    ldr     r0, =val_C
-    ldr     r0, [r0]
-    ldr     r1, =val_e_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    mov     r1, r0
-    ldr     r0, =val_gs_hpks
-    ldr     r0, [r0]
-    bl      gf_mul_32
-    push    {r0}
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_k_hpks
-    ldr     r2, =val_k_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_R_hpks
-    ldr     r2, =val_R_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_e_hpks
-    ldr     r2, =val_e_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_s_hpks
-    ldr     r2, =val_s_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-
-    pop     {r4}
-    ldr     r5, =val_R_hpks
-    ldr     r5, [r5]
-    cmp     r4, r5
-    bne     hpks_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hpks_done
-hpks_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hpks_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================ HPKE El Gamal */
-    ldr     r0, =fmt_hpke_hdr
-    bl      hprintf
-
-    bl      prng_next
-    orr     r0, r0, #1
-    ldr     r3, =val_r_hpke
-    str     r0, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_r_hpke
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_R_hpke
-    str     r0, [r3]
-
-    ldr     r0, =val_C
-    ldr     r0, [r0]
-    ldr     r1, =val_r_hpke
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_enc_key
-    str     r0, [r3]
-
-    ldr     r0, =val_plain
-    ldr     r0, [r0]
-    ldr     r1, =val_enc_key
-    ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      fscx_revolve
-    ldr     r3, =val_E_hpke
-    str     r0, [r3]
-
-    ldr     r0, =val_R_hpke
-    ldr     r0, [r0]
-    ldr     r1, =val_a_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_dec_key
-    str     r0, [r3]
-
-    ldr     r0, =val_E_hpke
-    ldr     r0, [r0]
-    ldr     r1, =val_dec_key
-    ldr     r1, [r1]
-    mov     r2, #R_VALUE
-    bl      fscx_revolve
-    ldr     r3, =val_D_hpke
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_R_hpke
-    ldr     r2, =val_R_hpke
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_E_hpke
-    ldr     r2, =val_E_hpke
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_D_hpke
-    ldr     r2, =val_D_hpke
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_D_hpke
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hpke_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hpke_done
-hpke_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hpke_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HSKE-NL-A1  (counter-mode with NL-FSCX v1)
-       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4) ^ DC, base, V1_MODE_STEPS)
-       E = plain XOR ks;  D = E XOR ks  (must == plain)
-       ================================================================ */
-    ldr     r0, =fmt_hske_nl1_hdr
-    bl      hprintf
-
-    bl      prng_next               @ r0 = nonce N
-    ldr     r3, =val_nonce_nl1
-    str     r0, [r3]                @ save N
-    ldr     r1, =val_key
-    ldr     r1, [r1]
-    eor     r0, r0, r1              @ r0 = base = N XOR key
-    mov     r1, r0                  @ r1 = B = base (counter=0)
-    ror     r0, r0, #28             @ r0 = ROL(base, 4)         [n=32, n/8=4]
-    ldr     r2, =RNL_KDF_DC
-    eor     r0, r0, r2              @ r0 = seed = ROL(base,4) XOR DC
-    mov     r2, #V1_MODE_STEPS      @ 3n/4 (TODO #349)
-    bl      nl_fscx_revolve_v1      @ r0 = ks  (A=seed, B=base)
-    ldr     r3, =val_ks_nl1
-    str     r0, [r3]
-
-    ldr     r4, =val_plain
-    ldr     r4, [r4]
-    ldr     r5, =val_ks_nl1
-    ldr     r5, [r5]
-    eor     r4, r4, r5
-    ldr     r3, =val_E_nl1
-    str     r4, [r3]
-    eor     r4, r4, r5
-    ldr     r3, =val_D_nl1
-    str     r4, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_N_nl1
-    ldr     r2, =val_nonce_nl1
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_E_nl1
-    ldr     r2, =val_E_nl1
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_D_nl1
-    ldr     r2, =val_D_nl1
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_D_nl1
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hske_nl1_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hske_nl1_done
-hske_nl1_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hske_nl1_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HSKE-NL-A2  (revolve-mode with NL-FSCX v2)
-       E = nl_fscx_revolve_v2(plain, key, R_VALUE)
-       D = nl_fscx_revolve_v2_inv(E, key, R_VALUE)  must == plain
-       CAUTION: deterministic — same (plain, key) always yields same E.
-       ================================================================ */
-    ldr     r0, =fmt_hske_nl2_hdr
-    bl      hprintf
-
-    ldr     r0, =val_plain
-    ldr     r0, [r0]
-    ldr     r1, =val_key
-    ldr     r1, [r1]
-    mov     r2, #R_VALUE
-    bl      nl_fscx_revolve_v2
-    ldr     r3, =val_E_nl2
-    str     r0, [r3]
-
-    ldr     r0, =val_E_nl2
-    ldr     r0, [r0]
-    ldr     r1, =val_key
-    ldr     r1, [r1]
-    mov     r2, #R_VALUE
-    bl      nl_fscx_revolve_v2_inv
-    ldr     r3, =val_D_nl2
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_E_nl2
-    ldr     r2, =val_E_nl2
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_D_nl2
-    ldr     r2, =val_D_nl2
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_D_nl2
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hske_nl2_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hske_nl2_done
-hske_nl2_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hske_nl2_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HKEX-RNL  (Ring-LWR key exchange)
-       ================================================================ */
-    ldr     r0, =fmt_hkex_rnl_hdr
-    bl      hprintf
-
-    ldr     r0, =rnl_m_base
-    bl      rnl_m_poly
-
-    ldr     r0, =rnl_a_rand
-    bl      rnl_rand_poly
-
-    ldr     r0, =rnl_h_ptr
-    ldr     r1, =rnl_m_blind
-    str     r1, [r0]
-    ldr     r0, =rnl_f_ptr
-    ldr     r1, =rnl_m_base
-    str     r1, [r0]
-    ldr     r0, =rnl_g_ptr
-    ldr     r1, =rnl_a_rand
-    str     r1, [r0]
-    bl      rnl_poly_add
-
-    ldr     r0, =rnl_s_A
-    ldr     r1, =rnl_C_A
-    ldr     r2, =rnl_m_blind
-    bl      rnl_keygen
-
-    ldr     r0, =rnl_s_B
-    ldr     r1, =rnl_C_B
-    ldr     r2, =rnl_m_blind
-    bl      rnl_keygen
-
-    ldr     r0, =rnl_s_A
-    ldr     r1, =rnl_C_B
-    bl      rnl_agree_full          @ r0=KA, r1=hint_A
-    ldr     r3, =val_KA
-    str     r0, [r3]
-    ldr     r3, =val_hint_A
-    str     r1, [r3]
-
-    ldr     r0, =rnl_s_B
-    ldr     r1, =rnl_C_A
-    ldr     r2, =val_hint_A
-    ldr     r2, [r2]
-    bl      rnl_agree_recv          @ r0=KB
-    ldr     r3, =val_KB
-    str     r0, [r3]
-
-    ldr     r0, =val_KA
-    ldr     r0, [r0]
-    ror     r0, r0, #28         @ ROL32(KA, 4)           [n/8 = 32/8 = 4]
-    ldr     r3, =RNL_KDF_DC
-    eor     r0, r0, r3          @ seed = ROL(KA,4) XOR DC
-    ldr     r1, =val_KA
-    ldr     r1, [r1]            @ B = KA
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1  @ r0 = sk
-    ldr     r3, =val_sk_rnl
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_Ka
-    ldr     r2, =val_KA
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_Kb
-    ldr     r2, =val_KB
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_sk_a
-    ldr     r2, =val_sk_rnl
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_KA
-    ldr     r0, [r0]
-    ldr     r1, =val_KB
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hkex_rnl_noagree
-    ldr     r0, =fmt_rnl_agree
-    bl      hprintf
-    b       hkex_rnl_done
-hkex_rnl_noagree:
-    ldr     r0, =fmt_rnl_noagree
-    bl      hprintf
-hkex_rnl_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HPKS-NL  (NL-hardened Schnorr: HFSCX-32 challenge)
-       ================================================================ */
-    ldr     r0, =fmt_hpks_nl_hdr
-    bl      hprintf
-
-    bl      prng_next
-    ldr     r3, =val_k_hpks
-    str     r0, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_k_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_R_hpks
-    str     r0, [r3]
-
-    ldr     r0, =val_R_hpks
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    bl      hpks_nl_challenge_32    @ e = HFSCX-32(TAG, R, P)  (TODO #348)
-    ldr     r3, =val_e_hpks
-    str     r0, [r3]
-
-    ldr     r4, =val_a_priv
-    ldr     r4, [r4]
-    ldr     r5, =val_e_hpks
-    ldr     r5, [r5]
-    umull   r6, r7, r4, r5
-    adds    r6, r6, r7
-    it      cs
-    addcs   r6, r6, #1
-    ldr     r3, =val_ae_hpks
-    str     r6, [r3]
-
-    ldr     r4, =val_k_hpks
-    ldr     r4, [r4]
-    subs    r4, r4, r6
-    it      cc
-    subcc   r4, r4, #1
-    ldr     r3, =val_s_hpks
-    str     r4, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_s_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_gs_hpks
-    str     r0, [r3]
-
-    ldr     r0, =val_C
-    ldr     r0, [r0]
-    ldr     r1, =val_e_hpks
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    mov     r1, r0
-    ldr     r0, =val_gs_hpks
-    ldr     r0, [r0]
-    bl      gf_mul_32
-    push    {r0}
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_R_hpks
-    ldr     r2, =val_R_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_s_hpks
-    ldr     r2, =val_s_hpks
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_lhs
-    pop     {r2}
-    push    {r2}
-    bl      hprintf
-
-    pop     {r4}
-    ldr     r5, =val_R_hpks
-    ldr     r5, [r5]
-    cmp     r4, r5
-    bne     hpks_nl_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hpks_nl_done
-hpks_nl_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hpks_nl_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HPKE-NL  (NL-hardened El Gamal: NL-FSCX v2 encrypt)
-       ================================================================ */
-    ldr     r0, =fmt_hpke_nl_hdr
-    bl      hprintf
-
-    bl      prng_next
-    orr     r0, r0, #1
-    ldr     r3, =val_r_nl
-    str     r0, [r3]
-
-    mov     r0, #3
-    ldr     r1, =val_r_nl
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_R_nl
-    str     r0, [r3]
-
-    ldr     r0, =val_C
-    ldr     r0, [r0]
-    ldr     r1, =val_r_nl
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_enc_nl
-    str     r0, [r3]
-
-    ldr     r0, =val_plain
-    ldr     r0, [r0]
-    ldr     r1, =val_enc_nl
-    ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2
-    ldr     r3, =val_E_nl2
-    str     r0, [r3]
-
-    ldr     r0, =val_R_nl
-    ldr     r0, [r0]
-    ldr     r1, =val_a_priv
-    ldr     r1, [r1]
-    bl      gf_pow_32
-    ldr     r3, =val_dec_nl
-    str     r0, [r3]
-
-    ldr     r0, =val_E_nl2
-    ldr     r0, [r0]
-    ldr     r1, =val_dec_nl
-    ldr     r1, [r1]
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2_inv
-    ldr     r3, =val_D_nl2
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_E_nl2
-    ldr     r2, =val_E_nl2
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_D_nl2
-    ldr     r2, =val_D_nl2
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_D_nl2
-    ldr     r0, [r0]
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hpke_nl_fail
-    ldr     r0, =fmt_ok
-    bl      hprintf
-    b       hpke_nl_done
-hpke_nl_fail:
-    ldr     r0, =fmt_fail
-    bl      hprintf
-hpke_nl_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HPKS-Stern-F  (code-based PQC: Syndrome Decoding ZKP, EUF-CMA)
-       N=32, t=2, rounds=4; seed and e generated via prng_next
-       ================================================================ */
-    ldr     r0, =fmt_sdf_sign_hdr
-    bl      hprintf
-
-    @ key generation: seed = prng_next()
-    bl      prng_next
-    ldr     r3, =val_sdf_seed
-    str     r0, [r3]
-
-    @ e = stern_rand_error_32() — weight-2 error vector
-    bl      stern_rand_error_32
-    ldr     r3, =val_sdf_e
-    str     r0, [r3]
-
-    @ sdf_syn = stern_syndrome_32(seed, e)
-    ldr     r0, =val_sdf_seed
-    ldr     r0, [r0]
-    ldr     r1, =val_sdf_e
-    ldr     r1, [r1]
-    bl      stern_syndrome_32
-    ldr     r3, =val_sdf_syn
-    str     r0, [r3]
-
-    @ sign: fills sdf_c0..c2, sdf_b, sdf_respA, sdf_respB
-    bl      hpks_stern_f_sign_32
-
-    @ verify
-    bl      hpks_stern_f_verify_32
-    cmp     r0, #1
-    bne     hpks_sdf_fail
-    ldr     r0, =fmt_sdf_ok
-    bl      hprintf
-    b       hpks_sdf_done
-hpks_sdf_fail:
-    ldr     r0, =fmt_sdf_fail_msg
-    bl      hprintf
-hpks_sdf_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HPKE-Stern-F  (Niederreiter KEM, N=32, t=2)
-       Encap: K = hash(seed, e'); ct = H·e'^T
-       Decap (known e'): K' = hash(seed, e')  [demo]
-       ================================================================ */
-    ldr     r0, =fmt_sdf_enc_hdr
-    bl      hprintf
-    ldr     r0, =fmt_sdf_note
-    bl      hprintf
-
-    @ encap: fills val_sdf_K_enc, val_sdf_ct, val_sdf_e_prime
-    bl      hpke_stern_f_encap_32
-
-    @ decap (known e'): K' = hash2(seed, e')
-    ldr     r0, =val_sdf_e_prime
-    ldr     r0, [r0]
-    bl      hpke_stern_f_decap_known_32
-    ldr     r3, =val_sdf_K_dec
-    str     r0, [r3]
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_K_enc
-    ldr     r2, =val_sdf_K_enc
-    ldr     r2, [r2]
-    bl      hprintf
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_K_dec
-    ldr     r2, =val_sdf_K_dec
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =val_sdf_K_enc
-    ldr     r0, [r0]
-    ldr     r1, =val_sdf_K_dec
-    ldr     r1, [r1]
-    cmp     r0, r1
-    bne     hpke_sdf_fail
-    ldr     r0, =fmt_hpke_sdf_ok
-    bl      hprintf
-    b       hpke_sdf_done
-hpke_sdf_fail:
-    ldr     r0, =fmt_hpke_sdf_fail
-    bl      hprintf
-hpke_sdf_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================
-       HPKS-Stern-Ring (78.I)  k=2, N=32, t=2, rounds=4
-       Member 0: HVZK-simulated (b=0 for all rounds)
-       Member 1: real signer (uses val_sdf_seed / val_sdf_e / val_sdf_syn)
-       ================================================================ */
-    ldr     r0, =fmt_ring_hdr
-    bl      hprintf
-
-    @ sign as member 1 (index 1 in ring of 2)
-    bl      hpks_stern_ring2_sign_32
-
-    @ verify ring signature
-    bl      hpks_stern_ring2_verify_32
-    cmp     r0, #1
-    bne     hpks_ring_fail
-    ldr     r0, =fmt_ring_ok
-    bl      hprintf
-    b       hpks_ring_done
-hpks_ring_fail:
-    ldr     r0, =fmt_ring_fail
-    bl      hprintf
-hpks_ring_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ================================================================ EVE tests */
-    ldr     r0, =fmt_eve_hdr
-    bl      hprintf
-
-    /* Eve uses wrong key: C XOR R_nl instead of C^r */
-    ldr     r4, =val_C
-    ldr     r4, [r4]
-    ldr     r5, =val_R_nl
-    ldr     r5, [r5]
-    eor     r4, r4, r5
-    ldr     r0, =val_E_nl2
-    ldr     r0, [r0]
-    mov     r1, r4
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2_inv
-    ldr     r1, =val_plain
-    ldr     r1, [r1]
-    cmp     r0, r1
-    beq     eve_hpke_fail
-    ldr     r0, =fmt_eve_ok
-    bl      hprintf
-    b       eve_hpke_done
-eve_hpke_fail:
-    ldr     r0, =fmt_eve_fail
-    bl      hprintf
-eve_hpke_done:
-
-    /* Eve random guess for HKEX-RNL */
-    bl      prng_next
-    ldr     r1, =val_sk_rnl
-    ldr     r1, [r1]
-    cmp     r0, r1
-    beq     eve_rnl_fail
-    ldr     r0, =fmt_eve_rnl_ok
-    bl      hprintf
-    b       eve_rnl_done
-eve_rnl_fail:
-    ldr     r0, =fmt_eve_fail
-    bl      hprintf
-eve_rnl_done:
-
-    /* Eve tries to forge HPKS-Stern-F: flip respA[0] to trigger mismatch */
-    ldr     r4, =sdf_respA
-    ldr     r5, [r4]            @ save original respA[0]
-    mvn     r0, r5              @ flip all bits
-    str     r0, [r4]
-    bl      hpks_stern_f_verify_32
-    mov     r6, r0              @ save verify result
-    str     r5, [r4]            @ restore original respA[0]
-    cmp     r6, #1
-    beq     eve_sdf_forge_fail
-    ldr     r0, =fmt_eve_sdf_ok
-    bl      hprintf
-    b       eve_sdf_forge_done
-eve_sdf_forge_fail:
-    ldr     r0, =fmt_eve_sdf_fail
-    bl      hprintf
-eve_sdf_forge_done:
-
-    /* Eve guesses HPKE-Stern-F session key */
-    bl      prng_next
-    ldr     r1, =val_sdf_K_enc
-    ldr     r1, [r1]
-    cmp     r0, r1
-    beq     eve_hpke_sdf_fail
-    ldr     r0, =fmt_eve_hpke_sdf_ok
-    bl      hprintf
-    b       eve_hpke_sdf_done
-eve_hpke_sdf_fail:
-    ldr     r0, =fmt_eve_hpke_sdf_fail
-    bl      hprintf
-eve_hpke_sdf_done:
-
-    /* Eve tries to forge HPKS-Stern-Ring: flip ring0_respA[0] to break c1 check */
-    ldr     r4, =ring0_respA
-    ldr     r5, [r4]            @ save original ring0_respA[0]
-    mvn     r0, r5              @ flip all bits
-    str     r0, [r4]
-    bl      hpks_stern_ring2_verify_32
-    mov     r6, r0
-    str     r5, [r4]            @ restore
-    cmp     r6, #1
-    beq     eve_ring_forge_fail
-    ldr     r0, =fmt_eve_ring_ok
-    bl      hprintf
-    b       eve_ring_forge_done
-eve_ring_forge_fail:
-    ldr     r0, =fmt_eve_ring_fail
-    bl      hprintf
-eve_ring_forge_done:
-
-    /* ================================================================
-       ZKP-RNL  (Ring-LWR Sigma-protocol, N=32, gamma=4096, t=4)
-       Reuses rnl_s_A / rnl_m_blind / rnl_C_A from the HKEX-RNL section.
-       ================================================================ */
-    ldr     r0, =fmt_zkp_rnl_hdr
-    bl      hprintf
-
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_sigma_msg
-    ldr     r2, =sigma_demo_msg
-    ldr     r2, [r2]
-    bl      hprintf
-
-    ldr     r0, =sigma_demo_msg
-    ldr     r0, [r0]
-    bl      rnl_sigma_sign_32
-    cmp     r0, #0
-    bne     zkp_rnl_sign_fail
-
-    ldr     r0, =sigma_demo_msg
-    ldr     r0, [r0]
-    bl      rnl_sigma_verify_32
-    cmp     r0, #1
-    bne     zkp_rnl_verify_fail
-    ldr     r0, =fmt_zkp_rnl_ok
-    bl      hprintf
-    b       zkp_rnl_done
-zkp_rnl_sign_fail:
-    ldr     r0, =fmt_zkp_rnl_fail
-    bl      hprintf
-    b       zkp_rnl_done
-zkp_rnl_verify_fail:
-    ldr     r0, =fmt_zkp_rnl_fail
-    bl      hprintf
-zkp_rnl_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ── 78.H — Masked HSKE demo ──────────────────────────────────── */
-    ldr     r0, =fmt_masked_hdr
-    bl      hprintf
-    bl      prng_next
-    mov     r4, r0          @ plain
-    bl      prng_next
-    mov     r5, r0          @ key
-    bl      prng_next
-    mov     r6, r0          @ mask
-    @ ct = fscx_revolve(plain ^ mask, key, I_VALUE) ^ fscx_revolve(mask, 0, I_VALUE)
-    mov     r0, r4
-    eor     r0, r0, r6      @ A ^ mask
-    mov     r1, r5          @ key
-    mov     r2, #I_VALUE
-    bl      fscx_revolve
-    mov     r7, r0          @ fm
-    mov     r0, r6          @ mask
-    mov     r1, #0          @ zero
-    mov     r2, #I_VALUE
-    bl      fscx_revolve
-    eor     r7, r7, r0      @ ct
-    @ pt = fscx_revolve(ct ^ mask, key, R_VALUE) ^ fscx_revolve(mask, 0, R_VALUE)
-    mov     r0, r7
-    eor     r0, r0, r6      @ ct ^ mask
-    mov     r1, r5
-    mov     r2, #R_VALUE
-    bl      fscx_revolve
-    mov     r8, r0          @ fm
-    mov     r0, r6
-    mov     r1, #0
-    mov     r2, #R_VALUE
-    bl      fscx_revolve
-    eor     r8, r8, r0      @ recovered
-    cmp     r8, r4
-    beq     masked_ok
-    ldr     r0, =fmt_masked_fail
-    bl      hprintf
-    b       masked_done
-masked_ok:
-    ldr     r0, =fmt_masked_ok
-    bl      hprintf
-masked_done:
-
-    /* ── 78.C — Ratchet demo (5 steps) ───────────────────────────── */
-    ldr     r0, =fmt_ratch_hdr
-    bl      hprintf
-    @ seed state: prng_next as initial state
-    bl      prng_next
-    mov     r4, r0          @ state
-    ldr     r5, =ratchet_domain_32
-    ldr     r5, [r5]        @ domain constant
-    mov     r6, #5          @ steps
-    mov     r9, #0          @ seen[0] sentinel (first key)
-    mov     r10, #1         @ all_unique flag
-ratch_loop:
-    @ msg_key = nl_fscx_revolve_v1(state, 0x01, 1)
-    mov     r0, r4
-    mov     r1, #1
-    mov     r2, #1
-    bl      nl_fscx_revolve_v1
-    cmp     r6, #5
-    bne     ratch_check_coll
-    mov     r9, r0          @ save first key
-    b       ratch_continue
-ratch_check_coll:
-    cmp     r10, #1         @ still unique?
-    bne     ratch_continue
-    cmp     r0, r9          @ collision with first key?
-    bne     ratch_continue
-    mov     r10, #0         @ mark not unique
-ratch_continue:
-    @ new_state = nl_fscx_revolve_v1(state, domain, 1)
-    mov     r0, r4
-    mov     r1, r5
-    mov     r2, #1
-    bl      nl_fscx_revolve_v1
-    mov     r4, r0
-    subs    r6, r6, #1
-    bne     ratch_loop
-    cmp     r10, #1
-    beq     ratch_unique_ok
-    ldr     r0, =fmt_ratch_fail
-    bl      hprintf
-    b       ratch_done
-ratch_unique_ok:
-    ldr     r0, =fmt_ratch_ok
-    bl      hprintf
-ratch_done:
-    ldr     r0, =fmt_nl
-    bl      hprintf
-
-    /* ── ZKP-NL demo (NL-FSCX ZKBoo; n=8, R=4) ───────────────────── */
-    ldr     r0, =fmt_zkp_nl_hdr
-    bl      hprintf
-    bl      prng_next
-    and     r4, r0, #0xFF       @ A
-    bl      prng_next
-    and     r5, r0, #0xFF       @ B
-    bl      prng_next
-    and     r6, r0, #0xFF       @ msg
-    mov     r0, r4
-    mov     r1, r5
-    bl      nl_fscx_v1
-    and     r7, r0, #0xFF       @ y = nl_fscx_v1(A,B) & 0xFF
-    mov     r0, r4
-    mov     r1, r5
-    mov     r2, r7
-    mov     r3, r6
-    bl      zkp_nl_prove_8
-    mov     r0, r5              @ B
-    mov     r1, r7              @ y
-    mov     r2, r6              @ msg
-    bl      zkp_nl_verify_8
-    cmp     r0, #1
-    beq     .zkp_nl_suite_ok
-    ldr     r0, =fmt_zkp_nl_fail
-    bl      hprintf
-    b       .zkp_nl_suite_done
-.zkp_nl_suite_ok:
-    ldr     r0, =fmt_zkp_nl_ok
-    bl      hprintf
-.zkp_nl_suite_done:
-
-    /* ── FPE (78.A): B = hfscx_32(hfscx_32(key) ^ ctx); enc/dec via nl_fscx_revolve_v2 */
-    ldr     r0, =fmt_fpe_hdr
-    bl      hprintf
-    bl      prng_next
-    mov     r4, r0                  @ plain (random)
-    ldr     r5, =0xABCD1234         @ key
-    mov     r6, #0x42               @ context
-    mov     r0, r5
-    bl      hfscx_32
-    eor     r0, r0, r6
-    bl      hfscx_32
-    mov     r7, r0                  @ B
-    mov     r0, r4
-    mov     r1, r7
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2
-    mov     r8, r0                  @ ct
-    mov     r0, r8
-    mov     r1, r7
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2_inv
-    cmp     r0, r4
-    beq     fpe_suite_ok
-    ldr     r0, =fmt_fpe_fail
-    bl      hprintf
-    b       fpe_suite_done
-fpe_suite_ok:
-    ldr     r0, =fmt_fpe_ok
-    bl      hprintf
-fpe_suite_done:
-
-    /* ── Tweakable cipher (78.B): B = hfscx_32(hfscx_32(key^sector) ^ bidx) */
-    ldr     r0, =fmt_twk_hdr
-    bl      hprintf
-    bl      prng_next
-    mov     r4, r0                  @ block (random)
-    ldr     r5, =0x12345678         @ key
-    mov     r6, #7                  @ sector
-    mov     r9, #3                  @ bidx
-    mov     r0, r5
-    eor     r0, r0, r6
-    bl      hfscx_32
-    eor     r0, r0, r9
-    bl      hfscx_32
-    mov     r7, r0                  @ B
-    mov     r0, r4
-    mov     r1, r7
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2
-    mov     r8, r0                  @ ct
-    mov     r0, r8
-    mov     r1, r7
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2_inv
-    cmp     r0, r4
-    beq     twk_suite_ok
-    ldr     r0, =fmt_twk_fail
-    bl      hprintf
-    b       twk_suite_done
-twk_suite_ok:
-    ldr     r0, =fmt_twk_ok
-    bl      hprintf
-twk_suite_done:
-
-    /* ── Accumulator (78.J): leaf = hfscx_32(data); node = hfscx_32(hfscx_32(0x01000000^L)^R) */
-    ldr     r0, =fmt_acc_hdr
-    bl      hprintf
-    @ compute 4 leaves
-    ldr     r0, =0xAAAAAAAA
-    bl      hfscx_32
-    mov     r4, r0                  @ leaf0
-    ldr     r0, =0xBBBBBBBB
-    bl      hfscx_32
-    mov     r5, r0                  @ leaf1
-    ldr     r0, =0xCCCCCCCC
-    bl      hfscx_32
-    mov     r6, r0                  @ leaf2
-    ldr     r0, =0xDDDDDDDD
-    bl      hfscx_32
-    mov     r7, r0                  @ leaf3
-    @ n01 = node(leaf0, leaf1)
-    ldr     r0, =0x01000000
-    eor     r0, r0, r4
-    bl      hfscx_32
-    eor     r0, r0, r5
-    bl      hfscx_32
-    mov     r8, r0                  @ n01
-    @ n23 = node(leaf2, leaf3)
-    ldr     r0, =0x01000000
-    eor     r0, r0, r6
-    bl      hfscx_32
-    eor     r0, r0, r7
-    bl      hfscx_32
-    mov     r9, r0                  @ n23
-    @ root = node(n01, n23)
-    ldr     r0, =0x01000000
-    eor     r0, r0, r8
-    bl      hfscx_32
-    eor     r0, r0, r9
-    bl      hfscx_32
-    mov     r10, r0                 @ root
-    @ proof for index 2: cur = node(leaf2, leaf3), then node(n01, cur)
-    ldr     r0, =0x01000000
-    eor     r0, r0, r6
-    bl      hfscx_32
-    eor     r0, r0, r7
-    bl      hfscx_32
-    mov     r11, r0                 @ node(leaf2,leaf3) == n23
-    ldr     r0, =0x01000000
-    eor     r0, r0, r8
-    bl      hfscx_32
-    eor     r0, r0, r11
-    bl      hfscx_32                @ reconstructed root
-    cmp     r0, r10
-    beq     acc_suite_ok
-    ldr     r0, =fmt_acc_fail
-    bl      hprintf
-    b       acc_suite_done
-acc_suite_ok:
-    ldr     r0, =fmt_acc_ok
-    bl      hprintf
-acc_suite_done:
-
-    /* ── OPRF (80) demo — blind/eval/unblind, n=32 ──────────────────── */
-    /* Key k=0x13579BDF; blinding scalar r=7; r_inv=0x49249249 (7^{-1} mod 2^32-1) */
-    ldr     r0, =fmt_oprf_hdr
-    bl      hprintf
-
-    @ H(x) = hfscx_32(0x50415353)  ["PASS" as 32-bit word]
-    ldr     r0, =0x50415353
-    bl      hfscx_32
-    cmp     r0, #0
-    it      eq
-    moveq   r0, #1                  @ zero-guard
-    mov     r4, r0                  @ r4 = H(x)
-    ldr     r3, =val_oprf_hx
-    str     r4, [r3]
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_oprf_hx
-    mov     r2, r4
-    bl      hprintf
-
-    @ alpha = H(x)^r,  r = 7  (client blind)
-    mov     r0, r4
-    mov     r1, #7
-    bl      gf_pow_32
-    mov     r5, r0                  @ r5 = alpha
-    ldr     r3, =val_oprf_alpha
-    str     r5, [r3]
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_oprf_alpha
-    mov     r2, r5
-    bl      hprintf
-
-    @ beta = alpha^k,  k = 0x13579BDF  (server eval)
-    mov     r0, r5
-    ldr     r1, =0x13579BDF
-    bl      gf_pow_32
-    mov     r6, r0                  @ r6 = beta
-    ldr     r3, =val_oprf_beta
-    str     r6, [r3]
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_oprf_beta
-    mov     r2, r6
-    bl      hprintf
-
-    @ F = beta^r_inv,  r_inv = 0x49249249 = 7^{-1} mod (2^32-1)  (client unblind)
-    mov     r0, r6
-    ldr     r1, =0x49249249
-    bl      gf_pow_32
-    mov     r7, r0                  @ r7 = F
-    ldr     r3, =val_oprf_F
-    str     r7, [r3]
-    ldr     r0, =fmt_hex
-    ldr     r1, =lbl_oprf_F
-    mov     r2, r7
-    bl      hprintf
-
-    @ F_direct = H(x)^k  (should equal F — verifies blind/eval/unblind correctness)
-    mov     r0, r4
-    ldr     r1, =0x13579BDF
-    bl      gf_pow_32
-    ldr     r3, =val_oprf_Fd
-    str     r0, [r3]
-
-    cmp     r0, r7
-    beq     oprf_suite_ok
-    ldr     r0, =fmt_oprf_fail
-    bl      hprintf
-    b       oprf_suite_done
-oprf_suite_ok:
-    ldr     r0, =fmt_oprf_ok
-    bl      hprintf
-oprf_suite_done:
-
-    /* ---- TODO #350: aggregate exit status -------------------------- */
+    .thumb_func
+demo_finish:
     ldr     r0, =g_failures
     ldr     r4, [r0]
     cmp     r4, #0
@@ -4471,458 +3225,641 @@ sv_fail:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* ring_fs_challenges_32: r0=out_ptr -> writes 4 joint challenges      */
-/* Reads val_plain, then member0 (ring0_c0/c1/c2), then member1        */
-/* (sdf_c0/c1/c2) — member-major ordering to match Python/C/Go.        */
+/* HPKS-Stern-Ring (TODO #424): ONE Stern proof over the ring, the    */
+/* construction of SPEC.md §11.2 at N=32 with the 32-bit primitives   */
+/* (the Arduino port's hpks_stern_ring_sign_32 is the reference):     */
+/* H~ = diag([H_0|s_0], [H_1|s_1]) over the ring sorted by (seed,     */
+/* syndrome); the signer j proves z = (0..e_j..0 ; unit(j)) in ker H~ */
+/* and in S (one block of weight t, its indicator set), hidden by a   */
+/* block shuffle tau and per-block pi_b.  c0 = H1(ps, H~ r),          */
+/* c1 = H2(salt1, PI r), c2 = H3(salt2, PI y); D = H0(2, k, rounds,   */
+/* msg, ring, commitments); b from H6(D, ctr) bytes, 255 rejected.    */
+/* ring_sig = D, then per round the unopened commitment and 8 words:  */
+/*   b=0: c0, s1, s2, PI r (3), PI y (3)                              */
+/*   b=1: c2, ps, s1, r (3), 0,0,0     b=2: c1, ps, s2, y (3), 0,0,0  */
+/* H_ds(w..) = HFSCX-32(0x32000000|ds, w..).  Replaced the OR-        */
+/* composition, forgeable with no member's key.  DEMO ONLY.           */
 /* ------------------------------------------------------------------ */
+
+/* ring_hash_32: r0=ds, r1=word ptr, r2=n -> r0 = H_ds(words) */
     .thumb_func
-ring_fs_challenges_32:
-    push    {r4-r9, lr}
-    mov     r9, r0              @ out_ptr
-    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
-    mov     r1, #0x31000000
+ring_hash_32:
+    push    {r4-r6, lr}
+    mov     r4, r1
+    mov     r5, r2
+    orr     r1, r0, #0x32000000 @ RING32_TAG | ds
+    ldr     r0, =0xA3C5E7B9     @ HFSCX-32 IV
     bl      hfscx32_absorb
-    mov     r4, r0
-    @ sfs(msg)
-    ldr     r5, =val_plain
-    ldr     r5, [r5]
-    mov     r0, r4
-    mov     r1, r5
+rh_loop:
+    cmp     r5, #0
+    beq     rh_done
+    ldr     r1, [r4], #4
     bl      hfscx32_absorb
-    mov     r4, r0
-    @ member 0 commits
-    mov     r8, #0
-rfc_m0_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     rfc_m0_done
-    ldr     r5, =ring0_c0
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =ring0_c1
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =ring0_c2
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    add     r8, r8, #1
-    b       rfc_m0_loop
-rfc_m0_done:
-    @ member 1 commits (sdf_c0/c1/c2)
-    mov     r8, #0
-rfc_m1_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     rfc_m1_done
-    ldr     r5, =sdf_c0
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =sdf_c1
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =sdf_c2
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    add     r8, r8, #1
-    b       rfc_m1_loop
-rfc_m1_done:
-    mov     r0, r4
-    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
-    mov     r4, r0
-    @ extract per-round joint challenges: chSt = nl_fscx_v1(chSt, i); out[i] = chSt % 3
-    mov     r8, #0
-rfc_chal_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     rfc_done
-    mov     r0, r4
-    mov     r1, r8
-    bl      nl_fscx_v1
-    mov     r4, r0
-    mov     r5, #3
-    udiv    r6, r4, r5
-    mul     r6, r6, r5
-    sub     r6, r4, r6
-    str     r6, [r9, r8, lsl #2]
-    add     r8, r8, #1
-    b       rfc_chal_loop
-rfc_done:
-    pop     {r4-r9, pc}
+    sub     r5, r5, #1
+    b       rh_loop
+rh_done:
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
+
+/* ring_canon_32: ring_in (seed0, syn0, seed1, syn1 as given) ->      */
+/* ring_canon sorted by (seed, syndrome); r0 = 1 if swapped, 0 if     */
+/* not, -1 for a ring listing one member twice.                       */
+    .thumb_func
+ring_canon_32:
+    ldr     r0, =ring_in
+    ldr     r1, [r0]
+    ldr     r2, [r0, #4]
+    ldr     r3, [r0, #8]
+    ldr     r12, [r0, #12]
+    ldr     r0, =ring_canon
+    cmp     r1, r3
+    bhi     rc_swap
+    bne     rc_keep
+    cmp     r2, r12
+    bhi     rc_swap
+    bne     rc_keep
+    mvn     r0, #0              @ duplicate member
+    bx      lr
+rc_keep:
+    str     r1, [r0]
+    str     r2, [r0, #4]
+    str     r3, [r0, #8]
+    str     r12, [r0, #12]
+    mov     r0, #0
+    bx      lr
+rc_swap:
+    str     r3, [r0]
+    str     r12, [r0, #4]
+    str     r1, [r0, #8]
+    str     r2, [r0, #12]
+    mov     r0, #1
+    bx      lr
 
     .ltorg
 
-/* ------------------------------------------------------------------ */
-/* hpks_stern_ring2_sign_32: k=2, signer=1, b0[r]=0 for all r          */
-/* Uses val_sdf_seed/val_sdf_e/val_plain for member 1.                  */
-/* Fills ring0_c0/c1/c2/b/respA/respB and sdf_c0..sdf_b..respA/B.      */
-/* ------------------------------------------------------------------ */
+/* ring_perms_32: r0=ps -> ring_tau = H4(ps) & 1, ring_perm[b] =      */
+/* gen_perm(H5(ps, b)) for b = 0, 1                                   */
     .thumb_func
-hpks_stern_ring2_sign_32:
-    push    {r4-r11, lr}
-
-    @ --- Phase 1: simulate member 0 (b=0 for all rounds) ---
-    mov     r4, #0
-hrs2_sim_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrs2_sim_done
-    @ ring0_b[r] = 0
-    ldr     r3, =ring0_b
-    mov     r0, #0
-    str     r0, [r3, r4, lsl #2]
-    @ c0 dummy = hash2_32(1, 0, 0)  (unchecked for b=0)
-    mov     r0, #1
-    mov     r1, #0
-    mov     r2, #0
-    bl      stern_hash2_32
-    ldr     r3, =ring0_c0
-    str     r0, [r3, r4, lsl #2]
-    @ sr0 = prng_next() -> respA   (UNIFORM since v8.0.0, TODO #298)
-    bl      prng_next
-    mov     r5, r0
-    ldr     r3, =ring0_respA
-    str     r5, [r3, r4, lsl #2]
-    @ c1 = hash1_32(2, sr0)
-    mov     r0, #2
-    mov     r1, r5
-    bl      stern_hash1_32
-    ldr     r3, =ring0_c1
-    str     r0, [r3, r4, lsl #2]
-    @ sy0 = sr0 XOR rand_error_32() -> respB, so wt(respA XOR respB) == t
-    @ exactly as in a real signer's round (TODO #298)
-    bl      stern_rand_error_32
-    eor     r6, r5, r0
-    ldr     r3, =ring0_respB
-    str     r6, [r3, r4, lsl #2]
-    @ c2 = hash1_32(3, sy0)
-    mov     r0, #3
+ring_perms_32:
+    push    {r4-r7, lr}
+    ldr     r6, =ring_hw
+    str     r0, [r6]
+    mov     r0, #4
     mov     r1, r6
-    bl      stern_hash1_32
-    ldr     r3, =ring0_c2
-    str     r0, [r3, r4, lsl #2]
+    mov     r2, #1
+    bl      ring_hash_32
+    and     r0, r0, #1
+    ldr     r1, =ring_tau
+    str     r0, [r1]
+    mov     r4, #0              @ b
+rp_loop:
+    str     r4, [r6, #4]
+    mov     r0, #5
+    mov     r1, r6
+    mov     r2, #2
+    bl      ring_hash_32
+    bl      stern_gen_perm_32   @ -> sdf_perm
+    ldr     r0, =sdf_perm
+    ldr     r1, =ring_perm
+    add     r1, r1, r4, lsl #5
+    mov     r2, #32
+rp_copy:
+    ldrb    r3, [r0], #1
+    strb    r3, [r1], #1
+    subs    r2, r2, #1
+    bne     rp_copy
     add     r4, r4, #1
-    b       hrs2_sim_loop
-hrs2_sim_done:
+    cmp     r4, #2
+    blt     rp_loop
+    pop     {r4-r7, pc}
 
-    @ --- Phase 2: commit phase for member 1 (same as hpks_stern_f_sign_32) ---
-    ldr     r10, =val_sdf_e
-    ldr     r10, [r10]
-    ldr     r11, =val_sdf_seed
-    ldr     r11, [r11]
-    mov     r4, #0
-hrs2_commit_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrs2_commit_done
-    bl      prng_next
-    mov     r5, r0
-    eor     r6, r10, r5
-    bl      prng_next
-    mov     r7, r0
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r5
+/* ring_apply_32: r0=src (x0, x1, c), r1=dst -> dst = PI(src):        */
+/* dst[b^tau] = pi_b(src[b]); indicator bit b moves to b^tau          */
+    .thumb_func
+ring_apply_32:
+    push    {r4-r8, lr}
+    mov     r4, r0
+    mov     r5, r1
+    mov     r6, #0              @ b
+    mov     r7, #0              @ permuted indicator
+    ldr     r8, =ring_tau
+    ldr     r8, [r8]
+ra_loop:
+    ldr     r0, =ring_perm
+    add     r0, r0, r6, lsl #5
+    ldr     r1, =sdf_perm
+    mov     r2, #32
+ra_copy:
+    ldrb    r3, [r0], #1
+    strb    r3, [r1], #1
+    subs    r2, r2, #1
+    bne     ra_copy
+    ldr     r0, [r4, r6, lsl #2]
     bl      stern_apply_perm_32
-    mov     r8, r0
-    mov     r0, r6
-    bl      stern_apply_perm_32
-    mov     r9, r0
-    mov     r0, r11
-    mov     r1, r5
-    bl      stern_syndrome_32
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    ldr     r3, =sdf_c0
-    str     r0, [r3, r4, lsl #2]
-    mov     r1, r8
-    mov     r0, #2
-    bl      stern_hash1_32
-    ldr     r3, =sdf_c1
-    str     r0, [r3, r4, lsl #2]
-    mov     r1, r9
-    mov     r0, #3
-    bl      stern_hash1_32
-    ldr     r3, =sdf_c2
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_r_tmp
-    str     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_y_tmp
-    str     r6, [r3, r4, lsl #2]
-    ldr     r3, =sdf_pi_tmp
-    str     r7, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sr_tmp
-    str     r8, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sy_tmp
-    str     r9, [r3, r4, lsl #2]
-    add     r4, r4, #1
-    b       hrs2_commit_loop
-hrs2_commit_done:
-
-    @ --- Phase 3: joint FS challenges -> ring_joint_b ---
-    ldr     r0, =ring_joint_b
-    bl      ring_fs_challenges_32
-
-    @ --- Phase 4: assign member 1 challenge: b1[r] = (joint[r] - 0 + 3) % 3 = joint[r] ---
-    @             (b0[r]=0, so no challenge-splitting offset needed)
-    @ Then assign responses for member 1.
-    mov     r4, #0
-hrs2_resp_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrs2_resp_done
-    ldr     r3, =ring_joint_b
-    ldr     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_b
-    str     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    beq     hrs2_case0
-    cmp     r5, #1
-    beq     hrs2_case1
-    @ case 2: respA = pi, respB = y
-    ldr     r3, =sdf_pi_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_y_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-    b       hrs2_resp_next
-hrs2_case0:
-    ldr     r3, =sdf_sr_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sy_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-    b       hrs2_resp_next
-hrs2_case1:
-    ldr     r3, =sdf_pi_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_r_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-hrs2_resp_next:
-    add     r4, r4, #1
-    b       hrs2_resp_loop
-hrs2_resp_done:
-    pop     {r4-r11, pc}
+    eor     r1, r6, r8          @ b ^ tau
+    str     r0, [r5, r1, lsl #2]
+    ldr     r0, [r4, #8]
+    lsr     r0, r0, r6
+    and     r0, r0, #1
+    lsl     r0, r0, r1
+    orr     r7, r7, r0
+    add     r6, r6, #1
+    cmp     r6, #2
+    blt     ra_loop
+    str     r7, [r5, #8]
+    pop     {r4-r8, pc}
 
     .ltorg
 
-/* ------------------------------------------------------------------ */
-/* hpks_stern_ring2_verify_32: -> r0=1 valid, 0 invalid                */
-/* Verifies k=2 ring sig: member0 (b=0 HVZK) + member1 (real signer). */
-/* ------------------------------------------------------------------ */
+/* ring_htilde_32: r0=v (x0, x1, c) -> r0 = (H_0 x0 ^ c_0 s_0) |      */
+/* (H_1 x1 ^ c_1 s_1) << 16, branchless in c                          */
     .thumb_func
-hpks_stern_ring2_verify_32:
-    push    {r4-r11, lr}
-
-    @ re-derive joint challenges -> ring_joint_b
-    ldr     r0, =ring_joint_b
-    bl      ring_fs_challenges_32
-
-    @ check challenge sum: (ring0_b[r] + sdf_b[r]) % 3 == ring_joint_b[r]
-    mov     r4, #0
-hrv2_sum_chk:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrv2_sum_ok
-    ldr     r3, =ring0_b
-    ldr     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_b
-    ldr     r6, [r3, r4, lsl #2]
-    add     r5, r5, r6
-    mov     r6, #3
-    udiv    r7, r5, r6
-    mul     r7, r7, r6
-    sub     r5, r5, r7          @ (b0+b1) % 3
-    ldr     r3, =ring_joint_b
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    add     r4, r4, #1
-    b       hrv2_sum_chk
-hrv2_sum_ok:
-
-    @ verify member 0 (b=0 for all rounds):
-    @ c1 = hash1(2,respA), c2 = hash1(3,respB), popcount(respA)==2
-    mov     r4, #0
-hrv2_m0_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrv2_m0_done
-    @ check ring0_b[r] == 0
-    ldr     r3, =ring0_b
-    ldr     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    bne     hrv2_fail
-    @ check c1 = hash1(2, respA)
-    ldr     r3, =ring0_respA
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =ring0_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    @ check popcount(respA XOR respB) == t=2  (binds wt(e), TODO #298)
-    ldr     r3, =ring0_respA
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =ring0_respB
-    ldr     r1, [r3, r4, lsl #2]
+ring_htilde_32:
+    push    {r4-r8, lr}
+    mov     r4, r0
+    mov     r5, #0              @ b
+    mov     r6, #0              @ result
+    ldr     r7, =ring_canon
+rt_loop:
+    ldr     r0, [r7, r5, lsl #3]    @ seed_b
+    ldr     r1, [r4, r5, lsl #2]    @ x_b
+    bl      stern_syndrome_32
+    ldr     r1, [r4, #8]
+    lsr     r1, r1, r5
+    and     r1, r1, #1
+    neg     r1, r1                  @ 0 or 0xFFFFFFFF
+    add     r2, r7, r5, lsl #3
+    ldr     r2, [r2, #4]            @ syn_b
+    and     r1, r1, r2
     eor     r0, r0, r1
-    bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     hrv2_fail
-    @ check c2 = hash1(3, respB)
-    ldr     r3, =ring0_respB
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =ring0_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    add     r4, r4, #1
-    b       hrv2_m0_loop
-hrv2_m0_done:
+    lsl     r1, r5, #4
+    lsl     r0, r0, r1
+    orr     r6, r6, r0
+    add     r5, r5, #1
+    cmp     r5, #2
+    blt     rt_loop
+    mov     r0, r6
+    pop     {r4-r8, pc}
 
-    @ verify member 1 using existing hpks_stern_f_verify_32 logic
-    @ (sdf_b already set; skip re-deriving single-member challenges)
-    ldr     r10, =val_sdf_seed
-    ldr     r10, [r10]
-    ldr     r11, =val_sdf_syn
-    ldr     r11, [r11]
-    mov     r4, #0
-hrv2_m1_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     hrv2_m1_done
-    ldr     r3, =sdf_b
-    ldr     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    beq     hrv2_b0
-    cmp     r5, #1
-    beq     hrv2_b1
-    @ b=2: hysBA = syn(seed,respB) XOR syn; c0=hash2(1,respA,hysBA); sy2=perm(respB); c2=hash1(3,sy2)
-    ldr     r3, =sdf_respA
-    ldr     r7, [r3, r4, lsl #2]  @ pi
-    ldr     r3, =sdf_respB
-    ldr     r8, [r3, r4, lsl #2]  @ y
-    mov     r0, r10
-    mov     r1, r8
-    bl      stern_syndrome_32      @ H·y^T
-    eor     r0, r0, r11            @ H·y^T XOR syn
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    mov     r5, r0
-    ldr     r3, =sdf_c0
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r8
-    bl      stern_apply_perm_32   @ sy2 = sigma(y)
-    mov     r1, r0
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    b       hrv2_m1_next
-hrv2_b0:
-    @ c1=hash1(2,respA), c2=hash1(3,respB), popcount(respA)==2
-    ldr     r3, =sdf_respA
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    ldr     r3, =sdf_respA
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    ldr     r1, [r3, r4, lsl #2]
-    eor     r0, r0, r1
+/* ring_in_S_32: r0=v -> r0 = 1 iff c is one bit and its block alone  */
+/* is non-zero, of weight t                                           */
+    .thumb_func
+ring_in_S_32:
+    push    {r4, lr}
+    mov     r4, r0
+    ldr     r1, [r4, #8]
+    cmp     r1, #1
+    beq     rs_first
+    cmp     r1, #2
+    beq     rs_second
+    b       rs_fail
+rs_first:
+    ldr     r0, [r4, #4]
+    cmp     r0, #0
+    bne     rs_fail
+    ldr     r0, [r4]
     bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     hrv2_fail
-    ldr     r3, =sdf_respB
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    b       hrv2_m1_next
-hrv2_b1:
-    @ hrBA=syn(seed,respB); c0=hash2(1,respA,hrBA); sr2=perm(respB); c1=hash1(2,sr2)
-    @ (no weight check: r is uniform since v8.0.0, TODO #298)
-    ldr     r3, =sdf_respB
-    ldr     r8, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    ldr     r7, [r3, r4, lsl #2]  @ pi
-    mov     r0, r10
-    mov     r1, r8
-    bl      stern_syndrome_32      @ H·r^T
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    mov     r5, r0
-    ldr     r3, =sdf_c0
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r8
-    bl      stern_apply_perm_32   @ sr2 = sigma(r)
-    mov     r1, r0
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     hrv2_fail
-hrv2_m1_next:
-    add     r4, r4, #1
-    b       hrv2_m1_loop
-hrv2_m1_done:
-    mov     r0, #1
-    pop     {r4-r11, pc}
-hrv2_fail:
+    pop     {r4, pc}
+rs_second:
+    ldr     r0, [r4]
+    cmp     r0, #0
+    bne     rs_fail
+    ldr     r0, [r4, #4]
+    bl      stern_popcount_eq2
+    pop     {r4, pc}
+rs_fail:
     mov     r0, #0
-    pop     {r4-r11, pc}
+    pop     {r4, pc}
+
+/* ring_challenges_32: r0=D -> ring_b[0..rounds-1]: the bytes of      */
+/* H6(D, ctr), low byte first, 255 rejected, b = byte mod 3           */
+    .thumb_func
+ring_challenges_32:
+    push    {r4-r8, lr}
+    ldr     r6, =ring_cw
+    str     r0, [r6]
+    mov     r0, #0
+    str     r0, [r6, #4]        @ ctr
+    mov     r5, #0              @ challenges so far
+    ldr     r4, =ring_b
+rch_outer:
+    cmp     r5, #SDF_ROUNDS
+    bge     rch_done
+    mov     r0, #6
+    mov     r1, r6
+    mov     r2, #2
+    bl      ring_hash_32
+    mov     r7, r0
+    mov     r8, #4
+rch_inner:
+    cmp     r8, #0
+    beq     rch_next
+    cmp     r5, #SDF_ROUNDS
+    bge     rch_next
+    and     r0, r7, #0xFF
+    cmp     r0, #0xFF
+    beq     rch_skip
+    mov     r1, #3
+    udiv    r2, r0, r1
+    mls     r0, r2, r1, r0      @ byte mod 3
+    str     r0, [r4, r5, lsl #2]
+    add     r5, r5, #1
+rch_skip:
+    lsr     r7, r7, #8
+    sub     r8, r8, #1
+    b       rch_inner
+rch_next:
+    ldr     r0, [r6, #4]
+    add     r0, r0, #1
+    str     r0, [r6, #4]
+    b       rch_outer
+rch_done:
+    pop     {r4-r8, pc}
+
+/* ring_digest_32: r0=msg -> r0 = D = H0(2, k, rounds, msg, ring,     */
+/* commitments); the commitments are already in ring_dbuf[8..]        */
+    .thumb_func
+ring_digest_32:
+    push    {r4, lr}
+    ldr     r4, =ring_dbuf
+    mov     r1, #2
+    str     r1, [r4]            @ version
+    str     r1, [r4, #4]        @ k
+    mov     r1, #SDF_ROUNDS
+    str     r1, [r4, #8]
+    str     r0, [r4, #12]       @ msg
+    ldr     r0, =ring_canon
+    ldr     r1, [r0]
+    str     r1, [r4, #16]
+    ldr     r1, [r0, #4]
+    str     r1, [r4, #20]
+    ldr     r1, [r0, #8]
+    str     r1, [r4, #24]
+    ldr     r1, [r0, #12]
+    str     r1, [r4, #28]
+    mov     r0, #0
+    mov     r1, r4
+    mov     r2, #RING_DW
+    bl      ring_hash_32
+    pop     {r4, pc}
+
+    .ltorg
+
+/* hpks_stern_ring_sign_32: ring_in, ring_msg, ring_e (the signer's   */
+/* secret), ring_j (its index in ring_in) -> ring_sig; r0 = 1, or 0   */
+/* for a ring listing one member twice                                */
+    .thumb_func
+hpks_stern_ring_sign_32:
+    push    {r3-r11, lr}
+    bl      ring_canon_32
+    cmp     r0, #0
+    blt     rsg_fail
+    ldr     r1, =ring_j
+    ldr     r1, [r1]
+    eor     r9, r1, r0          @ the signer's canonical index
+    ldr     r10, =ring_z
+    mov     r0, #0
+    str     r0, [r10]
+    str     r0, [r10, #4]
+    ldr     r1, =ring_e
+    ldr     r1, [r1]
+    str     r1, [r10, r9, lsl #2]
+    mov     r0, #1
+    lsl     r0, r0, r9
+    str     r0, [r10, #8]       @ z = (0..e..0 ; unit(j))
+    mov     r4, #0              @ round
+rsg_round:
+    cmp     r4, #SDF_ROUNDS
+    bge     rsg_rounds_done
+    mov     r0, #12
+    mul     r11, r4, r0         @ 12*i: 3-word slot offset
+    ldr     r5, =ring_r
+    add     r5, r5, r11
+    bl      prng_next
+    str     r0, [r5]
+    bl      prng_next
+    str     r0, [r5, #4]
+    bl      prng_next
+    and     r0, r0, #3
+    str     r0, [r5, #8]
+    bl      prng_next
+    mov     r8, r0              @ ps
+    ldr     r1, =ring_ps
+    str     r0, [r1, r4, lsl #2]
+    bl      prng_next
+    ldr     r1, =ring_s1
+    str     r0, [r1, r4, lsl #2]
+    bl      prng_next
+    ldr     r1, =ring_s2
+    str     r0, [r1, r4, lsl #2]
+    ldr     r6, =ring_y         @ y = z ^ r
+    add     r6, r6, r11
+    ldr     r0, [r10]
+    ldr     r1, [r5]
+    eor     r0, r0, r1
+    str     r0, [r6]
+    ldr     r0, [r10, #4]
+    ldr     r1, [r5, #4]
+    eor     r0, r0, r1
+    str     r0, [r6, #4]
+    ldr     r0, [r10, #8]
+    ldr     r1, [r5, #8]
+    eor     r0, r0, r1
+    str     r0, [r6, #8]
+    mov     r0, r8
+    bl      ring_perms_32
+    mov     r0, r5
+    ldr     r1, =ring_pr
+    add     r1, r1, r11
+    bl      ring_apply_32
+    mov     r0, r6
+    ldr     r1, =ring_py
+    add     r1, r1, r11
+    bl      ring_apply_32
+    ldr     r7, =ring_hw
+    mov     r0, r5              @ c0 = H1(ps, H~ r)
+    bl      ring_htilde_32
+    str     r8, [r7]
+    str     r0, [r7, #4]
+    mov     r0, #1
+    mov     r1, r7
+    mov     r2, #2
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #32]
+    ldr     r1, =ring_s1        @ c1 = H2(s1, PI r)
+    ldr     r0, [r1, r4, lsl #2]
+    ldr     r12, =ring_pr
+    bl      rsg_pack4
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #36]
+    ldr     r1, =ring_s2        @ c2 = H3(s2, PI y)
+    ldr     r0, [r1, r4, lsl #2]
+    ldr     r12, =ring_py
+    bl      rsg_pack4
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #40]
+    add     r4, r4, #1
+    b       rsg_round
+rsg_rounds_done:
+    ldr     r0, =ring_msg
+    ldr     r0, [r0]
+    bl      ring_digest_32
+    ldr     r10, =ring_sig
+    str     r0, [r10]
+    bl      ring_challenges_32
+    mov     r4, #0
+rsg_fill:
+    cmp     r4, #SDF_ROUNDS
+    bge     rsg_filled
+    mov     r0, #36
+    mul     r5, r4, r0
+    add     r5, r5, r10
+    add     r5, r5, #4          @ the round's 9 words
+    mov     r0, #12
+    mul     r11, r4, r0
+    mov     r0, #0
+    mov     r2, #0
+rsg_zero:
+    str     r0, [r5, r2, lsl #2]
+    add     r2, r2, #1
+    cmp     r2, #9
+    blt     rsg_zero
+    ldr     r1, =ring_b
+    ldr     r6, [r1, r4, lsl #2]
+    ldr     r7, =ring_dbuf
+    add     r7, r7, r11
+    add     r7, r7, #32         @ this round's c0, c1, c2
+    cmp     r6, #0
+    bne     rsg_fill_b12
+    ldr     r0, [r7]
+    str     r0, [r5]            @ c0 unopened
+    ldr     r1, =ring_s1
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #4]
+    ldr     r1, =ring_s2
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_pr
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #12
+    stm     r3, {r0-r2}
+    ldr     r12, =ring_py
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #24
+    stm     r3, {r0-r2}
+    b       rsg_fill_next
+rsg_fill_b12:
+    cmp     r6, #1
+    bne     rsg_fill_b2
+    ldr     r0, [r7, #8]
+    str     r0, [r5]            @ c2 unopened
+    ldr     r1, =ring_s1
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_r
+    b       rsg_fill_common
+rsg_fill_b2:
+    ldr     r0, [r7, #4]
+    str     r0, [r5]            @ c1 unopened
+    ldr     r1, =ring_s2
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_y
+rsg_fill_common:
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #12
+    stm     r3, {r0-r2}
+    ldr     r1, =ring_ps
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #4]
+rsg_fill_next:
+    add     r4, r4, #1
+    b       rsg_fill
+rsg_filled:
+    mov     r0, #1
+    pop     {r3-r11, pc}
+rsg_fail:
+    mov     r0, #0
+    pop     {r3-r11, pc}
+
+/* rsg_pack4: r0=salt, r12=3-word array base, r11=slot offset ->      */
+/* ring_hw = (salt, the slot's 3 words)                               */
+    .thumb_func
+rsg_pack4:
+    ldr     r3, =ring_hw
+    str     r0, [r3]
+    add     r12, r12, r11
+    ldr     r0, [r12]
+    str     r0, [r3, #4]
+    ldr     r0, [r12, #4]
+    str     r0, [r3, #8]
+    ldr     r0, [r12, #8]
+    str     r0, [r3, #12]
+    bx      lr
+
+    .ltorg
+
+/* hpks_stern_ring_verify_32: r0=msg; ring_in, ring_sig -> r0 = 1     */
+/* iff every opening is well-formed and the commitments it rebuilds   */
+/* hash to the signature's D                                          */
+    .thumb_func
+hpks_stern_ring_verify_32:
+    push    {r3-r11, lr}
+    mov     r9, r0              @ msg
+    bl      ring_canon_32
+    cmp     r0, #0
+    blt     rvf_fail
+    ldr     r10, =ring_sig
+    ldr     r0, [r10]
+    bl      ring_challenges_32
+    mov     r4, #0
+rvf_round:
+    cmp     r4, #SDF_ROUNDS
+    bge     rvf_digest
+    mov     r0, #36
+    mul     r5, r4, r0
+    add     r5, r5, r10
+    add     r5, r5, #4          @ o = the round's 9 words
+    mov     r0, #12
+    mul     r11, r4, r0
+    ldr     r6, =ring_dbuf
+    add     r6, r6, r11
+    add     r6, r6, #32         @ c = this round's c0, c1, c2
+    ldr     r7, =ring_hw
+    ldr     r1, =ring_b
+    ldr     r8, [r1, r4, lsl #2]
+    cmp     r8, #0
+    bne     rvf_b12
+    ldr     r0, [r5, #20]       @ b=0: PI r, PI y indicators are 2 bits
+    ldr     r1, [r5, #32]
+    orr     r0, r0, r1
+    lsrs    r0, r0, #2
+    bne     rvf_fail
+    ldr     r3, =ring_v         @ PI z = PI r ^ PI y must be in S
+    ldr     r0, [r5, #12]
+    ldr     r1, [r5, #24]
+    eor     r0, r0, r1
+    str     r0, [r3]
+    ldr     r0, [r5, #16]
+    ldr     r1, [r5, #28]
+    eor     r0, r0, r1
+    str     r0, [r3, #4]
+    ldr     r0, [r5, #20]
+    ldr     r1, [r5, #32]
+    eor     r0, r0, r1
+    str     r0, [r3, #8]
+    mov     r0, r3
+    bl      ring_in_S_32
+    cmp     r0, #0
+    beq     rvf_fail
+    ldr     r0, [r5]
+    str     r0, [r6]            @ c0 as sent
+    ldr     r0, [r5, #4]
+    add     r12, r5, #12
+    bl      rvf_pack4
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #4]        @ c1 = H2(s1, PI r)
+    ldr     r0, [r5, #8]
+    add     r12, r5, #24
+    bl      rvf_pack4
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #8]        @ c2 = H3(s2, PI y)
+    b       rvf_next
+rvf_b12:
+    ldr     r0, [r5, #24]       @ b=1,2: the unused words are zero
+    ldr     r1, [r5, #28]
+    orr     r0, r0, r1
+    ldr     r1, [r5, #32]
+    orr     r0, r0, r1
+    cmp     r0, #0
+    bne     rvf_fail
+    ldr     r0, [r5, #20]       @ and the indicator is 2 bits
+    lsrs    r0, r0, #2
+    bne     rvf_fail
+    ldr     r0, [r5, #4]
+    bl      ring_perms_32
+    add     r0, r5, #12
+    ldr     r1, =ring_v
+    bl      ring_apply_32       @ ring_v = PI(r or y)
+    add     r0, r5, #12
+    bl      ring_htilde_32
+    ldr     r1, [r5, #4]
+    str     r1, [r7]
+    str     r0, [r7, #4]
+    mov     r0, #1
+    mov     r1, r7
+    mov     r2, #2
+    bl      ring_hash_32
+    str     r0, [r6]            @ c0 = H1(ps, H~ v)
+    ldr     r0, [r5, #8]
+    ldr     r12, =ring_v
+    bl      rvf_pack4
+    cmp     r8, #1
+    bne     rvf_b2
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #4]        @ c1 = H2(s1, PI r)
+    ldr     r0, [r5]
+    str     r0, [r6, #8]        @ c2 as sent
+    b       rvf_next
+rvf_b2:
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #8]        @ c2 = H3(s2, PI y)
+    ldr     r0, [r5]
+    str     r0, [r6, #4]        @ c1 as sent
+rvf_next:
+    add     r4, r4, #1
+    b       rvf_round
+rvf_digest:
+    mov     r0, r9
+    bl      ring_digest_32
+    ldr     r1, [r10]
+    cmp     r0, r1
+    bne     rvf_fail
+    mov     r0, #1
+    pop     {r3-r11, pc}
+rvf_fail:
+    mov     r0, #0
+    pop     {r3-r11, pc}
+
+/* rvf_pack4: r0=salt, r12=3 words -> ring_hw = (salt, the 3 words)   */
+    .thumb_func
+rvf_pack4:
+    ldr     r3, =ring_hw
+    str     r0, [r3]
+    ldr     r0, [r12]
+    str     r0, [r3, #4]
+    ldr     r0, [r12, #4]
+    str     r0, [r3, #8]
+    ldr     r0, [r12, #8]
+    str     r0, [r3, #12]
+    bx      lr
 
     .ltorg
 

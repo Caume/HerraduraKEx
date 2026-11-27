@@ -2558,3 +2558,305 @@ Treat any old ZKBoo signature as unauthenticated: there is no way to tell one ma
 the key from one made without it, so do not "convert" old signatures by trusting them
 once.  If you need a signature that was sound before v19.0.0 too, ZKB++ (`nl-zkbpp`) was
 never affected.
+
+## 54. `verify --algo hpks-t` needs the signing group's public keys (v20.0.0)
+
+**Who is affected:** anyone who verifies HPKS-T threshold signatures.  A command
+line without `--pubkey` is now refused:
+
+```
+verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated
+```
+
+The signature files themselves are unchanged.  Every signature an honest group made
+before v20.0.0 still verifies, against that group's keys.
+
+**Why (TODO #412).**  An HPKS-T signature carries the aggregate key C_agg it was made
+under, and the verifier used to check the signature against that embedded key and
+nothing else.  It read no key from the command line, and ignored `--pubkey` when it was
+given.  So a threshold signature made by ANY group of keys, an attacker's own included,
+said "Signature OK".  That proved only that somebody signed.  The verifier now
+recomputes C_agg from the keys you name, with the same MuSig-style coefficients the
+signers use, and fails a signature that carries any other:
+
+```
+verify: the signature's aggregate key is not the one --pubkey gives
+Verification FAILED
+```
+
+**What to do.**  Pass the group's public keys, comma-separated.  Their order does not
+matter: the aggregate is built from them sorted.
+
+```
+pkey --in alice.pem --pubout --out alice_pub.pem      # once per member
+verify --algo hpks-t --pubkey alice_pub.pem,bob_pub.pem --in msg --sig sig.pem
+```
+
+Each key must be an HPKS or HPKS-NL public key at 256 bits; a private key is refused,
+as everywhere else `verify` takes a public key.  Go's `threshold-verify` subcommand
+takes the same `--pubkey`.  Re-check any signature you accepted before v20.0.0 against
+the group you meant: the old verifier would have accepted one from any group.
+
+
+## 55. `enc` / `dec --algo hpke-stern` are removed (v20.0.0)
+
+**Who is affected:** anyone who encrypted with `--algo hpke-stern`.  Both directions are
+now refused, in every CLI and at every width:
+
+```
+enc: --algo hpke-stern was removed in v20.0.0 (TODO #413): its ciphertext carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem
+```
+
+(Python prints the same reason through argparse, exit 2.)  `hpke-stern` keys are NOT
+affected: `genpkey --algo hpke-stern` still writes one, and it signs and verifies under
+`--algo hpks-stern`, `hpks-ring` and the HCRED issuer slots exactly as before.
+
+**Why (TODO #413).**  The HPKE-Stern-F ciphertext carried the error vector e′ beside its
+syndrome, and the session key is K = hash(seed, e′).  The seed is in the PUBLIC key, so
+anyone holding a ciphertext and the public key computed K and the plaintext.  The mode
+gave no confidentiality at all; #410's wrong-secret matrix did exactly that with no
+private key.  Keeping it behind a flag would have kept a ciphertext format whose only
+property is that it is readable by everyone, so the mode is gone instead.
+
+**What to do.**  Encrypt with `--algo hpke-stern-kem`, which decodes with the private
+key.  It needs its own key type:
+
+```
+genpkey --algo hpke-stern-kem --out kem.pem
+pkey --in kem.pem --pubout --out kem_pub.pem
+enc --algo hpke-stern-kem --pubkey kem_pub.pem --in msg --out ct.pem
+dec --algo hpke-stern-kem --key kem.pem --in ct.pem --out msg.out
+```
+
+**Treat every `hpke-stern` ciphertext ever written as public**, and re-encrypt anything
+that needed to stay secret.  To read an old one, use a v20 build; anyone else can too.
+
+## 56. Output paths may not be symbolic links; one-time signatures burn their leaf first (v20.0.0)
+
+**Who is affected:** a script that points `--out` (or any other output flag) at a
+symbolic link — including `--out /dev/stdout`, which is itself a link on Linux — and
+anyone signing with `hpks-wots` or `hpks-xmss` where the key's `<key>.idx` sidecar cannot
+be written.
+
+**What changed (TODO #417).** Every CLI now refuses to write through a symbolic link at
+the LAST component of an output path, in all four ports:
+
+```
+key.pem: is a symbolic link; refusing to write through it (use - for stdout)
+```
+
+A new path is still created 0600 and an existing regular file is still overwritten
+(keeping its mode), exactly as before; symlinked directories above the last component
+are still followed. Before 20.0.0 the link was followed: its target was truncated and
+overwritten and, because `O_CREAT`'s mode applies only on creation, kept whatever mode it
+had — so a private key written through a link to a world-readable file was
+world-readable, which defeated #395's 0600 rule, and a dangling link created a file
+wherever it pointed.
+
+`sign --algo hpks-wots` / `hpks-xmss` now consume the leaf in `<key>.idx` — written,
+flushed and fsync'd — BEFORE the signature exists, and stop with
+
+```
+cannot write one-time-signature state file key.pem.idx
+```
+
+if that fails. Before 20.0.0 the signature was written first and C and Go ignored a
+failed burn, so an unwritable sidecar (a read-only directory, a full disk) released a
+signature and left the leaf for the next `sign` to reuse — two WOTS signatures under one
+key, which is a forgery. A failure AFTER the burn (say, `--out` is refused) now wastes
+the leaf instead: the safe direction for a one-time key.
+
+**What to do.** Write to stdout with `--out -` instead of `--out /dev/stdout`. Point
+`--out` at the real file rather than at a link to it (`--out "$(readlink -f link)"`). Make
+sure the directory holding a WOTS/XMSS key, or its `.idx`, is writable before signing.
+Nothing stored changes: every key, signature and ciphertext reads as before.
+
+**Why this is MAJOR.** It refuses invocations that existing subcommands accepted, the
+2.0.0 surface (the reading section 38 applied).
+
+## 57. A one-time-signature key must be a file, and its state file must be intact (v20.0.0)
+
+**Who is affected:** anyone who signs with `hpks-wots` or `hpks-xmss` where the key's
+`<key>.idx` sidecar is missing, empty or holds anything but one plain count; anyone who
+pipes such a key into `sign --key -`; and anyone who runs `genpkey --algo hpks-wots` /
+`hpks-xmss` with `--out -` or without `--out`.
+
+**What changed (TODO #419).** `sign` reads `<key>.idx` through one strict reader in all
+four CLIs. The file must exist, be a regular file (not a symlink or a directory), and
+hold exactly one canonical decimal count: `0`, or digits with no leading zero, at most
+10 of them, with at most one trailing newline. For WOTS the count is 0 or 1; for XMSS it
+is 0 to 2^h. Anything else stops `sign` before a signature exists:
+
+```
+sign: one-time-signature state file key.pem.idx is damaged (not one canonical decimal count); refusing to sign (restore it, or generate a new key)
+```
+
+The other reasons it can give are `missing`, `not a regular file`, `unreadable` and
+`damaged (count out of range)`. Before 20.0.0 every port read a file it could not parse
+as `0`, meaning unused. An empty file, which is what a crash mid-write leaves, let a used
+WOTS key sign again in all four CLIs. The ports also disagreed on the same bytes: Go
+refused `garbage` and C refused `1x`, while Python and Java signed with both.
+
+**What changed (TODO #420).** A one-time-signature key must be a regular file, because
+its state lives beside it. `sign --algo hpks-wots|hpks-xmss --key -` (or `/dev/stdin`, a
+pipe, a device) and `genpkey --algo hpks-wots|hpks-xmss` with `--out -` or no `--out` are
+refused:
+
+```
+sign: a one-time-signature key must be a regular file given by --key (its state lives in <key>.idx); it cannot be read from or written to stdin, a pipe or a device
+```
+
+Before 20.0.0, C and Go derived the sidecar from the name `-`, so the state went to
+`./-.idx` in the current directory. That one file was shared by every key piped in from
+there, and the same key piped in from another directory signed again. Java kept no
+state for a stdin key, so a WOTS key read from stdin signed twice. Python already
+refused, but only because its PEM reader did.
+
+**What to do.** Keep WOTS/XMSS keys in files and pass `--key FILE`. Generate them with
+`--out FILE`, which writes `FILE.idx` beside the key. A key generated to stdout before
+20.0.0 has no state file; treat it as burned and generate a new one.
+
+If a `.idx` is lost or damaged, do **not** recreate it as `0`. Restore it from wherever
+the key was last used, or set it to a count at least as large as any ever used: `1` for
+WOTS (that is, the key is spent), or for XMSS one past the highest leaf index that
+appears in any signature it made. If in doubt, generate a new key. Nothing stored
+changes: every key and signature reads and verifies as before, and `verify` is
+untouched.
+
+**Why this is MAJOR.** It refuses `sign` and `genpkey` invocations that existing
+subcommands accepted, the 2.0.0 surface (the reading section 38 applied).
+
+## 58. An HPKS-Ring challenge byte must be 0, 1 or 2 (v20.0.0)
+
+> **Superseded within v20.0.0 by section 61.** The challenge byte bound applied to the
+> OR-composition, whose signatures the release no longer accepts at all.
+
+**Who is affected:** only someone holding an HPKS-Ring signature whose per-round challenge
+byte is outside {0, 1, 2}. No signer in this repository writes one: every port's
+`sign --algo hpks-ring` emits trits. A signature of that shape was made or altered by
+hand.
+
+**What changed (TODO #421).** Each (member, round) entry of an `HERRADURA HPKS-RING
+SIGNATURE` carries its challenge `b` as one byte. Every verifier sent any `b` other than
+0 or 1 to the `b = 2` check, while the per-round consistency check summed the raw value
+mod 3. So rewriting a `b = 2` round as 5 (or 8, …, 254) changed neither, and the result
+still verified. An honest signature therefore had many byte encodings that all verified.
+That is malleability, not forgery: the responses are still the signer's. It affected all
+four short-form (N = 256) verifiers and Python's long-form (N = 2304) verifier; the C,
+Go and Java long-form checkers already refused such a byte. Every ring verifier, in the
+suite libraries and so in every CLI, now refuses a signature with any challenge outside
+{0, 1, 2}.
+
+**What to do.** Nothing, for signatures produced by these tools. A hand-altered one can be
+made canonical by reducing each challenge byte mod 3. Nothing else about the format
+changes. HPKS-Ring itself is rated broken (SECURITY.md, TODO #415); this change only
+closes the encoding gap.
+
+**Why this is MAJOR.** It refuses signature files that existing builds verified. That is
+the reading section 50 applied to non-canonical base64.
+
+## 59. `sign` and `verify --algo hpks-ring` are refused (v20.0.0)
+
+> **Superseded within v20.0.0 by section 61.** The refusal described here was an
+> interim step on `devtest`; the release ships the redesigned ring instead, and what it
+> refuses is the old signature format.  Read section 61 for the migration.
+
+**Who is affected:** anyone who signs or verifies HPKS-Ring signatures with any of the
+four CLIs, or calls them through the MCP server.
+
+**What changed (TODO #422).** HPKS-Ring is existentially forgeable with no member's
+secret key (TODO #415; SECURITY.md rates it broken). So `sign` and `verify --algo
+hpks-ring` now refuse in all four CLIs, before reading any file:
+
+```
+sign: --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature
+```
+
+A ring verifier that accepts a signature tells the relying party nothing, because anyone
+could have produced it, and a signer has nothing worth producing; that is why both are
+refused, not just signing. The suite library functions (`hpks_stern_ring_sign` /
+`_verify` and the long forms) stay, for the redesign #415 tracks. `hpks-stern` keys are
+unaffected.
+
+**What to do.** Stop relying on HPKS-Ring signatures. Treat any you hold as unauthenticated:
+it cannot be told apart from a forgery. Use `hpks-stern` where one signer may be named.
+There is no replacement for anonymous group signing in this suite until #415 lands.
+
+**Why this is MAJOR.** It removes what an existing `--algo` value does (CLAUDE.md's
+version policy).
+
+## 60. An HPKS / HPKS-NL scalar must lie below the order of g (v20.0.0)
+
+**Who is affected:** anyone holding `hpks` or `hpks-nl` signatures made at `--bits 32` or
+`--bits 128` with an earlier build. Signatures at `--bits 64` and `--bits 256` (the
+default) are unaffected.
+
+**What changed (TODO #423).** `g = 3` generates the whole of GF(2^n)* at n = 64 and 256,
+but only a subgroup of index 15 at n = 32 and index 3 at n = 128. `g^s` depends on
+`s mod ord(g)` only. Signers reduced `s` mod `2^n − 1`, so a signature with
+`s + ord(g) < 2^n` had a second encoding that every verifier accepted (malleability, not
+forgery; about 2/3 of n = 128 signatures and almost all n = 32 ones). Signers now reduce
+`s` mod `ord(g)`, and every verifier refuses `s ≥ ord(g)`:
+
+```
+verify: signature scalar s is not below the order of g (rejected: non-canonical signature)
+```
+
+Signatures from earlier builds at those widths are refused whenever their `s` was at or
+above `ord(g)`: about 2/3 of n = 128 signatures and 14/15 of n = 32 ones. Keys do not
+change.
+
+**What to do.** Re-sign at `--bits 32` / `--bits 128` with this build. Or reduce an old
+signature's `s` mod `ord(g)`: `(2^32 − 1)/15 = 0x11111111` and
+`(2^128 − 1)/3 = 0x5555…5555`. The result is the same signature in its canonical encoding.
+
+**Why this is MAJOR.** It refuses signature files that existing builds verified (the
+section 50 reading).
+
+## 61. HPKS-Ring is one Stern proof over the ring; v1 ring signatures are refused (v20.0.0)
+
+**Who is affected:** anyone holding `hpks-ring` signatures made before v20.0.0, anyone who
+scripts `sign` / `verify --algo hpks-ring`, and code calling the ring functions of the
+suites directly.  `hpks-stern` keys are unaffected: the same keys form the new rings.
+
+**What changed (TODO #415).** The ring signature was an OR-composition of k Stern proofs,
+and it was existentially forgeable with no member's secret key (SECURITY.md).  It is
+replaced by ONE Stern proof over the ring's block-diagonal statement (SPEC.md §11.2), so
+every artifact and API changes:
+
+- **Signature PEM.**  `HERRADURA HPKS-RING-V2 SIGNATURE`, `SEQ(n, k, rounds, D, body)`,
+  where the old label was `HERRADURA HPKS-RING SIGNATURE`, `SEQ(k, rounds, n, blob)`.
+  Every CLI names the old label and refuses it:
+
+  ```
+  verify: this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING SIGNATURE), which is forgeable without any member's key (TODO #415) and is no longer accepted; re-sign it with this release
+  ```
+
+- **The ring.**  1 to 1024 members (it was 2 to 64), in any order: the signature binds
+  the ring sorted, so `--ring` may list the members differently at `verify`.  A ring
+  that lists a member twice is refused.  The signer is found by seed AND syndrome (it
+  was the seed alone).
+- **The message.**  The 32-octet pre-hash at every width.  Below n = 256 the old ring
+  signed only the first n bits.
+- **Size.**  About half the old size for the same ring: ~57 KiB for 4 members at
+  N = 256 and 219 rounds, where it was ~138 KiB.  It still grows linearly with the ring.
+- **Library API.**
+  - The signature is now a byte string: C `stern_ring_sign` returns a malloc'd buffer,
+    Go `HpksSternRingSign` a `[]byte`, Python `hpks_stern_ring_sign` `bytes`, Java
+    `SternRing.sign` a `byte[]`.
+  - Verify takes the round count.
+  - Members are `(seed, syndrome)` octet strings (Go `RingMember`, Java `RingKey(seed,
+    syndrome, n)`).
+  - The message is 32 octets.
+  - One implementation covers both widths.  The long-form ring functions are gone:
+    `stern_l_ring_*`, `HpksSternLRing*`, `SternL.ringSign` / `ringVerify` and
+    `hpks_stern_l_ring_*`.
+  - So are the OR-composition's simulator and trit helpers.
+
+**What to do.**  Re-sign with this release.  Treat every v1 ring signature ever written
+as unverified: anyone could have produced it.  Code calling the library moves to the
+signatures above.
+
+**Why this is MAJOR.**  It changes what `--algo hpks-ring` produces and accepts, and it
+makes every existing ring signature file unreadable (CLAUDE.md's version policy).
+

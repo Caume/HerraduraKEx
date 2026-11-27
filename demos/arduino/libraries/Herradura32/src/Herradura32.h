@@ -1,15 +1,18 @@
-/*  Herradura Cryptographic Suite — Arduino (32-bit)
-    HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-    HPKS-Stern-F, HPKE-Stern-F, ZKP-RNL, ZKP-NL
-    KEYBITS = 32
+/*  Herradura32 -- the Herradura KEx 32-bit Arduino library (TODO #425)
+    Every primitive and protocol routine of the Arduino target, the check()
+    [FAIL] counter and demo_finish().  Each sketch in demos/arduino/<name>/
+    includes it and runs ONE algorithm end to end.  This was "Herradura
+    cryptographic suite.ino", one sketch running every demo, until TODO #425.
+    KEYBITS = 32.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
     MIT License / GPL v3.0 — choose either.
 
-    Target: Arduino Uno/Mega/Leonardo or any board with Serial support.
-    Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
-    Monitor: 9600 baud serial monitor.
+    Arduino IDE: copy demos/arduino/libraries/Herradura32 into your sketchbook's
+    libraries/ folder, then open any demos/arduino/<name>/<name>.ino.
+    build_arduino.sh passes this directory to avr-g++ with -I instead.
 
+    Version history (from the single-sketch suite):
     v1.5.13: HSKE-NL-A1 seed fix: seed=_rol32(base,4); ks=nl_fscx_revolve_v1(seed,base,I).
              When A=B=base, fscx(base,base)=0; ROL by n/8=4 activates non-linearity from step 1.
     v1.5.10: HKEX-RNL KDF seed fix: seed=ROL32(K,4); sk=nl_fscx_revolve_v1(seed,K,I).
@@ -24,6 +27,11 @@
       - HPKE: El Gamal + fscx_revolve; enc_key=C^r; dec_key=R^a.
       - Security: CDH in GF(2^32)*; for demo only; use n>=256 in production.
 */
+
+#ifndef HERRADURA32_H
+#define HERRADURA32_H
+
+#include <Arduino.h>
 
 #define KEYBITS  32
 #define I_VALUE  (KEYBITS / 4)        /* 8  */
@@ -596,139 +604,160 @@ static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
 }
 
 /* ------------------------------------------------------------------ */
-/* HPKS-Stern-Ring: k=2 OR-composition ring sig (TODO #78.I, v1.9.16) */
-/* Member 0 always simulated (b=0); member 1 is real signer.          */
-/* joint[r] = b0[r]+b1[r] mod 3; since b0=0, b1[r]=joint[r].         */
+/* HPKS-Stern-Ring (TODO #424): ONE Stern proof over the ring, the    */
+/* construction of SPEC.md §11.2 at N=32 with the 32-bit primitives:  */
+/* H~ = diag([H_0|s_0], [H_1|s_1]) over the ring sorted by (seed,     */
+/* syndrome); the signer j proves z = (0..e_j..0 ; unit(j)) in        */
+/* ker H~ and in S (one block of weight t, its indicator set), hidden */
+/* by a block shuffle tau and per-block pi_b.  c0 = H1(ps, H~ r),     */
+/* c1 = H2(salt1, PI r), c2 = H3(salt2, PI y); D = H0(2, k, rounds,   */
+/* msg, ring, commitments); b from H6(D, ctr) bytes, 255 rejected.    */
+/* Per round the unopened commitment then 8 opening words:            */
+/*   b=0: c0, s1, s2, PI r (3), PI y (3)                              */
+/*   b=1: c2, ps, s1, r (3), 0,0,0     b=2: c1, ps, s2, y (3), 0,0,0  */
+/* Replaced the OR-composition, forgeable with no member's key.       */
+/* H_ds(w..) = HFSCX-32(0x32000000|ds, w..); not interoperable with   */
+/* the 256-bit ports.  DEMO ONLY: N=32 and 4 rounds have no security. */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
-    SternSig32 m0;           /* simulated member 0 (b=0 all rounds) */
-    SternSig32 m1;           /* real signer (member 1) */
-    uint32     joint[SDF_ROUNDS];
-} SternRingSig2_32;
+#define RING_K        2
+#define RING32_TAG    0x32000000UL
+#define RING_VERSION  2
+#define RING_RW       9                         /* words per round: unopened + 8 */
+#define RING_DW       (8 + 3 * SDF_ROUNDS)      /* digest input words */
+typedef struct { uint32 D; uint32 rw[SDF_ROUNDS][RING_RW]; } SternRing32;
 
-static void ring_fs_challenges2_32(uint32 *joint_out,
-                                    uint32 msg,
-                                    const uint32 *c0_0, const uint32 *c1_0, const uint32 *c2_0,
-                                    const uint32 *c0_1, const uint32 *c1_1, const uint32 *c2_1) {
-    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
-    h = hfscx32_absorb(h, msg);
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = hfscx32_absorb(h, c0_0[i]);
-        h = hfscx32_absorb(h, c1_0[i]);
-        h = hfscx32_absorb(h, c2_0[i]);
-    }
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = hfscx32_absorb(h, c0_1[i]);
-        h = hfscx32_absorb(h, c1_1[i]);
-        h = hfscx32_absorb(h, c2_1[i]);
-    }
-    h = hfscx32_final(h);
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_v1(h, (uint32)i);
-        joint_out[i] = h % 3;
+static uint32 ring_seed[RING_K], ring_syn[RING_K];
+static uint8_t ring_perm[RING_K][SDF_N];
+static uint32 ring_tau;
+static uint32 ring_dbuf[RING_DW];
+
+static uint32 ring_hash_32(uint32 ds, const uint32 *w, int n) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, RING32_TAG | ds);
+    for (int i = 0; i < n; i++) h = hfscx32_absorb(h, w[i]);
+    return hfscx32_final(h);
+}
+/* Sort the two members by (seed, syndrome); -1 for a duplicate, else 1 if swapped. */
+static int ring_canon_32(uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    int sw = (sa > sb) || (sa == sb && ya > yb);
+    if (sa == sb && ya == yb) return -1;
+    ring_seed[0] = sw ? sb : sa; ring_syn[0] = sw ? yb : ya;
+    ring_seed[1] = sw ? sa : sb; ring_syn[1] = sw ? ya : yb;
+    return sw;
+}
+static void ring_perms_32(uint32 ps) {
+    uint32 w[2] = { ps, 0 };
+    ring_tau = ring_hash_32(4, w, 1) & 1u;
+    for (int b = 0; b < RING_K; b++) {
+        w[1] = (uint32)b;
+        stern_gen_perm_32(ring_perm[b], ring_hash_32(5, w, 2));
     }
 }
-
-static void hpks_stern_ring2_sign_32(SternRingSig2_32 *rsig,
-                                      uint32 msg,
-                                      uint32 e1, uint32 seed1) {
-    static uint8_t perm[SDF_N];
-    static uint32 r_tmp[SDF_ROUNDS], y_tmp[SDF_ROUNDS];
-    static uint32 pi_tmp[SDF_ROUNDS], sr_tmp[SDF_ROUNDS], sy_tmp[SDF_ROUNDS];
-    int i;
-
-    /* Simulate member 0: b=0 all rounds */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        /* sr0 uniform, sy0 = sr0 ^ (weight-t): matches the real signer's
-         * (sigma(r), sigma(r) ^ sigma(e)) now that r is uniform (TODO #298). */
-        uint32 sr0 = lcg_next();
-        uint32 sy0 = sr0 ^ stern_rand_error_32();
-        rsig->m0.c0[i] = stern_hash2_32(1, 0, 0);   /* dummy, unchecked for b=0 */
-        rsig->m0.c1[i] = stern_hash1_32(2, sr0);
-        rsig->m0.c2[i] = stern_hash1_32(3, sy0);
-        rsig->m0.b[i]     = 0;
-        rsig->m0.respA[i] = sr0;
-        rsig->m0.respB[i] = sy0;
-    }
-
-    /* Commit phase for member 1 (real signer) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 r  = lcg_next();            /* UNIFORM since v8.0.0, TODO #298 */
-        uint32 y  = e1 ^ r;
-        uint32 pi = lcg_next();
-        stern_gen_perm_32(perm, pi);
-        uint32 sr = stern_apply_perm_32(perm, r);
-        uint32 sy = stern_apply_perm_32(perm, y);
-        uint32 hr = stern_syndrome_32(seed1, r);
-        rsig->m1.c0[i] = stern_hash2_32(1, pi, hr);
-        rsig->m1.c1[i] = stern_hash1_32(2, sr);
-        rsig->m1.c2[i] = stern_hash1_32(3, sy);
-        r_tmp[i] = r; y_tmp[i] = y;
-        pi_tmp[i] = pi; sr_tmp[i] = sr; sy_tmp[i] = sy;
-    }
-
-    /* Joint Fiat-Shamir challenges */
-    ring_fs_challenges2_32(rsig->joint, msg,
-        rsig->m0.c0, rsig->m0.c1, rsig->m0.c2,
-        rsig->m1.c0, rsig->m1.c1, rsig->m1.c2);
-
-    /* Assign member 1 responses (b1=joint since b0=0) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 bv = rsig->joint[i];
-        rsig->m1.b[i] = bv;
-        if      (bv == 0) { rsig->m1.respA[i] = sr_tmp[i]; rsig->m1.respB[i] = sy_tmp[i]; }
-        else if (bv == 1) { rsig->m1.respA[i] = pi_tmp[i]; rsig->m1.respB[i] = r_tmp[i];  }
-        else              { rsig->m1.respA[i] = pi_tmp[i]; rsig->m1.respB[i] = y_tmp[i];  }
+static void ring_apply_32(const uint32 *v, uint32 *out) {
+    out[2] = 0;
+    for (uint32 b = 0; b < RING_K; b++) {
+        out[b ^ ring_tau] = stern_apply_perm_32(ring_perm[b], v[b]);
+        out[2] |= ((v[2] >> b) & 1u) << (b ^ ring_tau);
     }
 }
-
-static int hpks_stern_ring2_verify_32(const SternRingSig2_32 *rsig,
-                                       uint32 msg,
-                                       uint32 seed0, uint32 synd0,
-                                       uint32 seed1, uint32 synd1) {
-    static uint8_t perm[SDF_N];
-    uint32 joint[SDF_ROUNDS];
-    int i;
-
-    ring_fs_challenges2_32(joint, msg,
-        rsig->m0.c0, rsig->m0.c1, rsig->m0.c2,
-        rsig->m1.c0, rsig->m1.c1, rsig->m1.c2);
-
-    /* Check challenge sums: b0+b1 mod 3 == joint */
-    for (i = 0; i < SDF_ROUNDS; i++)
-        if ((rsig->m0.b[i] + rsig->m1.b[i]) % 3 != joint[i]) return 0;
-
-    /* Verify member 0 (b=0 all rounds) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        if (rsig->m0.b[i] != 0) return 0;
-        uint32 ra = rsig->m0.respA[i], rb = rsig->m0.respB[i];
-        if (stern_hash1_32(2, ra) != rsig->m0.c1[i]) return 0;
-        if (stern_hash1_32(3, rb) != rsig->m0.c2[i]) return 0;
-        if (!stern_wt_is_t_32(ra ^ rb)) return 0;
+static uint32 ring_htilde_32(const uint32 *v) {
+    uint32 out = 0;
+    for (uint32 b = 0; b < RING_K; b++) {
+        uint32 m = (uint32)(-(int32_t)((v[2] >> b) & 1u));
+        out |= (stern_syndrome_32(ring_seed[b], v[b]) ^ (ring_syn[b] & m)) << (16 * b);
     }
-
-    /* Verify member 1 (standard Stern per-round) */
+    return out;
+}
+static int ring_in_S_32(const uint32 *v) {
+    if (v[2] == 1) return stern_wt_is_t_32(v[0]) && v[1] == 0;
+    if (v[2] == 2) return stern_wt_is_t_32(v[1]) && v[0] == 0;
+    return 0;
+}
+static void ring_challenges_32(uint32 D, uint32 *b) {
+    uint32 w[2] = { D, 0 };
+    int n = 0;
+    while (n < SDF_ROUNDS) {
+        uint32 h = ring_hash_32(6, w, 2);
+        for (int i = 0; i < 4 && n < SDF_ROUNDS; i++, h >>= 8)
+            if ((h & 0xFFu) != 0xFFu) b[n++] = (h & 0xFFu) % 3u;
+        w[1]++;
+    }
+}
+static uint32 ring_digest_32(uint32 msg) {
+    ring_dbuf[0] = RING_VERSION; ring_dbuf[1] = RING_K; ring_dbuf[2] = SDF_ROUNDS;
+    ring_dbuf[3] = msg;
+    ring_dbuf[4] = ring_seed[0]; ring_dbuf[5] = ring_syn[0];
+    ring_dbuf[6] = ring_seed[1]; ring_dbuf[7] = ring_syn[1];
+    return ring_hash_32(0, ring_dbuf, RING_DW);
+}
+static int hpks_stern_ring_sign_32(SternRing32 *sig, uint32 msg, uint32 e, int j,
+                                   uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    static uint32 r[SDF_ROUNDS][3], y[SDF_ROUNDS][3], pr[SDF_ROUNDS][3], py[SDF_ROUNDS][3];
+    static uint32 ps[SDF_ROUNDS], s1[SDF_ROUNDS], s2[SDF_ROUNDS];
+    uint32 z[3], b[SDF_ROUNDS], h[2], w[4];
+    int sw = ring_canon_32(sa, ya, sb, yb), i, q;
+    if (sw < 0) return 0;
+    j ^= sw;
+    z[j] = e; z[1 - j] = 0; z[2] = 1u << j;
     for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 bv = rsig->m1.b[i], ra = rsig->m1.respA[i], rb = rsig->m1.respB[i];
-        if (bv == 0) {
-            if (stern_hash1_32(2, ra) != rsig->m1.c1[i]) return 0;
-            if (stern_hash1_32(3, rb) != rsig->m1.c2[i]) return 0;
-            if (!stern_wt_is_t_32(ra ^ rb)) return 0;
-        } else if (bv == 1) {
-            uint32 hr = stern_syndrome_32(seed1, rb);
-            if (stern_hash2_32(1, ra, hr) != rsig->m1.c0[i]) return 0;
-            stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(2, stern_apply_perm_32(perm, rb)) != rsig->m1.c1[i]) return 0;
+        r[i][0] = lcg_next(); r[i][1] = lcg_next(); r[i][2] = lcg_next() & 3u;
+        ps[i] = lcg_next(); s1[i] = lcg_next(); s2[i] = lcg_next();
+        for (q = 0; q < 3; q++) y[i][q] = z[q] ^ r[i][q];
+        ring_perms_32(ps[i]);
+        ring_apply_32(r[i], pr[i]); ring_apply_32(y[i], py[i]);
+        h[0] = ps[i]; h[1] = ring_htilde_32(r[i]);
+        ring_dbuf[8 + 3 * i] = ring_hash_32(1, h, 2);
+        w[0] = s1[i]; for (q = 0; q < 3; q++) w[1 + q] = pr[i][q];
+        ring_dbuf[9 + 3 * i] = ring_hash_32(2, w, 4);
+        w[0] = s2[i]; for (q = 0; q < 3; q++) w[1 + q] = py[i][q];
+        ring_dbuf[10 + 3 * i] = ring_hash_32(3, w, 4);
+    }
+    sig->D = ring_digest_32(msg);
+    ring_challenges_32(sig->D, b);
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        uint32 *o = sig->rw[i];
+        memset(o, 0, sizeof sig->rw[i]);
+        if (b[i] == 0) {
+            o[0] = ring_dbuf[8 + 3 * i]; o[1] = s1[i]; o[2] = s2[i];
+            for (q = 0; q < 3; q++) { o[3 + q] = pr[i][q]; o[6 + q] = py[i][q]; }
         } else {
-            uint32 hy = stern_syndrome_32(seed1, rb);
-            if (stern_hash2_32(1, ra, hy ^ synd1) != rsig->m1.c0[i]) return 0;
-            stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(3, stern_apply_perm_32(perm, rb)) != rsig->m1.c2[i]) return 0;
+            o[0] = ring_dbuf[(b[i] == 1 ? 10 : 9) + 3 * i]; o[1] = ps[i];
+            o[2] = b[i] == 1 ? s1[i] : s2[i];
+            for (q = 0; q < 3; q++) o[3 + q] = b[i] == 1 ? r[i][q] : y[i][q];
         }
     }
-    (void)seed0; (void)synd0;  /* member 0 public keys not needed (b=0 all) */
     return 1;
+}
+static int hpks_stern_ring_verify_32(const SternRing32 *sig, uint32 msg,
+                                     uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    uint32 b[SDF_ROUNDS], h[2], w[4], p[3], v[3];
+    int i, q;
+    if (ring_canon_32(sa, ya, sb, yb) < 0) return 0;
+    ring_challenges_32(sig->D, b);
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        const uint32 *o = sig->rw[i];
+        uint32 *c = &ring_dbuf[8 + 3 * i];
+        if (b[i] == 0) {
+            if ((o[5] | o[8]) >> 2) return 0;
+            for (q = 0; q < 3; q++) v[q] = o[3 + q] ^ o[6 + q];
+            if (!ring_in_S_32(v)) return 0;
+            c[0] = o[0];
+            w[0] = o[1]; for (q = 0; q < 3; q++) w[1 + q] = o[3 + q];
+            c[1] = ring_hash_32(2, w, 4);
+            w[0] = o[2]; for (q = 0; q < 3; q++) w[1 + q] = o[6 + q];
+            c[2] = ring_hash_32(3, w, 4);
+        } else {
+            if ((o[6] | o[7] | o[8]) || (o[5] >> 2)) return 0;
+            ring_perms_32(o[1]);
+            ring_apply_32(&o[3], p);
+            h[0] = o[1]; h[1] = ring_htilde_32(&o[3]);
+            c[0] = ring_hash_32(1, h, 2);
+            w[0] = o[2]; for (q = 0; q < 3; q++) w[1 + q] = p[q];
+            if (b[i] == 1) { c[1] = ring_hash_32(2, w, 4); c[2] = o[0]; }
+            else           { c[2] = ring_hash_32(3, w, 4); c[1] = o[0]; }
+        }
+    }
+    return ring_digest_32(msg) == sig->D;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1072,479 +1101,10 @@ static uint32 oprf_direct_32(uint32 x, uint32 k) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Arduino entry points                                                */
+/* demo_finish: the TODO #350 [FAIL] gate at the end of each pass.     */
+/* loop() repeats, so each pass is scored on its own.                 */
 /* ------------------------------------------------------------------ */
-
-void setup() {
-    Serial.begin(9600);
-    while (!Serial) { ; }
-}
-
-void loop() {
-    Serial.println(F("=== Herradura Cryptographic Suite (Arduino, 32-bit) ==="));
-    Serial.println();
-
-    printHexLine(F("a_priv : "), A_PRIV);
-    printHexLine(F("b_priv : "), B_PRIV);
-    printHexLine(F("K      : "), K);
-    printHexLine(F("PLAIN  : "), PLAIN);
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HKEX-GF [CLASSICAL]                                              */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HKEX-GF [CLASSICAL -- not PQC; Shor breaks DLP]"));
-    uint32 C    = gf_pow_32(GF_GEN, A_PRIV);
-    uint32 C2   = gf_pow_32(GF_GEN, B_PRIV);
-    uint32 skeyA = gf_pow_32(C2, A_PRIV);
-    uint32 skeyB = gf_pow_32(C,  B_PRIV);
-    printHexLine(F("C        : "), C);
-    printHexLine(F("C2       : "), C2);
-    printHexLine(F("skeyA    : "), skeyA);
-    printHexLine(F("skeyB    : "), skeyB);
-    check(skeyA == skeyB,
-          F("+ session keys agree!"),
-          F("[FAIL] session keys differ!"));
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HSKE [CLASSICAL]                                                 */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HSKE [CLASSICAL -- not PQC; linear key recovery]"));
-    uint32 hskeE = fscx_revolve(PLAIN, K, I_VALUE);
-    uint32 hskeD = fscx_revolve(hskeE, K, R_VALUE);
-    printHexLine(F("E (Alice) : "), hskeE);
-    printHexLine(F("D (Bob)   : "), hskeD);
-    check(hskeD == PLAIN,
-          F("+ plaintext correctly decrypted"),
-          F("[FAIL] decryption failed!"));
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKS Schnorr [CLASSICAL]                                        */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS Schnorr [CLASSICAL -- not PQC; DLP + linear challenge]"));
-    {
-        uint32 k   = lcg_next() | 1;
-        uint32 R   = gf_pow_32(GF_GEN, k);
-        uint32 e   = fscx_revolve(R, PLAIN, I_VALUE);
-        uint64_t ae = ((uint64_t)A_PRIV * (uint64_t)e) % 0xFFFFFFFFULL;
-        uint32 s   = (uint32)(((uint64_t)k + 0xFFFFFFFFULL - ae) % 0xFFFFFFFFULL);
-        uint32 gs  = gf_pow_32(GF_GEN, s);
-        uint32 Ce  = gf_pow_32(C, e);
-        uint32 lhs = gf_mul_32(gs, Ce);
-        printHexLine(F("R (g^k)   : "), R);
-        printHexLine(F("s (resp)  : "), s);
-        printHexLine(F("g^s*C^e   : "), lhs);
-        check(lhs == R,
-          F("+ HPKS Schnorr verified!"),
-          F("[FAIL] HPKS Schnorr FAILED!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKE El Gamal [CLASSICAL]                                       */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKE El Gamal [CLASSICAL -- not PQC; DLP + linear HSKE]"));
-    {
-        uint32 r        = lcg_next() | 1;
-        uint32 R        = gf_pow_32(GF_GEN, r);
-        uint32 enc_key  = gf_pow_32(C, r);
-        uint32 hpkeE    = fscx_revolve(PLAIN, enc_key, I_VALUE);
-        uint32 dec_key  = gf_pow_32(R, A_PRIV);
-        uint32 hpkeD    = fscx_revolve(hpkeE, dec_key, R_VALUE);
-        printHexLine(F("R (g^r)   : "), R);
-        printHexLine(F("E (Bob)   : "), hpkeE);
-        printHexLine(F("D (Alice) : "), hpkeD);
-        check(hpkeD == PLAIN,
-          F("+ plaintext correctly decrypted"),
-          F("[FAIL] decryption failed!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]      */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]"));
-    {
-        uint32 N    = lcg_next();              /* per-session nonce            */
-        uint32 base = K ^ N;                   /* session key base = K XOR N   */
-        uint32 ks   = nl_fscx_revolve_v1(_rol32(base, 4) ^ RNL_KDF_DC, base, V1_MODE_STEPS);
-        uint32 E    = PLAIN ^ ks;
-        uint32 D    = E ^ ks;
-        printHexLine(F("N (nonce) : "), N);
-        printHexLine(F("E (Alice) : "), E);
-        printHexLine(F("D (Bob)   : "), D);
-        check(D == PLAIN,
-          F("+ plaintext correctly decrypted"),
-          F("[FAIL] decryption failed!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]      */
-    /* CAUTION: deterministic -- same (P, K) always yields the same E. */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]"));
-    {
-        uint32 E = nl_fscx_revolve_v2(PLAIN, K, R_VALUE);
-        uint32 D = nl_fscx_revolve_v2_inv(E, K, R_VALUE);
-        printHexLine(F("E (Alice) : "), E);
-        printHexLine(F("D (Bob)   : "), D);
-        check(D == PLAIN,
-          F("+ plaintext correctly decrypted"),
-          F("[FAIL] decryption failed!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HKEX-RNL [PQC -- Ring-LWR key exchange, N=32]                  */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HKEX-RNL [PQC -- Ring-LWR key exchange; N=32, q=65537]"));
-    uint32 sk_rnl_saved = 0;
-    static long m_base[RNL_N], a_rand[RNL_N], m_blind[RNL_N];
-    static long s_A[RNL_N], s_B[RNL_N], C_A[RNL_N], C_B[RNL_N];
-    {
-        rnl_m_poly(m_base);
-        rnl_rand_poly(a_rand);
-        rnl_poly_add(m_blind, m_base, a_rand);
-        rnl_keygen(s_A, C_A, m_blind);
-        rnl_keygen(s_B, C_B, m_blind);
-        uint32 hint_A;
-        uint32 KA = rnl_agree(s_A, C_B, NULL, &hint_A);   /* reconciler */
-        uint32 KB = rnl_agree(s_B, C_A, &hint_A, NULL);   /* receiver */
-        uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4) ^ RNL_KDF_DC, KA, I_VALUE);
-        uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4) ^ RNL_KDF_DC, KB, I_VALUE);
-        printHexLine(F("sk (Alice): "), skA);
-        printHexLine(F("sk (Bob)  : "), skB);
-        if (KA == KB) {
-            Serial.println(F("+ raw key bits agree; session key established!"));
-        } else {
-            Serial.println(F("- raw key disagrees (rounding noise -- retry)"));
-        }
-        sk_rnl_saved = skA;
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKS-NL [NL-hardened Schnorr -- HFSCX-32 challenge]          */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS-NL [NL-hardened Schnorr -- HFSCX-32 challenge]"));
-    {
-        uint32 k_nl = lcg_next();
-        uint32 R_nl = gf_pow_32(GF_GEN, k_nl);
-        uint32 e_nl = hpks_nl_challenge_32(R_nl, PLAIN);
-        uint64_t ae_nl = ((uint64_t)A_PRIV * (uint64_t)e_nl) % 0xFFFFFFFFULL;
-        uint32 s_nl = (uint32)(((uint64_t)k_nl + 0xFFFFFFFFULL - ae_nl) % 0xFFFFFFFFULL);
-        uint32 gs_nl = gf_pow_32(GF_GEN, s_nl);
-        uint32 Ce_nl = gf_pow_32(C, e_nl);
-        uint32 lhs_nl = gf_mul_32(gs_nl, Ce_nl);
-        printHexLine(F("R (g^k)   : "), R_nl);
-        printHexLine(F("s (resp)  : "), s_nl);
-        printHexLine(F("g^s*C^e   : "), lhs_nl);
-        check(lhs_nl == R_nl,
-          F("+ HPKS-NL verified!"),
-          F("[FAIL] HPKS-NL FAILED!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption]        */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption]"));
-    uint32 E_nl_saved = 0, R_nl2_saved = 0;
-    {
-        uint32 r_nl    = lcg_next() | 1;
-        uint32 R_nl2   = gf_pow_32(GF_GEN, r_nl);
-        uint32 enc_nl  = gf_pow_32(C, r_nl);
-        uint32 E_nl    = nl_fscx_revolve_v2(PLAIN, enc_nl, I_VALUE);
-        uint32 dec_nl  = gf_pow_32(R_nl2, A_PRIV);
-        uint32 D_nl    = nl_fscx_revolve_v2_inv(E_nl, dec_nl, I_VALUE);
-        printHexLine(F("E (Bob)   : "), E_nl);
-        printHexLine(F("D (Alice) : "), D_nl);
-        check(D_nl == PLAIN,
-          F("+ plaintext correctly decrypted"),
-          F("[FAIL] decryption failed!"));
-        E_nl_saved  = E_nl;
-        R_nl2_saved = R_nl2;
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP signature, N=32]     */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP, N=32, t=2, rounds=4]"));
-    uint32 sf_seed = 0, sf_synd = 0, sf_e = 0;
-    {
-        static SternSig32 sf_sig;
-        sf_seed = lcg_next();
-        sf_e    = stern_rand_error_32();
-        sf_synd = stern_syndrome_32(sf_seed, sf_e);
-        hpks_stern_f_sign_32(&sf_sig, PLAIN, sf_e, sf_seed);
-        int ok = hpks_stern_f_verify_32(&sf_sig, PLAIN, sf_seed, sf_synd);
-        printHexLine(F("seed     : "), sf_seed);
-        printHexLine(F("error e  : "), sf_e);
-        printHexLine(F("syndrome : "), sf_synd);
-        check(ok,
-          F("+ HPKS-Stern-F verified!"),
-          F("[FAIL] HPKS-Stern-F FAILED!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]               */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]"));
-    uint32 sf_K_enc_saved = 0;
-    {
-        uint32 e_prime, ct;
-        sf_K_enc_saved = hpke_stern_f_encap_32(sf_seed, &ct, &e_prime);
-        uint32 K_dec   = hpke_stern_f_decap_32(sf_seed, e_prime);
-        printHexLine(F("ct       : "), ct);
-        printHexLine(F("K (enc)  : "), sf_K_enc_saved);
-        printHexLine(F("K (dec)  : "), K_dec);
-        check(sf_K_enc_saved == K_dec,
-          F("+ HPKE-Stern-F KEM keys agree!"),
-          F("[FAIL] HPKE-Stern-F KEM keys differ!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* EVE bypass tests                                                 */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("*** EVE bypass TESTS ***"));
-
-    Serial.println(F("*** HPKE-NL -- Eve uses wrong key (C XOR R instead of C^r)"));
-    {
-        uint32 eve_key = C ^ R_nl2_saved;
-        uint32 D_eve   = nl_fscx_revolve_v2_inv(E_nl_saved, eve_key, I_VALUE);
-        check(!(D_eve == PLAIN),
-          F("- Eve could not decrypt (CDH + NL protection)"),
-          F("[FAIL] Eve decrypted (Eve wins)!"));
-    }
-
-    Serial.println(F("*** HKEX-RNL -- Eve random guess does not match shared key"));
-    {
-        uint32 eve_guess = lcg_next();
-        check(!(eve_guess == sk_rnl_saved),
-          F("- Eve random guess does not match shared key (Ring-LWR protection)"),
-          F("[FAIL] Eve guessed HKEX-RNL key (astronomically unlikely)!"));
-    }
-
-    Serial.println(F("*** HPKS-Stern-F -- Eve forges signature (random data)"));
-    {
-        static SternSig32 eve_sig;
-        for (int i = 0; i < SDF_ROUNDS; i++) {
-            eve_sig.c0[i] = lcg_next(); eve_sig.c1[i] = lcg_next();
-            eve_sig.c2[i] = lcg_next(); eve_sig.b[i]  = lcg_next() % 3;
-            eve_sig.respA[i] = lcg_next(); eve_sig.respB[i] = lcg_next();
-        }
-        int ok = hpks_stern_f_verify_32(&eve_sig, PLAIN, sf_seed, sf_synd);
-        check(!(ok),
-          F("- Eve forge rejected (SD soundness)"),
-          F("[FAIL] Eve forged signature (soundness failure)!"));
-    }
-
-    Serial.println(F("*** HPKE-Stern-F -- Eve random guess vs KEM key"));
-    {
-        uint32 eve_K = lcg_next();
-        check(!(eve_K == sf_K_enc_saved),
-          F("- Eve random K does not match KEM key (SD protection)"),
-          F("[FAIL] Eve guessed KEM key (astronomically unlikely)!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* HPKS-Stern-Ring [PQC -- k=2 ring sig, signer=member1, N=32]     */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS-Stern-Ring [PQC -- OR-composition, k=2, N=32, rounds=4]"));
-    {
-        SternRingSig2_32 rsig;
-        uint32 ring0_seed = lcg_next();
-        uint32 ring0_e    = stern_rand_error_32();
-        uint32 ring0_synd = stern_syndrome_32(ring0_seed, ring0_e);
-        hpks_stern_ring2_sign_32(&rsig, PLAIN, sf_e, sf_seed);
-        int ok = hpks_stern_ring2_verify_32(&rsig, PLAIN,
-            ring0_seed, ring0_synd, sf_seed, sf_synd);
-        check(ok,
-          F("+ HPKS-Stern-Ring verified (k=2, signer=member1)"),
-          F("[FAIL] HPKS-Stern-Ring FAILED"));
-    }
-
-    Serial.println(F("*** HPKS-Stern-Ring -- Eve forge (random ring sig fails challenge-sum check)"));
-    {
-        SternRingSig2_32 eve_rsig;
-        for (int i = 0; i < SDF_ROUNDS; i++) {
-            eve_rsig.m0.c0[i] = lcg_next(); eve_rsig.m0.c1[i] = lcg_next();
-            eve_rsig.m0.c2[i] = lcg_next(); eve_rsig.m0.b[i]  = lcg_next() % 3;
-            eve_rsig.m0.respA[i] = lcg_next(); eve_rsig.m0.respB[i] = lcg_next();
-            eve_rsig.m1.c0[i] = lcg_next(); eve_rsig.m1.c1[i] = lcg_next();
-            eve_rsig.m1.c2[i] = lcg_next(); eve_rsig.m1.b[i]  = lcg_next() % 3;
-            eve_rsig.m1.respA[i] = lcg_next(); eve_rsig.m1.respB[i] = lcg_next();
-        }
-        uint32 dummy_seed = lcg_next();
-        int ok = hpks_stern_ring2_verify_32(&eve_rsig, PLAIN,
-            dummy_seed, 0, dummy_seed, 0);
-        check(!(ok),
-          F("- Eve cannot forge ring sig: challenge-sum mismatch"),
-          F("[FAIL] Eve forged ring sig (failure)!"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* ZKP-RNL [Lyubashevsky Ring-LWR Sigma-protocol; n=32, t=4]       */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]"));
-    {
-        int ok = rnl_sigma_sign(m_blind, s_A, C_A, PLAIN);
-        if (ok) ok = rnl_sigma_verify(m_blind, C_A, PLAIN);
-        check(ok,
-          F("+ ZKP-RNL proof verified!"),
-          F("[FAIL] ZKP-RNL FAILED"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* ZKP-NL [ZKBoo MPC-in-the-head; n=8 bits, R=4 rounds]            */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- ZKP-NL [ZKBoo concept demo; n=8, R=4 rounds]"));
-    {
-        uint32 A_nl = lcg_next() & 0xFFu;
-        uint32 B_nl = lcg_next() & 0xFFu;
-        uint32 y_nl = zkp_nl_f1_8(A_nl, B_nl);
-        zkp_nl_prove_8(A_nl, B_nl, y_nl, PLAIN);
-        int ok = zkp_nl_verify_8(B_nl, y_nl, PLAIN);
-        printHexLine(F("A (wit)   : "), A_nl);
-        printHexLine(F("B (pub)   : "), B_nl);
-        printHexLine(F("y=F1(A,B) : "), y_nl);
-        check(ok,
-          F("+ ZKP-NL proof verified!"),
-          F("[FAIL] ZKP-NL FAILED"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* FPE (78.A)                                                       */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]"));
-    {
-        uint32 fpe_key = 0xABCD1234UL;
-        uint32 fpe_ctx = 0x00000042UL; /* record 66 */
-        uint32 fpe_ct  = fpe_encrypt_32(PLAIN, fpe_key, fpe_ctx);
-        uint32 fpe_rec = fpe_decrypt_32(fpe_ct, fpe_key, fpe_ctx);
-        printHexLine(F("plain  : "), PLAIN);
-        printHexLine(F("cipher : "), fpe_ct);
-        printHexLine(F("recover: "), fpe_rec);
-        check(fpe_rec == PLAIN,
-          F("+ FPE round-trip correct"),
-          F("[FAIL] FPE round-trip FAILED"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* Tweakable cipher (78.B)                                          */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]"));
-    {
-        uint32 twk_key = 0x12345678UL;
-        uint32 twk_ct  = twk_encrypt_32(PLAIN, twk_key, 7, 3);
-        uint32 twk_rec = twk_decrypt_32(twk_ct, twk_key, 7, 3);
-        printHexLine(F("plain  : "), PLAIN);
-        printHexLine(F("cipher : "), twk_ct);
-        printHexLine(F("recover: "), twk_rec);
-        check(twk_rec == PLAIN,
-          F("+ Tweakable cipher correct"),
-          F("[FAIL] Tweakable cipher FAILED"));
-    }
-    Serial.println();
-
-    /* ---------------------------------------------------------------- */
-    /* Accumulator (78.J)                                               */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- Accumulator (78.J) [Merkle root + membership; 32-bit]"));
-    {
-        uint32 leaves[4] = {
-            haccum_leaf_32(0xAAAAAAAAUL),
-            haccum_leaf_32(0xBBBBBBBBUL),
-            haccum_leaf_32(0xCCCCCCCCUL),
-            haccum_leaf_32(0xDDDDDDDDUL),
-        };
-        uint32 root = haccum_root_32(leaves, 4);
-        /* manual proof for index 2: sibling is leaves[3], parent's sibling is node(l[0],l[1]) */
-        uint32 sib0 = leaves[3];
-        uint32 sib1 = haccum_node_32(leaves[0], leaves[1]);
-        uint32 cur  = haccum_node_32(leaves[2], sib0);
-        cur         = haccum_node_32(sib1, cur);
-        printHexLine(F("root         : "), root);
-        printHexLine(F("verify (idx2): "), cur);
-        check(cur == root,
-          F("+ Accumulator proof correct"),
-          F("[FAIL] Accumulator proof FAILED"));
-    }
-    Serial.println();
-
-    /* Masked HSKE (78.H)                                               */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- Masked HSKE (78.H) [GF(2)-linearity masking; 32-bit]"));
-    {
-        uint32 plain32 = 0xDEADC0DEUL;
-        uint32 key32   = 0xCAFEBABEUL;
-        uint32 mask32  = 0xA5A5A5A5UL;
-        uint32 ct32    = hske_encrypt_masked_32(plain32, key32, mask32);
-        uint32 rec32   = hske_decrypt_masked_32(ct32,    key32, mask32);
-        printHexLine(F("cipher : "), ct32);
-        printHexLine(F("recover: "), rec32);
-        check(rec32 == plain32,
-          F("+ Masked HSKE correct"),
-          F("[FAIL] Masked HSKE FAILED"));
-    }
-    Serial.println();
-
-    /* Ratchet (78.C)                                                   */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- Ratchet (78.C) [forward-secret; 32-bit; 5 steps]"));
-    {
-        uint32 state32 = 0x12345678UL;
-        uint32 mk0 = 0, mk;
-        bool unique = true;
-        for (int i = 0; i < 5; i++) {
-            state32 = ratchet_advance_32(state32, &mk);
-            if (i == 0) mk0 = mk;
-            else if (mk == mk0) unique = false;
-        }
-        check(unique,
-          F("- Ratchet: 5 distinct message keys"),
-          F("[FAIL] Ratchet: duplicate message keys!"));
-    }
-    Serial.println();
-
-    /* OPRF (80) — blind / eval / unblind round-trip                     */
-    /* ---------------------------------------------------------------- */
-    Serial.println(F("--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]"));
-    {
-        /* Fixed params: x = 0x50415353 ("PASS"), k = 0x13579BDF,        */
-        /*               r = 7, r_inv = 0x49249249 = 7^{-1} mod 2^32-1  */
-        const uint32 oprf_x     = 0x50415353UL;
-        const uint32 oprf_k     = 0x13579BDFUL;
-        const uint32 oprf_r     = 7UL;
-        const uint32 oprf_r_inv = 0x49249249UL;
-
-        uint32 hx     = oprf_hash_to_field_32(oprf_x);
-        uint32 alpha  = oprf_blind_32(oprf_x,  oprf_r);
-        uint32 beta   = oprf_eval_32(alpha,     oprf_k);
-        uint32 F      = oprf_unblind_32(beta,   oprf_r_inv);
-        uint32 F_direct = oprf_direct_32(oprf_x, oprf_k);
-
-        printHexLine(F("H(x)  : "), hx);
-        printHexLine(F("alpha : "), alpha);
-        printHexLine(F("beta  : "), beta);
-        printHexLine(F("F     : "), F);
-        check(F == F_direct,
-          F("+ OPRF blind/eval/unblind correct"),
-          F("[FAIL] OPRF round-trip FAILED"));
-    }
-    Serial.println();
-
+static void demo_finish(void) {
     if (g_failures) {
         Serial.print(F("*** FAILED: "));
         Serial.print(g_failures);
@@ -1556,3 +1116,5 @@ void loop() {
 
     delay(10000);
 }
+
+#endif /* HERRADURA32_H */

@@ -6,9 +6,9 @@ bindings/ffi/libherradura_ffi.so
 bindings/ffi/python/__pycache__
 Herradura cryptographic suite_c
 Herradura cryptographic suite_go
-Herradura cryptographic suite_arm
-Herradura cryptographic suite_i386
-Herradura cryptographic suite_avr.elf
+demos/arm/*_arm
+demos/i386/*_i386
+demos/arduino/*/*_avr.elf
 CryptosuiteTests/Herradura_tests_c
 CryptosuiteTests/Herradura_tests_go
 CryptosuiteTests/Herradura_tests_arm

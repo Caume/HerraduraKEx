@@ -148,28 +148,26 @@ hkx_mal_suite() {
     local bad="$d/bad_$lang.pem"
     local case idx val
 
-    # ── HPKS-RING: k, rounds, n and the payload length (no Java ring reader) ──
-    if [ "$lang" != java ]; then
-        if _hkx_mal_control "[$lang] ring: genuine signature verifies" \
-            "${CLI[@]}" verify --algo hpks-ring --pubkey "$d/rm1_pub.pem" \
-            --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$d/rsig.pem"; then
-            # item 0 = k, 1 = rounds, 2 = n, 3 = the k*rounds entry blob.
-            for case in "0 1073741824 k=2^30" \
-                        "0 2147483647 k=2^31-1" \
-                        "0 65 k=65 (> RING_MAX_K)" \
-                        "0 1 k=1 (a ring needs 2)" \
-                        "1 1073741824 rounds=2^30" \
-                        "1 0 rounds=0" \
-                        "2 2147483647 n=2^31-1" \
-                        "1 1 payload longer than k*rounds"; do
-                set -- $case
-                idx="$1" val="$2"; shift 2
-                hkx_mal_craft "$d/rsig.pem" "$bad" "$idx" "$val"
-                _hkx_mal_expect "[$lang] ring rejects $*" \
-                    "${CLI[@]}" verify --algo hpks-ring --pubkey "$d/rm1_pub.pem" \
-                    --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$bad"
-            done
-        fi
+    # ── HPKS-RING (TODO #415): n, k, rounds and the signature body length ──
+    if _hkx_mal_control "[$lang] ring: genuine signature verifies" \
+        "${CLI[@]}" verify --algo hpks-ring \
+        --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$d/rsig.pem"; then
+        # item 0 = n, 1 = k, 2 = rounds, 3 = D (32 bytes), 4 = the body.
+        for case in "1 1073741824 k=2^30" \
+                    "1 2147483647 k=2^31-1" \
+                    "1 1025 k=1025 (> RING_MAX_K)" \
+                    "1 0 k=0" \
+                    "2 1073741824 rounds=2^30" \
+                    "2 0 rounds=0" \
+                    "0 2147483647 n=2^31-1" \
+                    "2 1 body longer than rounds describe"; do
+            set -- $case
+            idx="$1" val="$2"; shift 2
+            hkx_mal_craft "$d/rsig.pem" "$bad" "$idx" "$val"
+            _hkx_mal_expect "[$lang] ring rejects $*" \
+                "${CLI[@]}" verify --algo hpks-ring \
+                --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$bad"
+        done
     fi
 
     # ── HPKS-Stern-F: the round count TODO #236 bounded in C only ──

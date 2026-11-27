@@ -19,6 +19,12 @@ name: CI
 # install steps in 40 runs the median was 12 s and the slowest 821 s, during
 # that same mirror incident; 20 minutes sits above it. The bound is held by
 # tools/check_ci_install_bounds.py in native-python.
+#
+# TODO #418: every remote action is pinned to a full commit SHA, with the
+# release it was resolved from in a trailing `# vX.Y.Z` comment; a tag can be
+# moved, a SHA cannot. Held by tools/check_action_pinning.py. To bump, resolve
+# the new tag with `git ls-remote --tags` (the peeled ^{} commit for an
+# annotated tag) and update every line of that action at once.
 
 on:
   push:
@@ -39,7 +45,7 @@ jobs:
     name: C (build + tests + CliTest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -129,7 +135,7 @@ jobs:
     name: Go (build + tests + CliTest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -219,7 +225,7 @@ jobs:
       matrix:
         shard: [1, 2]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -234,7 +240,7 @@ jobs:
     name: Python (CliTest + checks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -320,6 +326,17 @@ jobs:
       - name: cross-document consistency (README / INTRODUCTION / CHANGELOG vs. sources)
         run: python3 spec/check_docs_consistency.py
 
+      # TODO #416. The Python harness re-implements the suite's functions rather
+      # than importing them, so its [FAIL]-gated numbered tests hold the COPY to
+      # its own expectations (C/Go/Java call the shipped code). This holds every
+      # re-implemented copy to the shipped suite: a census forces each name-shadow
+      # to be classified, every primitive is compared on shared inputs, and each
+      # verifier is cross-verified both ways with wrong-statement/tamper rejection
+      # asserted against the SHIPPED verifier (the #409 class). It found the
+      # harness's Stern permutation and challenge width had drifted from shipped.
+      - name: Python harness parity with the shipped suite
+        run: python3 CryptosuiteTests/check_suite_parity.py
+
       # TODO #341. tools/check_fast.sh runs the cheap checks above (and the KAT
       # currency checks the CliTest scripts run) locally in one command. This
       # step does not re-run them; it holds the script's list to this file in
@@ -334,6 +351,14 @@ jobs:
       # timeout-minutes of at most 30, and shows its controls firing first.
       - name: CI install steps are time-bounded
         run: python3 tools/check_ci_install_bounds.py
+
+      # TODO #418. A `uses: owner/action@v4` names a mutable tag: whoever can
+      # move it changes what every run here executes, with GITHUB_TOKEN in
+      # scope. This fails any remote action (here or in codeql.yml) not pinned
+      # to a 40-hex commit sha with a `# vX.Y.Z` comment, or pinned two ways,
+      # and shows its controls firing first.
+      - name: CI actions are pinned to commit SHAs
+        run: python3 tools/check_action_pinning.py
 
       # TODO #285. About 34 of the SecurityProofsCode/ scripts advertise "exits
       # non-zero if a finding stops reproducing" and until now NO job collected
@@ -409,7 +434,7 @@ jobs:
     name: C / Go / Python cross-CLI interop
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # default-jdk-headless is for test_threshold_interop.sh,
       # test_v3_family.sh (TODO #260) and test_zkp_hybrid_family.sh
@@ -484,6 +509,10 @@ jobs:
             case "$f" in test_pem_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #403)
             case "$f" in test_der_reader_diff.sh) continue ;; esac    # claimed by cross-lang-compat (TODO #404)
             case "$f" in test_raw_body_diff.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #406)
+            case "$f" in test_wrong_secret_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #410)
+            case "$f" in test_output_symlink.sh) continue ;; esac     # claimed by cross-lang-compat (TODO #417)
+            case "$f" in test_ots_state.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #419, #420)
+            case "$f" in test_hpks_s_bound.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #423)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
@@ -722,7 +751,7 @@ jobs:
     name: Java (build + demo + CliTest interop)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -783,7 +812,7 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -817,7 +846,7 @@ jobs:
     needs: [native-c, native-go, native-java]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -858,6 +887,31 @@ jobs:
       - name: Raw-body PEM differential
         run: bash CliTest/test_raw_body_diff.sh
 
+      # TODO #410: every acceptance decision probed with a WRONG secret -- another
+      # key's, a spliced private key's, and #409's own cheat (a wrong witness for
+      # the true statement, from a patched prover) -- through the four CLIs, each
+      # cell beside an accept-control.  Its KNOWN cell is TODO #413.
+      - name: Wrong-secret matrix
+        run: bash CliTest/test_wrong_secret_matrix.sh
+
+      # TODO #417: no CLI writes through a symlink at its output path (the link's
+      # target kept its mode, so a private key could land world-readable), and no
+      # WOTS/XMSS signature is released before its leaf is burned in <key>.idx.
+      - name: Output symlinks and one-time-signature state
+        run: bash CliTest/test_output_symlink.sh
+
+      # TODO #419, #420: a missing or damaged <key>.idx stops sign in every CLI
+      # (it used to read as "unused", and the four parsers disagreed), and a
+      # WOTS/XMSS key must be a regular file -- with the key on stdin, C and Go
+      # kept the state in ./-.idx and Java kept none.
+      - name: One-time-signature state is read fail-closed
+        run: bash CliTest/test_ots_state.sh
+
+      # TODO #423: g generates a proper subgroup of GF(2^n)* at n = 32 and 128,
+      # so an HPKS scalar s + ord(g) was a second encoding every verifier took.
+      - name: HPKS scalars lie below ord(g)
+        run: bash CliTest/test_hpks_s_bound.sh
+
       # TODO #269: --digest is a 4-way concern for the same reason. The gap it
       # guards (Java had no --digest at all) was invisible to every existing
       # signature test, because those either sign and verify within ONE language
@@ -875,7 +929,7 @@ jobs:
         run: bash CliTest/test_round_floor.sh
 
       # TODO #382 stage 2: Stern-F's 128-bit set, N = 2304 (the long form).
-      # Keys, hpks-stern, hpks-ring, hpke-stern and a long-form HCRED issuer as
+      # Keys, hpks-stern, hpks-ring, the hpke-stern refusal and a long-form HCRED issuer as
       # 4x4 matrices, with rejection controls beside every acceptance and two
       # checks about ONE implementation: the matrix rule restated from SPEC.md
       # and the signature's field sizes.
@@ -961,7 +1015,7 @@ jobs:
     name: ARM Thumb-2 / NASM i386 (build + tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -988,19 +1042,20 @@ jobs:
       # (hprintf / print_str count the marker, the exit status follows it).
       # Until they ran here, the ARM demo printed "ZKP-RNL verify FAILED" on
       # every run and nothing failed (TODO #349).
-      - name: ARM Thumb-2 suite demo (qemu-arm)
+      # TODO #425: one program per algorithm; run_*.sh suite runs every one.
+      - name: ARM Thumb-2 demos, one per algorithm (qemu-arm)
         run: ./run_arm.sh suite
 
-      - name: NASM i386 suite demo (qemu-i386)
+      - name: NASM i386 demos, one per algorithm (qemu-i386)
         run: ./run_asm_i386.sh suite
 
   katex:
     name: KaTeX math rendering validation (TODO #179)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: '20'
 
@@ -1024,7 +1079,7 @@ jobs:
     name: Arduino / AVR (build + simavr tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1041,14 +1096,14 @@ jobs:
       # TODO #350: the suite firmware prints *** OK / *** FAILED at the end of
       # every pass, read back by run_arduino.sh exactly as for the harness; a
       # pass that never finishes fails too.  It hung in HKEX-RNL until #350.
-      - name: Arduino suite demo (simavr)
+      - name: Arduino demos, one firmware per algorithm (simavr)
         run: ./run_arduino.sh suite
 
   fuzz-smoke:
     name: Fuzz smoke test (TODO #187)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1069,7 +1124,7 @@ jobs:
     name: C sanitizers + valgrind (TODO #188)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20
@@ -1165,7 +1220,7 @@ jobs:
     # what catches a hang.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # highspy (the HiGHS LP solver, which pulls in numpy) backs
       # local_potential_certificate.py and local_certificate_n256.py (TODO
@@ -1262,7 +1317,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: The shards are a partition of every gate
         run: python3 SecurityProofsCode/run_findings_gates.py --verify-shards 6
@@ -1294,7 +1349,7 @@ jobs:
     #   ~75-90 min on an ARM SBC, which would make this the slowest job in the
     #   matrix and re-create #289's recorded runtime problem on purpose.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Install dependencies
         timeout-minutes: 20

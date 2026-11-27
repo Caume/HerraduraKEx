@@ -27,7 +27,9 @@
 ## convention for functions in every language binding)
 Key exchange:     hkex-gf, hkex-rnl, hybrid-rnl-stern
 Symmetric enc:    hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3
-Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem
+Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern-kem
+                  (hpke-stern is a genpkey tag only: its enc/dec were removed in
+                  v20.0.0, TODO #413 -- the ciphertext let anyone decrypt it)
 Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
                   hpks-zkp-nl (genpkey) / nl-zkboo, nl-zkbpp (sign/verify), rnl-sigma,
                   hpks-t (threshold, via threshold-* subcommands)
@@ -69,7 +71,10 @@ exact choices list per subcommand.
   (code-based, syndrome decoding) turned into a Fiat-Shamir signature / Niederreiter KEM.
   N = 256 by default (~2^24, demo); N = 2304 is the 128-bit set (--level 128), the "long
   form": N-bit values as byte strings, 256-bit commitments and message (SPEC.md §11.1).
-- HPKS-ring: ring signature built on HPKS-Stern-F.
+- HPKS-ring: ring signature over hpks-stern keys -- ONE Stern proof over the ring's
+  block-diagonal statement (SPEC.md §11.2, redesigned by TODO #415 in v20.0.0; the
+  OR-composition before it was forgeable, and its signatures are refused by name).
+  1..1024 members of one width, any order; ~57 KiB for 4 members at N = 256.
 - rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
   over Ring-LWR / NL-FSCX statements.
 - HPKS-t: threshold Schnorr signature (4-phase protocol: commit, aggregate, respond,
@@ -236,7 +241,7 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hkex-gf --kdf hfscx-256 at any width n: sk = HFSCX-256(g^ab as n/8 bytes), written
     whole as a SESSION KEY declaring n = 256 (an HSKE key); without --kdf, raw g^ab at n.
   enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
-                  hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
+                  hpke,hpke-nl,hpke-nl3,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
     --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
     Every other algo encrypts ONE block (32 bytes; hske-nla1 without --aead, the
@@ -257,7 +262,17 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
     refuses the other's artifact at the parser.  All four CLIs ship both duplex
     versions.
+    NO INTEGRITY (TODO #414, v20.0.0): only hske-duplex, hske-duplex3, hske-nla1
+    --aead and encfile carry a tag.  Every other algo decrypts a modified
+    ciphertext or a wrong key to wrong bytes with exit 0, and enc and dec print
+    "<sub>: warning: --algo <a> has no integrity check: ..." to stderr (the text
+    is the spec's enc_integrity table).  hske, hske-nla1, hpke and hpke-stern-kem
+    are predictably malleable: flipping bit j of E flips plaintext bit j
+    (hske-nla1) or bits j and j +/- n/4 (the others), under every key.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
+    hpks-ring: --ring m0_pub.pem,m1_pub.pem,... (1..1024 hpks-stern public keys, any
+    order, each once; sign needs the signer's own public key in it).  PEM
+    HERRADURA HPKS-RING-V2 SIGNATURE; the v1 label is refused by name (TODO #415).
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {hfscx-256,none}] [--rounds N]
     --digest defaults to hfscx-256 (TODO #365, v15.0.0): the whole input is
@@ -266,7 +281,9 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     --rounds (hpks-stern, hpks-ring, nl-zkboo, nl-zkbpp) defaults to 219 in all
     four CLIs, the 128-bit Fiat-Shamir count.
     hpks-wots / hpks-xmss keep one-time-use / leaf-index state in a <keyfile>.idx
-    sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.
+    sidecar; reusing a WOTS key or an XMSS leaf breaks the signature.  The key
+    must be a regular file (no --key -, and genpkey needs a real --out), and a
+    missing or damaged .idx is refused, never read as unused (TODO #419, #420).
   verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
          [--digest {hfscx-256,none}] [--min-rounds N]
     The round count travels in the artifact, so the verifier sets a floor:
@@ -286,13 +303,16 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     command line did not port.  MIXING the two names in one invocation is
     refused: the list order is consensus-critical (threshold-respond must see the
     order threshold-aggregate did), so there is no defensible interleaving.
-  threshold-verify --sig FILE --in FILE [--digest {hfscx-256,none}]
+  threshold-verify --pubkey P0,P1,... --sig FILE --in FILE [--digest {hfscx-256,none}]
     (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify.
      threshold-verify is a directly-invokable top-level subcommand in GO ONLY.
      C dispatches `verify` and delegates internally to cmd_threshold_verify;
      Python and Java expose the check only via `verify --algo hpks-t`.  Same
      operation and same PEM in all four -- one extra entry point in Go.
-     Corrected by TODO #267's CLI-surface matrix, which had said "C and Go".)
+     Corrected by TODO #267's CLI-surface matrix, which had said "C and Go".
+     --pubkey is REQUIRED since v20.0.0 (TODO #412): the signing group's public
+     keys, comma-separated, any order; a signature carrying any other aggregate
+     key fails.  Before it, a signature from ANY group verified.)
   encfile/decfile --algo hske-nla1 --key FILE --in FILE --out FILE   (streaming, .hkx)
   dgst --algo {hfscx-256,hfscx-256-ds} --in FILE [--out FILE]
   rand [--seed FILE|--state FILE] [--personalization STR] [--reseed FILE]

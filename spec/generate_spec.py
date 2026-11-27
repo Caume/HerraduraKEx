@@ -402,8 +402,11 @@ SECURITY = {
                        source=["TODO.md #127 (6943-6949)", "TODO_DONE.md #212"]),
     "hpks":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
                        notes="Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
-                             "same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery.",
-                       source=["TODO.md #127", "TODO_DONE.md #212"]),
+                             "same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery. "
+                             "The challenge omits the public key, so about half of all signatures (those "
+                             "with gcd(e, 2^n - 1) > 1) also verify under a publicly computable second key "
+                             "C*z with z^e = 1: key substitution, not forgery; accepted (TODO #415).",
+                       source=["TODO.md #127", "TODO_DONE.md #212", "TODO.md #415"]),
     "hpke":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
                        notes="El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
                              "same ~2^36.5 Pohlig-Hellman recovery of the decryption key. Independently, the "
@@ -423,9 +426,11 @@ SECURITY = {
                              "`pedagogical` is what SECURITY.md has always said, and matches hpks. "
                              "Since v12.0.0 (TODO #348) the challenge is HFSCX-256-DS(0x30, R || msg) "
                              "truncated to n bits, not nl_fscx_revolve_v1(R, msg, n/4), which put the "
-                             "signer's msg in v1's B.",
+                             "signer's msg in v1's B. That challenge omits the public key, so hpks's "
+                             "key substitution applies (about half of all signatures also verify under "
+                             "a publicly computable second key); accepted (TODO #415).",
                        source=["SECURITY.md", "TODO_DONE.md #212", "SecurityProofs-4.md 11.7",
-                               "TODO_DONE.md #348"]),
+                               "TODO_DONE.md #348", "TODO.md #415"]),
     "hpke-nl":   dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="NL-FSCX-hardened El Gamal over the same GF(2^n)* group as hpke, with the same "
@@ -486,9 +491,16 @@ SECURITY = {
                         source=["SECURITY.md (HYBRID-RNL-STERN note)", "TODO_DONE.md #167",
                                 "SecurityProofs-5.md 11.8.7"]),
     "hpke-stern": dict(status="demo-only", quantum_resistant="conjectured",
-                        notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production "
-                              "requires an actual QC-MDPC syndrome decoder, not yet implemented.",
-                        source=["CLAUDE.md:228", "TODO.md #126 (6896-6924)"]),
+                        notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'. "
+                              "NO CONFIDENTIALITY: the CLI ciphertext carried e', and K = hash(seed, e') "
+                              "needs only the PUBLIC seed, so anyone holding the ciphertext and the "
+                              "public key decrypted it (found by TODO #410). TODO #413 (v20.0.0) removed "
+                              "enc/dec --algo hpke-stern from every CLI; hpke-stern-kem decodes with the "
+                              "private key. The tag remains a genpkey key type, a Stern signing key "
+                              "(the same error vector + seed as hpks-stern), and the suites keep the "
+                              "library functions as a demonstration.",
+                        source=["CLAUDE.md:228", "TODO.md #126 (6896-6924)", "TODO_DONE.md #413",
+                                "MIGRATING.md section 55"]),
     "hpke-stern-kem": dict(status="demo-only", quantum_resistant="conjectured",
                         notes="Niederreiter/QC-MDPC KEM with a real Black-Gray-Flip (BGF) "
                               "syndrome decoder (qcmdpc_keygen/encap/decap_bgf) -- unlike "
@@ -586,9 +598,19 @@ SECURITY = {
                        source=["TODO_DONE.md #208", "TODO_DONE.md #201",
                                "CliTest/test_cross_lang_matrix.sh", "TODO_DONE.md #346"]),
     "hpks-ring": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Anonymous ring signature built on hpks-stern keys; inherits hpks-stern's "
-                             "demo-rounds soundness caveat.",
-                       source=["herradura.h SDF_* constants"]),
+                       notes="Redesigned in v20.0.0 (TODO #415): ONE Stern proof over the ring's "
+                             "block-diagonal statement diag([H_i | s_i]), proving that the signer knows one "
+                             "member's weight-t error under a block and position shuffle that hides which. "
+                             "Three valid openings of one round give a member's key, so a forger answers at "
+                             "most two challenges in three: (2/3)^219 < 2^-128 at the CLI's 219 rounds. The "
+                             "challenge binds the message, the canonical (sorted) ring and every commitment; "
+                             "salted commitments keep the signer hidden even from someone holding every "
+                             "member's key. The OR-composition it replaces (signatures labelled HERRADURA "
+                             "HPKS-RING SIGNATURE) was forgeable with no member's key and is refused by "
+                             "every CLI. Demo-only like hpks-stern: N = 256 is a ~24-38-bit instance; the "
+                             "128-bit instance is the long form, N = 2304. Assembly/Arduino run the same "
+                             "construction as a 32-bit demo, N = 32, k = 2, 4 rounds (TODO #424).",
+                       source=["SPEC.md section 11.2", "TODO_DONE.md #415", "CliTest/test_ring.sh"]),
     "hpks-t":    dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="Threshold / aggregate Schnorr over GF(2^n)* (herradura.h 4074), with signing "
@@ -1661,6 +1683,8 @@ def generate():
             + [l for t in key_tag_labels(priv_algos, pem_labels_all).values() for l in t]),
         "pem_der_field_caps": build_pem_der_field_caps(),
         "key_parameter_sets": build_key_param_sets(),
+        "enc_integrity": build_enc_integrity(extract_choices(py_src, "en"),
+                                             extract_choices(py_src, "de")),
     }
     return spec
 
@@ -1832,6 +1856,16 @@ def build_help_synopsis(spec, lang):
         if row.get("has_algo_flag"):
             tags = [t for t, impls in row["algos"].items() if lang in impls]
             lines += _wrap_words(tags, " " * pad + "--algo: ", " " * (pad + 8))
+            if sub in ("enc", "dec"):   # TODO #414
+                words = []
+                for r in spec["enc_integrity"]:
+                    if r["algo"] in tags and r["integrity"] == "none":
+                        words.append(r["algo"])
+                    elif r["algo"] in tags and r["integrity"] == "aead-flag":
+                        words += [r["algo"], "(unless", "--aead)"]
+                if words:
+                    lines += _wrap_words(words, " " * pad + "NO INTEGRITY (TODO #414): ",
+                                         " " * (pad + 8))
     return lines
 
 
@@ -1864,7 +1898,8 @@ def emit_go_help_region(go_src, lines):
 #
 # Two families are deliberately shared.  GF: hkex-gf, hpks, hpks-nl, hpke and
 # hpke-nl are the same GF(2^n)* key pair (SPEC.md §7: "HPKE reuses HKEX-GF key
-# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed.
+# pairs").  STERN: hpks-stern and hpke-stern hold the same error vector + seed
+# (since TODO #413 an hpke-stern key is only a Stern signing key: enc/dec retired).
 # hpke-nl3 is NOT in the GF family: it has its own labels (TUTORIAL: "an
 # hpke-nl key is not an hpke-nl3 key").  Public-key slots accept PUBLIC labels
 # only; a private key passed as --pubkey was mis-parsed by every CLI before.
@@ -1894,7 +1929,7 @@ KEY_LABEL_SITES = (
      ("kex", "hybrid-rnl-stern", "--their-kem", "pub", _KF_KEM)]
     + [(sub, algo, flag, role, fam)
        for algo, fam in (("hpke", _KF_GF), ("hpke-nl", _KF_GF), ("hpke-nl3", ["hpke-nl3"]),
-                         ("hpke-stern", _KF_STERN), ("hpke-stern-kem", _KF_KEM))
+                         ("hpke-stern-kem", _KF_KEM))
        for sub, flag, role in (("enc", "--pubkey", "pub"), ("dec", "--key", "priv"))]
     + [(sub, algo, flag, role, fam)
        for algo, fam in (("hpks", _KF_GF), ("hpks-nl", _KF_GF), ("hpks-stern", _KF_STERN),
@@ -1903,6 +1938,9 @@ KEY_LABEL_SITES = (
                          ("hpks-xmss", ["hpks-xmss"]), ("hpks-wots", ["hpks-wots"]))
        for sub, flag, role in (("sign", "--key", "priv"),
                                ("verify", "--ring" if algo == "hpks-ring" else "--pubkey", "pub"))]
+    # TODO #412: the group an HPKS-T signature is checked against, a comma-
+    # separated list (the checkers split it, as they split --ring).
+    + [("verify", "hpks-t", "--pubkey", "pub", ["hpks", "hpks-nl"])]
     + [("threshold-commit", "", "--key", "priv", ["hpks", "hpks-nl"]),
        ("threshold-respond", "", "--key", "priv", ["hpks", "hpks-nl"]),
        ("oprf-eval", "", "--key", "priv", ["oprf"]),
@@ -1951,7 +1989,10 @@ PEM_DER_ITEMS = {
     "HERRADURA HPKS-XMSS PRIVATE KEY": (4, 4),
     "HERRADURA HPKS-XMSS PUBLIC KEY": (2, 2),
     "HERRADURA HPKS-XMSS SIGNATURE": (5, 5),
-    "HERRADURA HPKS-RING SIGNATURE": (4, 4),
+    # TODO #415: (n, k, rounds, D, blob).  The v1 label "HERRADURA HPKS-RING
+    # SIGNATURE" (the forgeable OR-composition) has no row: verify names it and
+    # refuses it before this table is consulted.
+    "HERRADURA HPKS-RING-V2 SIGNATURE": (5, 5),
     "HERRADURA OPRF PRIVATE KEY": (2, 2),
     "HERRADURA OPRF CLIENT STATE": (3, 3),
     "HERRADURA OPRF EVALUATION": (2, 2),
@@ -2090,6 +2131,120 @@ def build_key_param_sets():
 
 def _ps_ports(r):
     return " ".join(r["ports"])
+
+
+# ── Integrity of each enc/dec --algo (TODO #414) ──────────────────────────
+#
+# #410's wrong-secret matrix found that `dec` under the WRONG key exits 0 and
+# writes garbage for every mode without a tag, and nothing said which modes those
+# are.  This table is that statement.  integrity: "tag" (dec verifies a tag and
+# exits non-zero on a mismatch), "none" (no tag: a modified ciphertext or a wrong
+# key decrypts to wrong bytes with exit 0), or "aead-flag" (hske-nla1: none unless
+# --aead, i.e. a format-tag-2 ciphertext).  malleability is what a one-bit flip
+# of the ciphertext's E field does to the plaintext, MEASURED in all four CLIs by
+# CliTest/test_wrong_secret_matrix.sh: "predictable" (a fixed pattern, the same
+# under every key and plaintext: the mode is linear in E), or "diffuse" (about
+# half the block, varying with the key, but still undetected).  Every CLI prints
+# `<sub>: warning: <warning>` to stderr on enc and dec of a mode with no tag,
+# from the generated copy of this table, and the matrix holds them to it.
+_SYM_ADVICE = ("for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or "
+               "encfile")
+_ASYM_ADVICE = ("no asymmetric mode has a tag: sign the ciphertext, or agree a key "
+                "with kex and use an authenticated symmetric mode")
+_LIN = "flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key"
+_LIN_E = "flipping bit j of E flips plaintext bits j and j +/- n/4 under every key"
+_DIFFUSE = "a flipped bit scrambles about half the block, and nothing detects it"
+ENC_INTEGRITY = {
+    "hske":           ("none", "predictable", _LIN, _SYM_ADVICE),
+    "hske-nla1":      ("aead-flag", "predictable",
+                       "without --aead, flipping ciphertext bit j flips plaintext bit j",
+                       _SYM_ADVICE),
+    "hske-nla2":      ("none", "diffuse", _DIFFUSE, _SYM_ADVICE),
+    "hske-nla3":      ("none", "diffuse", _DIFFUSE, _SYM_ADVICE),
+    "hske-duplex":    ("tag", None, None, None),
+    "hske-duplex3":   ("tag", None, None, None),
+    "hpke":           ("none", "predictable", _LIN_E, _ASYM_ADVICE),
+    "hpke-nl":        ("none", "diffuse", _DIFFUSE, _ASYM_ADVICE),
+    "hpke-nl3":       ("none", "diffuse", _DIFFUSE, _ASYM_ADVICE),
+    "hpke-stern-kem": ("none", "predictable",
+                       _LIN_E + "; a corrupt syndrome decrypts to garbage by design, as "
+                         "implicit rejection requires (TODO #235)", _ASYM_ADVICE),
+}
+
+
+def build_enc_integrity(enc_tags, dec_tags):
+    if set(enc_tags) != set(dec_tags):
+        raise RuntimeError("enc and dec take different --algo tags: %r"
+                           % sorted(set(enc_tags) ^ set(dec_tags)))
+    if set(ENC_INTEGRITY) != set(enc_tags):
+        raise RuntimeError("ENC_INTEGRITY does not match enc's --algo tags: %r"
+                           % sorted(set(ENC_INTEGRITY) ^ set(enc_tags)))
+    rows = []
+    for algo in enc_tags:
+        integ, mall, detail, advice = ENC_INTEGRITY[algo]
+        if integ not in ("tag", "none", "aead-flag"):
+            raise RuntimeError("ENC_INTEGRITY[%r]: unknown integrity %r" % (algo, integ))
+        if (integ == "tag") != (mall is None):
+            raise RuntimeError("ENC_INTEGRITY[%r]: a tagged mode has no malleability "
+                               "entry, an untagged one must have one" % algo)
+        warning = None
+        if integ != "tag":
+            warning = ("--algo %s has no integrity check: a modified ciphertext or the "
+                       "wrong key decrypts to wrong bytes with exit 0 (%s); %s (TODO #414)"
+                       % (algo, detail, advice))
+        rows.append({"algo": algo, "integrity": integ, "malleability": mall,
+                     "warning": warning})
+    return rows
+
+
+def _c_str(s):
+    return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def emit_c_enc_integrity(rows):
+    out = ["/* TODO #414: each enc/dec --algo's integrity: \"tag\", \"none\", or \"aead-flag\"",
+           " * (none unless --aead).  warning: what enc/dec print to stderr when there is",
+           " * no tag (0 for a tagged mode). */",
+           "typedef struct { const char *algo, *integrity, *warning; } HkxEncIntegrity;", "",
+           "static const HkxEncIntegrity HKX_ENC_INTEGRITY[] = {"]
+    for r in rows:
+        out.append("    {\"%s\", \"%s\",\n     %s}," % (r["algo"], r["integrity"],
+                                                       _c_str(r["warning"]) if r["warning"] else "0"))
+    out += ["};",
+            "static const int HKX_ENC_INTEGRITY_N ="
+            " (int)(sizeof(HKX_ENC_INTEGRITY) / sizeof(HKX_ENC_INTEGRITY[0]));", ""]
+    return out
+
+
+def emit_java_enc_integrity(rows):
+    out = ["    /** TODO #414: {algo, integrity (tag | none | aead-flag), stderr warning|\"\"}. */",
+           "    static final String[][] ENC_INTEGRITY = {"]
+    for r in rows:
+        out.append("        {\"%s\", \"%s\",\n         %s}," % (r["algo"], r["integrity"],
+                                                             _c_str(r["warning"] or "")))
+    out += ["    };", ""]
+    return out
+
+
+def emit_go_enc_integrity(rows):
+    out = ["// TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the",
+           "// warning enc/dec print to stderr when there is no tag.",
+           "var encIntegrity = map[string][2]string{"]
+    for r in rows:
+        out.append("\t\"%s\": {\"%s\",\n\t\t%s}," % (r["algo"], r["integrity"],
+                                                 _c_str(r["warning"] or "")))
+    out += ["}", ""]
+    return out
+
+
+def emit_py_enc_integrity(rows):
+    out = ["# TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the",
+           "# warning enc/dec print to stderr when there is no tag.",
+           "_ENC_INTEGRITY = {"]
+    for r in rows:
+        out.append("    %r: (%r,\n        %r)," % (r["algo"], r["integrity"], r["warning"]))
+    out += ["}", ""]
+    return out
 
 
 def emit_c_param_sets(ps):
@@ -2313,9 +2468,11 @@ PEM_DER_FIELD_CAPS = [
     # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
     ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
      {0: "4", 1: "=%d*(f4/8)" % _WOTS_L, 2: "=f3*32", 3: "1", 4: "2"}),
-    # (k, rounds, n, k*rounds entries of c0 c1 c2 b ra rb); c0..c2 min(n, 256) bits
-    ("HERRADURA HPKS-RING SIGNATURE", (4, 4), None,
-     {0: "1", 1: "2", 2: "2", 3: "=f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)"}),
+    # (n, k, rounds, D, blob): the blob's exact length follows from the
+    # challenges D derives, so it is minimal DER under the all-b=0 bound
+    # rounds * (96 + 2 * vector), a vector being k * n/8 + ceil(k/8) bytes.
+    ("HERRADURA HPKS-RING-V2 SIGNATURE", (5, 5), None,
+     {0: "2", 1: "2", 2: "2", 3: "=32", 4: "f2*(96+2*(f1*(f0/8)+(f1+7)/8))"}),
     ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
     ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
     ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),
@@ -2341,12 +2498,10 @@ PEM_DER_FIELD_CAPS = [
     ("HERRADURA CIPHERTEXT", (3, 3), "f0 == 0", {0: "1", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (3, 3), None, {0: "=(f2+7)/8", 1: "=(f2+7)/8", 2: "2"}),
     ("HERRADURA CIPHERTEXT", (4, 4), None, {0: "1", 1: "=(f3+7)/8", 2: "=(f3+7)/8", 3: "2"}),
-    # Five: hske-nla1 format 2 (2, nonce, E, tag, n), else HPKE-Stern (ct, e', K,
-    # E, n): K and E are min(n, 256) bits, the payload block (TODO #382).
-    ("HERRADURA CIPHERTEXT", (5, 5), "f0 == 2",
-     {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
+    # Five: hske-nla1 format 2 (2, nonce, E, tag, n).  The HPKE-Stern demo
+    # layout (ct, e', K, E, n) shared this count until TODO #413 retired it.
     ("HERRADURA CIPHERTEXT", (5, 5), None,
-     {0: "=f4/8", 1: "=f4/8", 2: "=min(f4/8, 32)", 3: "=min(f4/8, 32)", 4: "2"}),
+     {0: "1", 1: "=(f4+7)/8", 2: "=(f4+7)/8", 3: "=32", 4: "2"}),
     # Six: duplex (format 3 or 4, nonce, length, ciphertext, tag, n).
     ("HERRADURA CIPHERTEXT", (6, 6), None,
      {0: "1", 1: "=(f5+7)/8", 2: "6", 3: "=f2", 4: "=32", 5: "2"}),
@@ -3104,7 +3259,7 @@ def build_key_label_acceptance(priv_algos, pem_labels):
     return rows
 
 
-def emit_c_key_table(rows, items, caps, ps):
+def emit_c_key_table(rows, items, caps, ps, integ):
     width = max(len(r["labels"]) for r in rows) + 1
     out = ["/* " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n * ") + " */",
            "#ifndef HKX_KEY_LABEL_TABLE_H",
@@ -3130,11 +3285,12 @@ def emit_c_key_table(rows, items, caps, ps):
             " (int)(sizeof(HKX_DER_ITEMS) / sizeof(HKX_DER_ITEMS[0]));", ""]
     out += emit_c_field_caps(caps)
     out += emit_c_param_sets(ps)
+    out += emit_c_enc_integrity(integ)
     out += ["#endif /* HKX_KEY_LABEL_TABLE_H */", ""]
     return "\n".join(out)
 
 
-def emit_java_key_table(rows, items, caps, ps):
+def emit_java_key_table(rows, items, caps, ps, integ):
     out = ["package herradurakex;", "",
            "/** " + _GEN_BANNER.replace("TODO #274", "TODO #366").replace("\n", "\n *  ") + " */",
            "final class KeyLabelTable {",
@@ -3152,6 +3308,7 @@ def emit_java_key_table(rows, items, caps, ps):
     out += ["    };", ""]
     out += emit_java_field_caps(caps)
     out += emit_java_param_sets(ps)
+    out += emit_java_enc_integrity(integ)
     out += ["}", ""]
     return "\n".join(out)
 
@@ -3170,7 +3327,7 @@ def _replace_region(src, begin, end, body, what):
     return pat.sub(lambda _m: "\n".join([begin] + body + [end]), src, count=1)
 
 
-def emit_go_key_region(go_src, rows, items, caps, ps):
+def emit_go_key_region(go_src, rows, items, caps, ps, integ):
     body = ["var keySites = []keySite{"]
     for r in rows:
         body.append('\t{"%s", "%s", "%s", "%s", []string{%s}},'
@@ -3186,10 +3343,11 @@ def emit_go_key_region(go_src, rows, items, caps, ps):
     body.append("")
     body += emit_go_field_caps(caps)
     body += emit_go_param_sets(ps)
+    body += emit_go_enc_integrity(integ)
     return _replace_region(go_src, GO_KEY_BEGIN, GO_KEY_END, body, "herradura_cli.go")
 
 
-def emit_py_key_region(py_src, rows, items, caps, ps):
+def emit_py_key_region(py_src, rows, items, caps, ps, integ):
     body = ["_KEY_SITES = {"]
     for r in rows:
         body.append("    (%r, %r, %r): (%r, (%s)),"
@@ -3207,6 +3365,7 @@ def emit_py_key_region(py_src, rows, items, caps, ps):
     body += emit_py_field_caps(caps)
     body.append("")
     body += emit_py_param_sets(ps)
+    body += emit_py_enc_integrity(integ)
     return _replace_region(py_src, PY_KEY_BEGIN, PY_KEY_END, body, "herradura.py")
 
 
@@ -3236,17 +3395,20 @@ def main():
         (CLI_GO, emit_go_key_region(
             emit_go_help_region(read(CLI_GO), build_help_synopsis(spec, "go")),
             spec["key_label_acceptance"], spec["pem_der_items"], spec["pem_der_field_caps"],
-            spec["key_parameter_sets"])),
+            spec["key_parameter_sets"], spec["enc_integrity"])),
         # TODO #366: the key-label acceptance table, in all four CLIs (with
         # #367's item counts and #372's field caps).
         (C_KEY_TABLE, emit_c_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                       spec["pem_der_field_caps"], spec["key_parameter_sets"])),
+                                       spec["pem_der_field_caps"], spec["key_parameter_sets"],
+                                       spec["enc_integrity"])),
         (JAVA_KEY_TABLE, emit_java_key_table(spec["key_label_acceptance"], spec["pem_der_items"],
-                                             spec["pem_der_field_caps"], spec["key_parameter_sets"])),
+                                             spec["pem_der_field_caps"], spec["key_parameter_sets"],
+                                             spec["enc_integrity"])),
         (HERRADURA_PY, emit_py_key_region(read(HERRADURA_PY), spec["key_label_acceptance"],
                                                      spec["pem_der_items"],
                                                      spec["pem_der_field_caps"],
-                                                     spec["key_parameter_sets"])),
+                                                     spec["key_parameter_sets"],
+                                                     spec["enc_integrity"])),
     ]
 
     if args.check:

@@ -372,7 +372,8 @@ assert plaintext == recovered
 (authenticity/integrity), without encrypting anything — the "sign and verify" step,
 independent of both HKEX-GF and HSKE above (it uses its own keypair, generated below).
 
-Schnorr over GF(2^n)*: `R = g^k`; `e = fscx_revolve(R, msg, i)`; `s = (k - a·e) mod (2^n-1)`;
+Schnorr over GF(2^n)*: `R = g^k`; `e = fscx_revolve(R, msg, i)`; `s = (k - a·e) mod ord(g)` (the order of g: `2^n - 1` at n = 64 and 256, a third of it
+at 128 and a fifteenth at 32; TODO #423);
 verify `g^s · C^e == R`.
 
 #### CLI
@@ -435,35 +436,30 @@ a separate, hash-based key type, not a variant of HPKS.
 
 #### Anonymous ring signatures (HPKS-Stern-Ring)
 
-`hpks-ring` is a code-based **ring signature** (#78.I): one member of an ad-hoc
-group signs on behalf of the whole group, and a verifier confirms *some* member
-signed without learning **which** one. Each ring member is an ordinary
-`hpks-stern` keypair; the ring is the ordered list of their public keys.
+**What it's for:** one member of an ad-hoc group signs on behalf of the group, and a
+verifier learns that *some* member signed, not which one. Every member has an ordinary
+`hpks-stern` key; nobody coordinates, and the signer picks the group.
 
 ```bash
-# Three members each generate an hpks-stern keypair and publish their public key
-for m in 0 1 2; do
-  $CLI genpkey --algo hpks-stern --out m$m.pem
-  $CLI pkey    --in m$m.pem --pubout --out m${m}_pub.pem
+for m in m0 m1 m2; do
+    $CLI genpkey --algo hpks-stern --out $m.pem
+    $CLI pkey --in $m.pem --pubout --out ${m}_pub.pem
 done
 RING=m0_pub.pem,m1_pub.pem,m2_pub.pem
-
-# Member 1 signs anonymously on behalf of the ring (its index is hidden)
-$CLI sign   --algo hpks-ring --key m1.pem --ring "$RING" --in msg.bin --out sig.pem
-
-# Anyone verifies against the ring; the signer's identity is not revealed
-$CLI verify --algo hpks-ring --ring "$RING" --in msg.bin --sig sig.pem
-# Prints: Signature OK
+$CLI sign --algo hpks-ring --key m1.pem --ring $RING --in msg.bin --out sig.pem
+$CLI verify --algo hpks-ring --ring m2_pub.pem,m0_pub.pem,m1_pub.pem --in msg.bin --sig sig.pem
+# Signature OK
 ```
 
-The signer must be a member of `--ring` (its public key present), else signing is
-refused. Verification is anonymous: it succeeds for a signature from *any* ring
-member and fails for non-members, a tampered message, or a different ring.
-Signatures are byte-for-byte interoperable across all four CLIs
-(`CliTest/test_ring.sh`).
+The ring may be given in any order (the signature binds it sorted), must list each member
+once, and holds 1 to 1024 keys of one width. The signer's own public key must be in it.
+The signature is ONE Stern proof over the whole ring (SPEC.md §11.2), so it grows with
+the ring: about 57 KiB for 4 members at N = 256, 219 rounds. `--level 128` keys
+(N = 2304) give the 128-bit instance; N = 256 is demo-only, like `hpks-stern` itself.
 
-> **Demo parameters.** Like `hpks-stern`, the ring signature uses N=256 / 32
-> Fiat-Shamir rounds, a low-soundness demo configuration — not for production use.
+The ring signature that shipped before v20.0.0 was forgeable without any member's key
+(TODO #415, SECURITY.md). Its signatures (`HERRADURA HPKS-RING SIGNATURE`) are refused
+by name; re-sign with this release (MIGRATING.md §61).
 
 ### HPKE El Gamal encryption
 
@@ -1236,6 +1232,9 @@ assert K_enc == K_dec
 `hpks-wots` is a hash-based **one-time** signature (Winternitz OTS over HFSCX-256).
 A WOTS key may sign **exactly one** message; the CLI burns the key after signing
 (tracked in a `<key>.idx` file next to the private key) and refuses any reuse.
+Because that file is the key's state, the key must be a regular file — `genpkey` needs a
+real `--out` and `sign` a real `--key`, never `-` — and a missing or damaged `.idx` stops
+`sign` rather than reading as "unused".  Never recreate a lost `.idx` as `0`.
 `hpks-xmss` is the many-time wrapper (library API only) that manages a tree of
 WOTS leaves.
 
@@ -2014,11 +2013,17 @@ python3 HerraduraCli/herradura.py threshold-combine \
 **Verify:**
 
 ```bash
-python3 HerraduraCli/herradura.py verify --algo hpks-t --in message.bin --sig final_sig.pem
+python3 HerraduraCli/herradura.py pkey --in alice_hpks.pem --pubout --out alice_pub.pem
+python3 HerraduraCli/herradura.py pkey --in bob_hpks.pem   --pubout --out bob_pub.pem
+python3 HerraduraCli/herradura.py verify --algo hpks-t \
+  --pubkey alice_pub.pem,bob_pub.pem --in message.bin --sig final_sig.pem
 ```
 
-No `--pubkey` flag is needed: the aggregate public key C_agg is embedded in
-`final_sig.pem` (HPKST SIGNATURE PEM).
+`--pubkey` names the group you trust: every member's public key, comma-separated,
+in any order.  `final_sig.pem` (HPKST SIGNATURE PEM) carries the aggregate key
+C_agg it was made under, and the verifier recomputes C_agg from these keys and
+rejects a signature that carries any other.  Until v20.0.0 the verifier read no
+key at all, so a signature from ANY group verified (TODO #412).
 
 ### C CLI equivalent
 
@@ -2049,7 +2054,7 @@ $C threshold-combine \
   --partial alice_partial.pem --partial bob_partial.pem \
   --out final_sig.pem
 
-$C verify --algo hpks-t --in message.bin --sig final_sig.pem
+$C verify --algo hpks-t --pubkey alice_pub.pem,bob_pub.pem --in message.bin --sig final_sig.pem
 ```
 
 The Go CLI (`herradura_cli_go`) and Java's `herradurakex.HerraduraCli` use the same

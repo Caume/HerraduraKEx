@@ -24,7 +24,7 @@
 # script instead: hpks-t's multi-phase protocol is
 # CliTest/test_threshold_interop.sh, hske-duplex (v2) is
 # CliTest/test_duplex.sh, and hske-duplex3 is CliTest/test_v3_family.sh.
-# hpks-ring's 4-way coverage is still open (TODO #260 step 6).
+# hpks-ring's 4-way coverage is CliTest/test_ring.sh (TODO #415).
 #
 # OPRF and aPAKE are inherently role-asymmetric (blind/eval/unblind,
 # register/login) multi-party protocols rather than simple
@@ -187,7 +187,7 @@ matrix_asym_enc() {
 matrix_asym_enc hpke
 matrix_asym_enc hpke-nl
 matrix_asym_enc hpke-nl3          # TODO #255
-matrix_asym_enc hpke-stern
+# hpke-stern left the matrix with enc/dec --algo hpke-stern (TODO #413).
 
 # hpke-stern-kem has a nonzero decoding-failure rate (DFR) by design — retry
 # with a fresh keypair on a DFR event rather than treating it as a hard fail.

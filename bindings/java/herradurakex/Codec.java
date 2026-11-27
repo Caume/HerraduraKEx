@@ -76,7 +76,8 @@ public final class Codec {
     public static final String PEM_HPKST_AGGREGATE = "HERRADURA HPKST AGGREGATE";
     public static final String PEM_HPKST_PARTIAL = "HERRADURA HPKST PARTIAL";
     public static final String PEM_HPKST_SIG = "HERRADURA HPKST SIGNATURE";
-    public static final String PEM_HPKS_RING_SIG = "HERRADURA HPKS-RING SIGNATURE";
+    public static final String PEM_HPKS_RING_SIG = "HERRADURA HPKS-RING-V2 SIGNATURE"; // TODO #415
+    public static final String PEM_HPKS_RING_SIG_V1 = "HERRADURA HPKS-RING SIGNATURE";  // forgeable; refused
     public static final String PEM_ZKP_NL_PRIV = "HERRADURA ZKP-NL PRIVATE KEY";
     public static final String PEM_ZKP_NL_PUB = "HERRADURA ZKP-NL PUBLIC KEY";
     public static final String PEM_ZKP_NL_PROOF = "HERRADURA ZKP-NL PROOF";
@@ -920,8 +921,8 @@ public final class Codec {
     public static final int XMSS_MAX_H = 20;
     /** herradura.h SDF_MAX_ROUNDS (TODO #236). */
     public static final int SDF_MAX_ROUNDS = 4096;
-    /** herradura_cli.c RING_MAX_K (TODO #260). */
-    public static final int RING_MAX_K = 64;
+    /** herradura_cli.c RING_MAX_K == SternRing.MAX_MEMBERS (TODO #415). */
+    public static final int RING_MAX_K = 1024;
 
     /** Returns v, or throws if it falls outside [lo, hi].  {@code what} names
      * the field as the wire calls it; {@code where} is the subcommand, so the
@@ -1456,39 +1457,6 @@ public final class Codec {
         }
         List<BigInteger> ints = derParseSeq(b);
         return new SternPubKey(ints.get(0), ints.get(1), sternWidth(ints.get(2), b.label));
-    }
-
-    /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
-    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e) {
-        return encodeSternCt(ctSyn, eP, k, e, Herradura.N);
-    }
-
-    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int n) {
-        int nb = n / 8;
-        int kb = commitBytes(n);   // K and the payload block: 256 bits above 256 (TODO #382)
-        byte[] der = derSeq(derInt(ctSyn, nb), derInt(eP, nb), derInt(k, kb), derInt(e, kb),
-                             derInt(BigInteger.valueOf(n), -1));
-        return pemWrap(PEM_CIPHERTEXT, der);
-    }
-
-    public static final class SternCt {
-        public final BigInteger ctSyn;
-        public final BigInteger eP;
-        public final BigInteger k;
-        public final BigInteger e;
-        public final int nbits;
-        SternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int nbits) {
-            this.ctSyn = ctSyn; this.eP = eP; this.k = k; this.e = e; this.nbits = nbits;
-        }
-    }
-
-    public static SternCt decodeSternCt(String pem) {
-        PemBlock b = pemUnwrap(pem);
-        if (!b.label.equals(PEM_CIPHERTEXT)) {
-            throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
-        }
-        List<BigInteger> ints = derParseSeq(b);
-        return new SternCt(ints.get(0), ints.get(1), ints.get(2), ints.get(3), ints.get(4).intValueExact());
     }
 
     /**
@@ -2439,78 +2407,60 @@ public final class Codec {
     }
 
     // -----------------------------------------------------------------
-    // HPKS-Stern-Ring (TODO #78.I/#121/#260): encode-decode, byte-for-byte
-    // with herradura.py's _pack_ring_sig/_unpack_ring_sig. Member-major,
-    // round-major flat blob; per (member, round) entry:
-    //   c0 || c1 || c2 || b(1 byte) || resp0 || resp1   (each n-bit value nbits/8 B)
-    // PEM: SEQUENCE(k, rounds, n, blob).
+    // HPKS-Ring (TODO #415): PEM "HERRADURA HPKS-RING-V2 SIGNATURE" =
+    // SEQ(n, k, rounds, D, blob) -- D the 32-byte transcript digest, blob the
+    // rest of SternRing's signature, minimal DER, its exact length fixed by the
+    // challenges D derives.  Byte-for-byte with herradura.py's _pack_ring_sig.
     // -----------------------------------------------------------------
 
-    public static String encodeRingSig(SternRing.RingSignature sig, int n) {
-        int k = sig.ringSize();
-        int rounds = sig.rounds();
-        int nb = n / 8;
-        int cb = commitBytes(n);
-        byte[] blob = new byte[k * rounds * (3 * cb + 2 * nb + 1)];
-        int off = 0;
-        for (int i = 0; i < k; i++) {
-            for (int r = 0; r < rounds; r++) {
-                System.arraycopy(toFixedBytes(sig.c0[i][r], cb), 0, blob, off, cb); off += cb;
-                System.arraycopy(toFixedBytes(sig.c1[i][r], cb), 0, blob, off, cb); off += cb;
-                System.arraycopy(toFixedBytes(sig.c2[i][r], cb), 0, blob, off, cb); off += cb;
-                blob[off] = (byte) sig.challenges[i][r]; off += 1;
-                System.arraycopy(toFixedBytes(sig.resp0[i][r], nb), 0, blob, off, nb); off += nb;
-                System.arraycopy(toFixedBytes(sig.resp1[i][r], nb), 0, blob, off, nb); off += nb;
-            }
-        }
-        byte[] der = derSeq(derInt(BigInteger.valueOf(k), -1), derInt(BigInteger.valueOf(rounds), -1),
-                             derInt(BigInteger.valueOf(n), -1), derInt(blob));
+    public static final String RING_V1_REFUSED = "this is a version-1 HPKS-Ring signature (HERRADURA "
+        + "HPKS-RING SIGNATURE), which is forgeable without any member's key (TODO #415) and is no "
+        + "longer accepted; re-sign it with this release";
+
+    public static String encodeRingSig(byte[] sig, int n, int k, int rounds) {
+        byte[] der = derSeq(derInt(BigInteger.valueOf(n), -1), derInt(BigInteger.valueOf(k), -1),
+                            derInt(BigInteger.valueOf(rounds), -1),
+                            derInt(Arrays.copyOfRange(sig, 0, 32)),
+                            derInt(new BigInteger(1, Arrays.copyOfRange(sig, 32, sig.length)), -1));
         return pemWrap(PEM_HPKS_RING_SIG, der);
     }
 
     public static final class RingSigDecoded {
-        public final SternRing.RingSignature sig;
-        public final int nbits;
-        RingSigDecoded(SternRing.RingSignature sig, int nbits) { this.sig = sig; this.nbits = nbits; }
+        public final byte[] sig;
+        public final int nbits, k, rounds;
+        RingSigDecoded(byte[] sig, int nbits, int k, int rounds) {
+            this.sig = sig; this.nbits = nbits; this.k = k; this.rounds = rounds;
+        }
     }
 
     public static RingSigDecoded decodeRingSig(String pem) {
         PemBlock b = pemUnwrap(pem);
+        if (b.label.equals(PEM_HPKS_RING_SIG_V1)) {
+            throw new IllegalArgumentException("verify: " + RING_V1_REFUSED);
+        }
         if (!b.label.equals(PEM_HPKS_RING_SIG)) {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_RING_SIG + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b);
-        int k = bounded(ints.get(0), 2, RING_MAX_K, "ring member count", "verify");
-        int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
-        int n = boundedSternN(ints.get(2), "verify");
-        int nb = n / 8;
-        int cb = commitBytes(n);
-        int entry = 3 * cb + 2 * nb + 1;
-        int blen = k * rounds * entry;
-        BigInteger blobInt = ints.get(3);
-        if (blobInt.bitLength() > blen * 8) {
-            throw new IllegalArgumentException("verify: HPKS-RING signature payload exceeds k=" + k
-                + " rounds=" + rounds + " n=" + n + "'s declared " + blen + " bytes");
-        }
-        byte[] blob = toFixedBytes(blobInt, blen);
+        int n = boundedSternN(ints.get(0), "verify");
+        int k = bounded(ints.get(1), 1, RING_MAX_K, "ring member count", "verify");
+        int rounds = bounded(ints.get(2), 1, SDF_MAX_ROUNDS, "round count", "verify");
+        byte[] d = fitBytes(ints.get(3), 32, "digest", "verify");
+        int blen = SternRing.sigLen(d, k, n, rounds) - 32;
+        byte[] body = fitBytes(ints.get(4), blen, "signature body", "verify");
+        byte[] sig = new byte[32 + blen];
+        System.arraycopy(d, 0, sig, 0, 32);
+        System.arraycopy(body, 0, sig, 32, blen);
+        return new RingSigDecoded(sig, n, k, rounds);
+    }
 
-        BigInteger[][] c0 = new BigInteger[k][rounds];
-        BigInteger[][] c1 = new BigInteger[k][rounds];
-        BigInteger[][] c2 = new BigInteger[k][rounds];
-        int[][] challenges = new int[k][rounds];
-        BigInteger[][] resp0 = new BigInteger[k][rounds];
-        BigInteger[][] resp1 = new BigInteger[k][rounds];
-        int off = 0;
-        for (int i = 0; i < k; i++) {
-            for (int r = 0; r < rounds; r++) {
-                c0[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
-                c1[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
-                c2[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + cb)); off += cb;
-                challenges[i][r] = blob[off] & 0xFF; off += 1;
-                resp0[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
-                resp1[i][r] = new BigInteger(1, Arrays.copyOfRange(blob, off, off + nb)); off += nb;
-            }
+    /** v as exactly nbytes big-endian bytes, or Python _fit's refusal. */
+    private static byte[] fitBytes(BigInteger v, int nbytes, String what, String where) {
+        int have = (v.bitLength() + 7) / 8;
+        if (have > nbytes) {
+            throw new IllegalArgumentException(where + ": " + what + " is " + have
+                + " bytes (expected at most " + nbytes + ")");
         }
-        return new RingSigDecoded(new SternRing.RingSignature(c0, c1, c2, challenges, resp0, resp1), n);
+        return toFixedBytes(v, nbytes);
     }
 }

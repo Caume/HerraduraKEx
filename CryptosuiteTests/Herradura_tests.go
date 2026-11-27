@@ -814,28 +814,55 @@ func testHpkeSternFCorrectness() {
 }
 
 func testHpksSternRingCorrectness() {
-	fmt.Printf("[20] HPKS-Stern-Ring correctness: OR-composition, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
-	N  := testRounds(3)
-	ok := 0
+	// TODO #415: one Stern proof over the ring's block-diagonal statement.  The
+	// accept-control is the honest verify; the ring is also verified reversed
+	// (the signature binds the canonical ring, not the order given).  Refused:
+	// the signature on another message, with one byte flipped, and a sign
+	// attempt with another member's secret.
+	fmt.Printf("[20] HPKS-Ring: one Stern proof over the ring, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
+	N := testRounds(3)
+	ok, ord, other, tam, wrong := 0, 0, 0, 0, 0
 	t0 := time.Now()
 	for i := 0; i < N; i++ {
 		const ringK = 3
-		rKeys := make([]RingKeypair, ringK)
-		rE    := make([]*BitArray, ringK)
+		ring := make([]RingMember, ringK)
+		rev := make([]RingMember, ringK)
+		rE := make([][]byte, ringK)
 		for ki := 0; ki < ringK; ki++ {
-			rKeys[ki].Seed, rE[ki], rKeys[ki].Syndrome = SternFKeygen(256)
+			seed, e, syn := SternFKeygen(256)
+			ring[ki] = RingMember{Seed: seed.Bytes(), Syndrome: SternSyndromeBE(syn, 256)}
+			rE[ki] = e.Bytes()
 		}
-		msg  := randBA(256)
-		j    := i % ringK
-		rsig := HpksSternRingSign(msg, rE[j], j, rKeys, sdfTestRounds)
-		if HpksSternRingVerify(msg, rsig, rKeys) {
+		for ki := range ring {
+			rev[ki] = ring[ringK-1-ki]
+		}
+		msg := randBA(256).Bytes()
+		j := i % ringK
+		sig, err := HpksSternRingSign(msg, rE[j], j, ring, 256, sdfTestRounds)
+		if err == nil && HpksSternRingVerify(msg, sig, ring, 256, sdfTestRounds) {
 			ok++
+			if HpksSternRingVerify(msg, sig, rev, 256, sdfTestRounds) {
+				ord++
+			}
+			msg[0] ^= 1
+			if !HpksSternRingVerify(msg, sig, ring, 256, sdfTestRounds) {
+				other++
+			}
+			msg[0] ^= 1
+			sig[len(sig)/2] ^= 0x01
+			if !HpksSternRingVerify(msg, sig, ring, 256, sdfTestRounds) {
+				tam++
+			}
+		}
+		if _, err := HpksSternRingSign(msg, rE[(j+1)%ringK], j, ring, 256, sdfTestRounds); err != nil {
+			wrong++
 		}
 		if timeExceeded(t0) { N = i + 1; break }
 	}
 	status := "PASS"
-	if ok != N { status = "FAIL" }
-	fmt.Printf("    %d / %d ring-verified  [%s]\n\n", ok, N, status)
+	if ok != N || ord != N || other != N || tam != N || wrong != N { status = "FAIL" }
+	fmt.Printf("    %d / %d ring-verified, %d / %d in reversed order; refused: %d / %d other message, "+
+		"%d / %d tampered, %d / %d wrong secret  [%s]\n\n", ok, N, ord, N, other, N, tam, N, wrong, N, status)
 }
 
 // ---------------------------------------------------------------------------
@@ -2624,29 +2651,38 @@ func testSternWitnessBinding() {
 	forgedOK := HpksSternFVerify(msg, forged, seed, syn)
 
 	k := 3
-	ring := make([]RingKeypair, k)
-	es := make([]*BitArray, k)
+	ring := make([]RingMember, k)
+	es := make([][]byte, k)
 	for i := 0; i < k; i++ {
 		sd, ei, sy := SternFKeygen(n)
-		ring[i] = RingKeypair{Seed: sd, Syndrome: sy}
-		es[i] = ei
+		ring[i] = RingMember{Seed: sd.Bytes(), Syndrome: SternSyndromeBE(sy, n)}
+		es[i] = ei.Bytes()
 	}
 	j := 1
-	rmsg := NewRandBitArray(n)
-	rsig := HpksSternRingSign(rmsg, es[j], j, ring, rounds)
-	ringOK := HpksSternRingVerify(rmsg, rsig, ring)
+	rmsg := NewRandBitArray(256).Bytes()
+	rsig, rerr := HpksSternRingSign(rmsg, es[j], j, ring, n, rounds)
+	ringOK := rerr == nil && HpksSternRingVerify(rmsg, rsig, ring, n, rounds)
+	// TODO #415: the signature carries D and, per round, ONE unopened
+	// commitment; all rounds + 1 must differ (fresh randomness every round).
 	seen := map[string]bool{}
 	dups := 0
-	for i := 0; i < k; i++ {
-		for r := 0; r < rounds; r++ {
-			rd := rsig.Members[i].Rounds[r]
-			for _, c := range []*BitArray{rd.C0, rd.C1, rd.C2} {
-				key := c.Hex()
-				if seen[key] {
-					dups++
-				}
-				seen[key] = true
+	if rerr == nil {
+		vlen := k*(n/8) + (k+7)/8
+		un := [][]byte{rsig[:32]}
+		pos := 32
+		for _, b := range HpksSternRingChallenges(rsig, rounds) {
+			un = append(un, rsig[pos:pos+32])
+			if b == 0 {
+				pos += 96 + 2*vlen
+			} else {
+				pos += 96 + vlen
 			}
+		}
+		for _, c := range un {
+			if seen[string(c)] {
+				dups++
+			}
+			seen[string(c)] = true
 		}
 	}
 
@@ -2658,7 +2694,7 @@ func testSternWitnessBinding() {
 	fmt.Printf("    n=%d rounds=%d  honest=%v  forged-witness wt=%d (t=%d) syndrome-matches=%v  forgery-accepted=%v\n",
 		n, forgeRounds, honestOK, eForged.Popcount(), t, solved, forgedOK)
 	fmt.Printf("    ring k=%d verified=%v  repeated commitments=%d/%d  [%s]\n\n",
-		k, ringOK, dups, 3*k*rounds, status)
+		k, ringOK, dups, rounds+1, status)
 }
 
 // [52] The QC-MDPC PRF's seed expansion (TODO #277).

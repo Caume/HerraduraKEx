@@ -30,6 +30,7 @@
     .equ SDF_T,    2
     .equ SDF_NROWS,16
     .equ SDF_ROUNDS,4
+    .equ RING_DW,  20         /* ring digest words: 8 + 3*SDF_ROUNDS */
 
 /* ------------------------------------------------------------------ */
 /* .data                                                               */
@@ -50,7 +51,11 @@ fmt_t9:   .asciz "[9] HPKE-NL: D == plaintext, NL-FSCX v2 (20 iterations)\n"
 fmt_t10:  .asciz "[10] HPKS-NL Eve resistance: random forgery rejected (20 trials)\n"
 fmt_t11:  .asciz "[11] HPKS-Stern-F: sign+verify correctness (3 trials, N=32, t=2, rounds=4)\n"
 fmt_t12:  .asciz "[12] HPKE-Stern-F: encap+decap KEM (3 trials, N=32, t=2)\n"
-fmt_t13:  .asciz "[13] HPKS-Stern-Ring (78.I): ring-sign+verify (3 trials, k=2, N=32, rounds=4)\n"
+fmt_t13:  .asciz "[13] HPKS-Stern-Ring: one Stern proof over a k=2 ring, sign/verify and refusals (3 trials, N=32, rounds=4)\n"
+fmt_t13a: .asciz "    %d / 3 ring-verified (either order), %d / 3 refused a changed word and another message\n"
+fmt_t13b: .asciz "    wrong secret: %d refused, %d n/a (no b=2 round), %d accepted with a b=2 round\n"
+fmt_t13ok: .asciz "    pinned vector (D = 4fb8b39f) matches  [PASS]\n"
+fmt_t13bad: .asciz "    FAILED (a count above, or the pinned vector)  [FAIL]\n"
 fmt_t14:  .asciz "[14] ZKP-NL (NL-FSCX ZKBoo): prove+verify (3 trials, n=8, R=4)\n"
 fmt_t15:  .asciz "[15] FPE (78.A): encrypt/decrypt round-trip (3 trials)\n"
 fmt_t16:  .asciz "[16] Tweakable cipher (78.B): encrypt/decrypt round-trip (3 trials)\n"
@@ -62,7 +67,6 @@ fmt_p100: .asciz "    100 / 100 passed  [PASS]\n"
 fmt_prnl: .asciz "    10 / 10 agreed (Peikert reconciliation)  [PASS]\n"
 fmt_p3v:  .asciz "    3 / 3 verified  [PASS]\n"
 fmt_p3k:  .asciz "    3 / 3 keys match  [PASS]\n"
-fmt_p3r:  .asciz "    3 / 3 ring-verified  [PASS]\n"
 fmt_p3z:  .asciz "    3 / 3 zk-verified  [PASS]\n"
 fmt_p3f:  .asciz "    3 / 3 round-trips correct  [PASS]\n"
 fmt_p1a:  .asciz "    1 / 1 proof correct  [PASS]\n"
@@ -173,14 +177,31 @@ sdf_pi_tmp:    .space 16
 sdf_sr_tmp:    .space 16
 sdf_sy_tmp:    .space 16
 sdf_chals_tmp: .space 16
-/* Ring-Sig (78.I) scratch: k=2, rounds=4 */
-ring0_c0:      .space 16
-ring0_c1:      .space 16
-ring0_c2:      .space 16
-ring0_b:       .space 16
-ring0_respA:   .space 16
-ring0_respB:   .space 16
-ring_joint_b:  .space 16
+/* HPKS-Stern-Ring (TODO #424) scratch: k=2, rounds=4 */
+    .balign 4
+ring_in:      .space 16   /* the ring as given: seed0, syn0, seed1, syn1 */
+ring_canon:   .space 16   /* sorted by (seed, syndrome) */
+ring_msg:     .space 4
+ring_e:       .space 4    /* the signer's secret */
+ring_j:       .space 4    /* its index in ring_in */
+ring_tau:     .space 4    /* block shuffle bit */
+ring_z:       .space 12   /* witness (x0, x1, c) */
+ring_v:       .space 12   /* verify: PI z / PI v */
+ring_hw:      .space 16   /* hash input words */
+ring_cw:      .space 8    /* challenge hash input (D, ctr) */
+ring_b:       .space 16   /* challenges[0..3] */
+ring_r:       .space 48   /* r[4][3] */
+ring_y:       .space 48   /* y[4][3] = z ^ r */
+ring_pr:      .space 48   /* PI r */
+ring_py:      .space 48   /* PI y */
+ring_ps:      .space 16   /* permutation seeds */
+ring_s1:      .space 16   /* c1 salts */
+ring_s2:      .space 16   /* c2 salts */
+ring_dbuf:    .space 80   /* digest input: 8 header words + 3 commitments/round */
+ring_sig:     .space 148  /* D + 4 rounds x 9 words */
+ring_perm:    .space 64   /* pi_0, pi_1 */
+t13_cnt:      .space 20   /* [13]: accepted, refused, wrong secret refused / n/a / accepted */
+t13_e:        .space 12   /* [13]: ea, eb, msg */
 /* ZKP-NL scratch (NL-FSCX ZKBoo; n=8, R=4) */
 zkp_all_sh:  .space 48
 zkp_all_tp:  .space 48
@@ -960,51 +981,215 @@ t12_fail:
     bl      hprintf
 t12_done:
 
-    /* ================================================================ [13] HPKS-Stern-Ring (3 iter) */
+    /* ================================================================ [13] HPKS-Stern-Ring (3 iter)
+       Per trial an accept-control (sign, verify, verify with the ring in the
+       other order), then refusals of the same signature: one changed opening
+       word and another message; and a signature made with a wrong secret,
+       exact: a wrong witness in S passes every b=0 and b=1 round, so it is
+       refused iff some round drew b=2, and n/a without one.  Then the pinned
+       vector the Arduino and i386 harnesses pin too (TODO #424). */
     ldr     r0, =fmt_t13
     bl      hprintf
-    mov     r10, #3             @ iter count
-    mov     r11, #0             @ pass count
+    ldr     r0, =t13_cnt
+    mov     r1, #0
+    str     r1, [r0]
+    str     r1, [r0, #4]
+    str     r1, [r0, #8]
+    str     r1, [r0, #12]
+    str     r1, [r0, #16]
+    mov     r10, #3
 t13_loop:
-    @ keygen for member 1
+    ldr     r4, =ring_in
+    ldr     r6, =t13_e
     bl      prng_next
-    ldr     r3, =t_sdf_seed
-    str     r0, [r3]
-    @ e = rand_error_32()
+    str     r0, [r4]
     bl      stern_rand_error_32
-    ldr     r3, =t_sdf_e
-    str     r0, [r3]
-    @ syndrome = stern_syndrome_32(seed, e)
-    ldr     r0, =t_sdf_seed
-    ldr     r0, [r0]
-    ldr     r1, =t_sdf_e
-    ldr     r1, [r1]
+    str     r0, [r6]
+    mov     r1, r0
+    ldr     r0, [r4]
     bl      stern_syndrome_32
-    ldr     r3, =t_sdf_syn
-    str     r0, [r3]
-    @ random msg
+    str     r0, [r4, #4]
     bl      prng_next
-    ldr     r3, =t_sdf_msg
-    str     r0, [r3]
-    @ ring sign
-    bl      hpks_stern_ring2_sign_32
-    @ ring verify
-    bl      hpks_stern_ring2_verify_32
-    cmp     r0, #1
-    bne     t13_skip
-    add     r11, r11, #1
-t13_skip:
+    str     r0, [r4, #8]
+    bl      stern_rand_error_32
+    str     r0, [r6, #4]
+    mov     r1, r0
+    ldr     r0, [r4, #8]
+    bl      stern_syndrome_32
+    str     r0, [r4, #12]
+    bl      prng_next
+    str     r0, [r6, #8]        @ msg
+    ldr     r1, =ring_msg
+    str     r0, [r1]
+    and     r7, r10, #1         @ j
+    ldr     r1, =ring_j
+    str     r7, [r1]
+    ldr     r8, [r6, r7, lsl #2]    @ e_j
+    ldr     r1, =ring_e
+    str     r8, [r1]
+    bl      hpks_stern_ring_sign_32
+    mov     r5, r0
+    ldr     r0, [r6, #8]
+    bl      hpks_stern_ring_verify_32
+    and     r5, r5, r0
+    bl      t13_swap_ring
+    ldr     r0, [r6, #8]
+    bl      hpks_stern_ring_verify_32
+    and     r5, r5, r0
+    bl      t13_swap_ring
+    ldr     r1, =t13_cnt
+    ldr     r2, [r1]
+    add     r2, r2, r5
+    str     r2, [r1]
+    ldr     r4, =ring_sig       @ one changed opening word
+    ldr     r9, [r4, #52]
+    eor     r0, r9, #1
+    str     r0, [r4, #52]
+    ldr     r0, [r6, #8]
+    bl      hpks_stern_ring_verify_32
+    mov     r5, r0
+    str     r9, [r4, #52]
+    ldr     r0, [r6, #8]        @ another message
+    eor     r0, r0, #1
+    bl      hpks_stern_ring_verify_32
+    orr     r5, r5, r0
+    eor     r5, r5, #1          @ 1 iff both refused
+    ldr     r1, =t13_cnt
+    ldr     r2, [r1, #4]
+    add     r2, r2, r5
+    str     r2, [r1, #4]
+t13_e2:
+    bl      stern_rand_error_32 @ a wrong secret of weight t
+    cmp     r0, r8
+    beq     t13_e2
+    ldr     r1, =ring_e
+    str     r0, [r1]
+    bl      hpks_stern_ring_sign_32
+    ldr     r0, [r6, #8]
+    bl      hpks_stern_ring_verify_32
+    ldr     r1, =t13_cnt
+    cmp     r0, #0
+    bne     t13_ws_acc
+    ldr     r2, [r1, #8]
+    add     r2, r2, #1
+    str     r2, [r1, #8]
+    b       t13_next
+t13_ws_acc:
+    ldr     r3, =ring_b         @ verify left the signature's challenges here
+    mov     r2, #0
+    mov     r12, #0
+t13_b2:
+    ldr     r0, [r3, r12, lsl #2]
+    cmp     r0, #2
+    bne     t13_b2_next
+    mov     r2, #1
+t13_b2_next:
+    add     r12, r12, #1
+    cmp     r12, #SDF_ROUNDS
+    blt     t13_b2
+    cmp     r2, #0
+    beq     t13_ws_na
+    ldr     r2, [r1, #16]
+    add     r2, r2, #1
+    str     r2, [r1, #16]
+    b       t13_next
+t13_ws_na:
+    ldr     r2, [r1, #12]
+    add     r2, r2, #1
+    str     r2, [r1, #12]
+t13_next:
     subs    r10, r10, #1
     bne     t13_loop
-    cmp     r11, #3
+    @ the pinned vector, from lcg_state = 0x52494E47
+    ldr     r0, =lcg_state
+    ldr     r9, [r0]
+    ldr     r1, =0x52494E47
+    str     r1, [r0]
+    ldr     r4, =ring_in
+    ldr     r6, =t13_e
+    bl      prng_next
+    str     r0, [r4]
+    bl      stern_rand_error_32
+    str     r0, [r6]
+    bl      prng_next
+    str     r0, [r4, #8]
+    bl      stern_rand_error_32
+    str     r0, [r6, #4]
+    ldr     r0, [r4]
+    ldr     r1, [r6]
+    bl      stern_syndrome_32
+    str     r0, [r4, #4]
+    ldr     r0, [r4, #8]
+    ldr     r1, [r6, #4]
+    bl      stern_syndrome_32
+    str     r0, [r4, #12]
+    ldr     r0, [r6, #4]
+    ldr     r1, =ring_e
+    str     r0, [r1]
+    mov     r0, #1
+    ldr     r1, =ring_j
+    str     r0, [r1]
+    ldr     r0, =0x4D534721
+    ldr     r1, =ring_msg
+    str     r0, [r1]
+    bl      hpks_stern_ring_sign_32
+    mov     r5, r0
+    ldr     r4, =ring_sig
+    ldr     r0, [r4]
+    ldr     r1, =0x4FB8B39F
+    cmp     r0, r1
+    beq     t13_kat_d
+    mov     r5, #0
+t13_kat_d:
+    mov     r0, #0
+    mov     r12, #0
+t13_fold:
+    ldr     r1, [r4, r12, lsl #2]
+    eor     r0, r0, r1
+    add     r12, r12, #1
+    cmp     r12, #37
+    blt     t13_fold
+    ldr     r1, =0x2E765CEF
+    cmp     r0, r1
+    beq     t13_kat_f
+    mov     r5, #0
+t13_kat_f:
+    ldr     r0, =0x4D534721
+    bl      hpks_stern_ring_verify_32
+    and     r5, r5, r0
+    ldr     r0, =lcg_state
+    str     r9, [r0]
+    ldr     r4, =t13_cnt
+    ldr     r0, =fmt_t13a
+    ldr     r1, [r4]
+    ldr     r2, [r4, #4]
+    bl      hprintf
+    ldr     r0, =fmt_t13b
+    ldr     r1, [r4, #8]
+    ldr     r2, [r4, #12]
+    ldr     r3, [r4, #16]
+    bl      hprintf
+    ldr     r0, [r4]
+    cmp     r0, #3
     bne     t13_fail
-    ldr     r0, =fmt_p3r
+    ldr     r0, [r4, #4]
+    cmp     r0, #3
+    bne     t13_fail
+    ldr     r0, [r4, #16]
+    cmp     r0, #0
+    bne     t13_fail
+    cmp     r5, #1
+    bne     t13_fail
+    ldr     r0, =fmt_t13ok
     bl      hprintf
     b       t13_done
 t13_fail:
-    ldr     r0, =fmt_fail
+    ldr     r0, =fmt_t13bad
     bl      hprintf
 t13_done:
+    b       t13_after
+    .ltorg
+t13_after:
 
     /* ================================================================ [14] ZKP-NL (3 iter) */
     ldr     r0, =fmt_t14
@@ -3447,430 +3632,653 @@ hpke_stern_f_decap_known_32:
 
     .ltorg
 
-/* ------------------------------------------------------------------ */
-/* ring_fs_challenges_32: r0=out_ptr -> writes 4 joint challenges      */
-/* Reads t_sdf_msg, ring0_c0/c1/c2, sdf_c0/c1/c2 (member-major).     */
-/* ------------------------------------------------------------------ */
+/* t13_swap_ring: ring_in's two members trade places */
     .thumb_func
-ring_fs_challenges_32:
-    push    {r4-r9, lr}
-    mov     r9, r0
-    ldr     r0, =0xA3C5E7B9     @ chSt = absorb(IV, TAG|0)  (TODO #348)
-    mov     r1, #0x31000000
+t13_swap_ring:
+    ldr     r12, =ring_in
+    ldm     r12, {r0-r3}
+    str     r2, [r12]
+    str     r3, [r12, #4]
+    str     r0, [r12, #8]
+    str     r1, [r12, #12]
+    bx      lr
+
+/* ------------------------------------------------------------------ */
+/* HPKS-Stern-Ring (TODO #424): ONE Stern proof over the ring, the    */
+/* construction of SPEC.md §11.2 at N=32 with the 32-bit primitives   */
+/* (the Arduino port's hpks_stern_ring_sign_32 is the reference):     */
+/* H~ = diag([H_0|s_0], [H_1|s_1]) over the ring sorted by (seed,     */
+/* syndrome); the signer j proves z = (0..e_j..0 ; unit(j)) in ker H~ */
+/* and in S (one block of weight t, its indicator set), hidden by a   */
+/* block shuffle tau and per-block pi_b.  c0 = H1(ps, H~ r),          */
+/* c1 = H2(salt1, PI r), c2 = H3(salt2, PI y); D = H0(2, k, rounds,   */
+/* msg, ring, commitments); b from H6(D, ctr) bytes, 255 rejected.    */
+/* ring_sig = D, then per round the unopened commitment and 8 words:  */
+/*   b=0: c0, s1, s2, PI r (3), PI y (3)                              */
+/*   b=1: c2, ps, s1, r (3), 0,0,0     b=2: c1, ps, s2, y (3), 0,0,0  */
+/* H_ds(w..) = HFSCX-32(0x32000000|ds, w..).  Replaced the OR-        */
+/* composition, forgeable with no member's key.  DEMO ONLY.           */
+/* ------------------------------------------------------------------ */
+
+/* ring_hash_32: r0=ds, r1=word ptr, r2=n -> r0 = H_ds(words) */
+    .thumb_func
+ring_hash_32:
+    push    {r4-r6, lr}
+    mov     r4, r1
+    mov     r5, r2
+    orr     r1, r0, #0x32000000 @ RING32_TAG | ds
+    ldr     r0, =0xA3C5E7B9     @ HFSCX-32 IV
     bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =t_sdf_msg
-    ldr     r5, [r5]
-    mov     r0, r4
-    mov     r1, r5
+rh_loop:
+    cmp     r5, #0
+    beq     rh_done
+    ldr     r1, [r4], #4
     bl      hfscx32_absorb
-    mov     r4, r0
-    mov     r8, #0
-trfc_m0_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     trfc_m0_done
-    ldr     r5, =ring0_c0
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =ring0_c1
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =ring0_c2
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    add     r8, r8, #1
-    b       trfc_m0_loop
-trfc_m0_done:
-    mov     r8, #0
-trfc_m1_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     trfc_m1_done
-    ldr     r5, =sdf_c0
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =sdf_c1
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    ldr     r5, =sdf_c2
-    ldr     r5, [r5, r8, lsl #2]
-    mov     r0, r4
-    mov     r1, r5
-    bl      hfscx32_absorb
-    mov     r4, r0
-    add     r8, r8, #1
-    b       trfc_m1_loop
-trfc_m1_done:
-    mov     r0, r4
-    bl      hfscx32_final       @ HFSCX-32 final block (TODO #348)
-    mov     r4, r0
-    mov     r8, #0
-trfc_chal_loop:
-    cmp     r8, #SDF_ROUNDS
-    bge     trfc_done
-    mov     r0, r4
-    mov     r1, r8
-    bl      nl_fscx_v1
-    mov     r4, r0
-    mov     r5, #3
-    udiv    r6, r4, r5
-    mul     r6, r6, r5
-    sub     r6, r4, r6
-    str     r6, [r9, r8, lsl #2]
-    add     r8, r8, #1
-    b       trfc_chal_loop
-trfc_done:
-    pop     {r4-r9, pc}
+    sub     r5, r5, #1
+    b       rh_loop
+rh_done:
+    bl      hfscx32_final
+    pop     {r4-r6, pc}
+
+/* ring_canon_32: ring_in (seed0, syn0, seed1, syn1 as given) ->      */
+/* ring_canon sorted by (seed, syndrome); r0 = 1 if swapped, 0 if     */
+/* not, -1 for a ring listing one member twice.                       */
+    .thumb_func
+ring_canon_32:
+    ldr     r0, =ring_in
+    ldr     r1, [r0]
+    ldr     r2, [r0, #4]
+    ldr     r3, [r0, #8]
+    ldr     r12, [r0, #12]
+    ldr     r0, =ring_canon
+    cmp     r1, r3
+    bhi     rc_swap
+    bne     rc_keep
+    cmp     r2, r12
+    bhi     rc_swap
+    bne     rc_keep
+    mvn     r0, #0              @ duplicate member
+    bx      lr
+rc_keep:
+    str     r1, [r0]
+    str     r2, [r0, #4]
+    str     r3, [r0, #8]
+    str     r12, [r0, #12]
+    mov     r0, #0
+    bx      lr
+rc_swap:
+    str     r3, [r0]
+    str     r12, [r0, #4]
+    str     r1, [r0, #8]
+    str     r2, [r0, #12]
+    mov     r0, #1
+    bx      lr
 
     .ltorg
 
-/* ------------------------------------------------------------------ */
-/* hpks_stern_ring2_sign_32: k=2, signer=1, b0[r]=0 always            */
-/* Uses t_sdf_seed/t_sdf_e/t_sdf_msg for member 1.                    */
-/* ------------------------------------------------------------------ */
+/* ring_perms_32: r0=ps -> ring_tau = H4(ps) & 1, ring_perm[b] =      */
+/* gen_perm(H5(ps, b)) for b = 0, 1                                   */
     .thumb_func
-hpks_stern_ring2_sign_32:
-    push    {r4-r11, lr}
-
-    @ Phase 1: simulate member 0 (b=0)
-    mov     r4, #0
-thrs2_sim_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrs2_sim_done
-    ldr     r3, =ring0_b
-    mov     r0, #0
-    str     r0, [r3, r4, lsl #2]
-    mov     r0, #1
-    mov     r1, #0
-    mov     r2, #0
-    bl      stern_hash2_32
-    ldr     r3, =ring0_c0
-    str     r0, [r3, r4, lsl #2]
-    bl      stern_rand_error_32
-    mov     r5, r0
-    ldr     r3, =ring0_respA
-    str     r5, [r3, r4, lsl #2]
-    mov     r0, #2
-    mov     r1, r5
-    bl      stern_hash1_32
-    ldr     r3, =ring0_c1
-    str     r0, [r3, r4, lsl #2]
-    bl      prng_next
-    mov     r6, r0
-    ldr     r3, =ring0_respB
-    str     r6, [r3, r4, lsl #2]
-    mov     r0, #3
+ring_perms_32:
+    push    {r4-r7, lr}
+    ldr     r6, =ring_hw
+    str     r0, [r6]
+    mov     r0, #4
     mov     r1, r6
-    bl      stern_hash1_32
-    ldr     r3, =ring0_c2
-    str     r0, [r3, r4, lsl #2]
+    mov     r2, #1
+    bl      ring_hash_32
+    and     r0, r0, #1
+    ldr     r1, =ring_tau
+    str     r0, [r1]
+    mov     r4, #0              @ b
+rp_loop:
+    str     r4, [r6, #4]
+    mov     r0, #5
+    mov     r1, r6
+    mov     r2, #2
+    bl      ring_hash_32
+    bl      stern_gen_perm_32   @ -> sdf_perm
+    ldr     r0, =sdf_perm
+    ldr     r1, =ring_perm
+    add     r1, r1, r4, lsl #5
+    mov     r2, #32
+rp_copy:
+    ldrb    r3, [r0], #1
+    strb    r3, [r1], #1
+    subs    r2, r2, #1
+    bne     rp_copy
     add     r4, r4, #1
-    b       thrs2_sim_loop
-thrs2_sim_done:
+    cmp     r4, #2
+    blt     rp_loop
+    pop     {r4-r7, pc}
 
-    @ Phase 2: commit phase for member 1
-    ldr     r10, =t_sdf_e
-    ldr     r10, [r10]
-    ldr     r11, =t_sdf_seed
-    ldr     r11, [r11]
-    mov     r4, #0
-thrs2_commit_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrs2_commit_done
-    bl      stern_rand_error_32
-    mov     r5, r0
-    eor     r6, r10, r5
-    bl      prng_next
-    mov     r7, r0
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r5
+/* ring_apply_32: r0=src (x0, x1, c), r1=dst -> dst = PI(src):        */
+/* dst[b^tau] = pi_b(src[b]); indicator bit b moves to b^tau          */
+    .thumb_func
+ring_apply_32:
+    push    {r4-r8, lr}
+    mov     r4, r0
+    mov     r5, r1
+    mov     r6, #0              @ b
+    mov     r7, #0              @ permuted indicator
+    ldr     r8, =ring_tau
+    ldr     r8, [r8]
+ra_loop:
+    ldr     r0, =ring_perm
+    add     r0, r0, r6, lsl #5
+    ldr     r1, =sdf_perm
+    mov     r2, #32
+ra_copy:
+    ldrb    r3, [r0], #1
+    strb    r3, [r1], #1
+    subs    r2, r2, #1
+    bne     ra_copy
+    ldr     r0, [r4, r6, lsl #2]
     bl      stern_apply_perm_32
-    mov     r8, r0
-    mov     r0, r6
-    bl      stern_apply_perm_32
-    mov     r9, r0
-    mov     r0, r11
-    mov     r1, r5
-    bl      stern_syndrome_32
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    ldr     r3, =sdf_c0
-    str     r0, [r3, r4, lsl #2]
-    mov     r1, r8
-    mov     r0, #2
-    bl      stern_hash1_32
-    ldr     r3, =sdf_c1
-    str     r0, [r3, r4, lsl #2]
-    mov     r1, r9
-    mov     r0, #3
-    bl      stern_hash1_32
-    ldr     r3, =sdf_c2
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_r_tmp
-    str     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_y_tmp
-    str     r6, [r3, r4, lsl #2]
-    ldr     r3, =sdf_pi_tmp
-    str     r7, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sr_tmp
-    str     r8, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sy_tmp
-    str     r9, [r3, r4, lsl #2]
-    add     r4, r4, #1
-    b       thrs2_commit_loop
-thrs2_commit_done:
-
-    @ Phase 3: joint FS challenges
-    ldr     r0, =ring_joint_b
-    bl      ring_fs_challenges_32
-
-    @ Phase 4: assign member 1 challenge and responses
-    mov     r4, #0
-thrs2_resp_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrs2_resp_done
-    ldr     r3, =ring_joint_b
-    ldr     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_b
-    str     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    beq     thrs2_case0
-    cmp     r5, #1
-    beq     thrs2_case1
-    ldr     r3, =sdf_pi_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_y_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-    b       thrs2_resp_next
-thrs2_case0:
-    ldr     r3, =sdf_sr_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_sy_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-    b       thrs2_resp_next
-thrs2_case1:
-    ldr     r3, =sdf_pi_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respA
-    str     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_r_tmp
-    ldr     r0, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    str     r0, [r3, r4, lsl #2]
-thrs2_resp_next:
-    add     r4, r4, #1
-    b       thrs2_resp_loop
-thrs2_resp_done:
-    pop     {r4-r11, pc}
+    eor     r1, r6, r8          @ b ^ tau
+    str     r0, [r5, r1, lsl #2]
+    ldr     r0, [r4, #8]
+    lsr     r0, r0, r6
+    and     r0, r0, #1
+    lsl     r0, r0, r1
+    orr     r7, r7, r0
+    add     r6, r6, #1
+    cmp     r6, #2
+    blt     ra_loop
+    str     r7, [r5, #8]
+    pop     {r4-r8, pc}
 
     .ltorg
 
-/* ------------------------------------------------------------------ */
-/* hpks_stern_ring2_verify_32: -> r0=1 valid, 0 invalid                */
-/* ------------------------------------------------------------------ */
+/* ring_htilde_32: r0=v (x0, x1, c) -> r0 = (H_0 x0 ^ c_0 s_0) |      */
+/* (H_1 x1 ^ c_1 s_1) << 16, branchless in c                          */
     .thumb_func
-hpks_stern_ring2_verify_32:
-    push    {r4-r11, lr}
-
-    @ re-derive joint challenges
-    ldr     r0, =ring_joint_b
-    bl      ring_fs_challenges_32
-
-    @ check sum
-    mov     r4, #0
-thrv2_sum_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrv2_sum_ok
-    ldr     r3, =ring0_b
-    ldr     r5, [r3, r4, lsl #2]
-    ldr     r3, =sdf_b
-    ldr     r6, [r3, r4, lsl #2]
-    add     r5, r5, r6
-    mov     r6, #3
-    udiv    r7, r5, r6
-    mul     r7, r7, r6
-    sub     r5, r5, r7
-    ldr     r3, =ring_joint_b
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    add     r4, r4, #1
-    b       thrv2_sum_loop
-thrv2_sum_ok:
-
-    @ verify member 0
-    mov     r4, #0
-thrv2_m0_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrv2_m0_done
-    ldr     r3, =ring0_b
-    ldr     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    bne     thrv2_fail
-    ldr     r3, =ring0_respA
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =ring0_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    ldr     r3, =ring0_respA
-    ldr     r0, [r3, r4, lsl #2]
-    bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     thrv2_fail
-    ldr     r3, =ring0_respB
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =ring0_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    add     r4, r4, #1
-    b       thrv2_m0_loop
-thrv2_m0_done:
-
-    @ verify member 1
-    ldr     r10, =t_sdf_seed
-    ldr     r10, [r10]
-    ldr     r11, =t_sdf_syn
-    ldr     r11, [r11]
-    mov     r4, #0
-thrv2_m1_loop:
-    cmp     r4, #SDF_ROUNDS
-    bge     thrv2_m1_done
-    ldr     r3, =sdf_b
-    ldr     r5, [r3, r4, lsl #2]
-    cmp     r5, #0
-    beq     thrv2_b0
-    cmp     r5, #1
-    beq     thrv2_b1
-    ldr     r3, =sdf_respA
-    ldr     r7, [r3, r4, lsl #2]
-    ldr     r3, =sdf_respB
-    ldr     r8, [r3, r4, lsl #2]
-    mov     r0, r10
-    mov     r1, r8
+ring_htilde_32:
+    push    {r4-r8, lr}
+    mov     r4, r0
+    mov     r5, #0              @ b
+    mov     r6, #0              @ result
+    ldr     r7, =ring_canon
+rt_loop:
+    ldr     r0, [r7, r5, lsl #3]    @ seed_b
+    ldr     r1, [r4, r5, lsl #2]    @ x_b
     bl      stern_syndrome_32
-    eor     r0, r0, r11
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    mov     r5, r0
-    ldr     r3, =sdf_c0
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r8
-    bl      stern_apply_perm_32
-    mov     r1, r0
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    b       thrv2_m1_next
-thrv2_b0:
-    ldr     r3, =sdf_respA
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    ldr     r3, =sdf_respA
-    ldr     r0, [r3, r4, lsl #2]
+    ldr     r1, [r4, #8]
+    lsr     r1, r1, r5
+    and     r1, r1, #1
+    neg     r1, r1                  @ 0 or 0xFFFFFFFF
+    add     r2, r7, r5, lsl #3
+    ldr     r2, [r2, #4]            @ syn_b
+    and     r1, r1, r2
+    eor     r0, r0, r1
+    lsl     r1, r5, #4
+    lsl     r0, r0, r1
+    orr     r6, r6, r0
+    add     r5, r5, #1
+    cmp     r5, #2
+    blt     rt_loop
+    mov     r0, r6
+    pop     {r4-r8, pc}
+
+/* ring_in_S_32: r0=v -> r0 = 1 iff c is one bit and its block alone  */
+/* is non-zero, of weight t                                           */
+    .thumb_func
+ring_in_S_32:
+    push    {r4, lr}
+    mov     r4, r0
+    ldr     r1, [r4, #8]
+    cmp     r1, #1
+    beq     rs_first
+    cmp     r1, #2
+    beq     rs_second
+    b       rs_fail
+rs_first:
+    ldr     r0, [r4, #4]
+    cmp     r0, #0
+    bne     rs_fail
+    ldr     r0, [r4]
     bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     thrv2_fail
-    ldr     r3, =sdf_respB
-    ldr     r1, [r3, r4, lsl #2]
-    mov     r0, #3
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c2
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    b       thrv2_m1_next
-thrv2_b1:
-    ldr     r3, =sdf_respB
-    ldr     r8, [r3, r4, lsl #2]
-    mov     r0, r8
+    pop     {r4, pc}
+rs_second:
+    ldr     r0, [r4]
+    cmp     r0, #0
+    bne     rs_fail
+    ldr     r0, [r4, #4]
     bl      stern_popcount_eq2
-    cmp     r0, #1
-    bne     thrv2_fail
-    ldr     r3, =sdf_respA
-    ldr     r7, [r3, r4, lsl #2]
-    mov     r0, r10
-    mov     r1, r8
-    bl      stern_syndrome_32
-    mov     r2, r0
-    mov     r1, r7
-    mov     r0, #1
-    bl      stern_hash2_32
-    mov     r5, r0
-    ldr     r3, =sdf_c0
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-    mov     r0, r7
-    bl      stern_gen_perm_32
-    mov     r0, r8
-    bl      stern_apply_perm_32
-    mov     r1, r0
-    mov     r0, #2
-    bl      stern_hash1_32
-    mov     r5, r0
-    ldr     r3, =sdf_c1
-    ldr     r6, [r3, r4, lsl #2]
-    cmp     r5, r6
-    bne     thrv2_fail
-thrv2_m1_next:
-    add     r4, r4, #1
-    b       thrv2_m1_loop
-thrv2_m1_done:
-    mov     r0, #1
-    pop     {r4-r11, pc}
-thrv2_fail:
+    pop     {r4, pc}
+rs_fail:
     mov     r0, #0
-    pop     {r4-r11, pc}
+    pop     {r4, pc}
+
+/* ring_challenges_32: r0=D -> ring_b[0..rounds-1]: the bytes of      */
+/* H6(D, ctr), low byte first, 255 rejected, b = byte mod 3           */
+    .thumb_func
+ring_challenges_32:
+    push    {r4-r8, lr}
+    ldr     r6, =ring_cw
+    str     r0, [r6]
+    mov     r0, #0
+    str     r0, [r6, #4]        @ ctr
+    mov     r5, #0              @ challenges so far
+    ldr     r4, =ring_b
+rch_outer:
+    cmp     r5, #SDF_ROUNDS
+    bge     rch_done
+    mov     r0, #6
+    mov     r1, r6
+    mov     r2, #2
+    bl      ring_hash_32
+    mov     r7, r0
+    mov     r8, #4
+rch_inner:
+    cmp     r8, #0
+    beq     rch_next
+    cmp     r5, #SDF_ROUNDS
+    bge     rch_next
+    and     r0, r7, #0xFF
+    cmp     r0, #0xFF
+    beq     rch_skip
+    mov     r1, #3
+    udiv    r2, r0, r1
+    mls     r0, r2, r1, r0      @ byte mod 3
+    str     r0, [r4, r5, lsl #2]
+    add     r5, r5, #1
+rch_skip:
+    lsr     r7, r7, #8
+    sub     r8, r8, #1
+    b       rch_inner
+rch_next:
+    ldr     r0, [r6, #4]
+    add     r0, r0, #1
+    str     r0, [r6, #4]
+    b       rch_outer
+rch_done:
+    pop     {r4-r8, pc}
+
+/* ring_digest_32: r0=msg -> r0 = D = H0(2, k, rounds, msg, ring,     */
+/* commitments); the commitments are already in ring_dbuf[8..]        */
+    .thumb_func
+ring_digest_32:
+    push    {r4, lr}
+    ldr     r4, =ring_dbuf
+    mov     r1, #2
+    str     r1, [r4]            @ version
+    str     r1, [r4, #4]        @ k
+    mov     r1, #SDF_ROUNDS
+    str     r1, [r4, #8]
+    str     r0, [r4, #12]       @ msg
+    ldr     r0, =ring_canon
+    ldr     r1, [r0]
+    str     r1, [r4, #16]
+    ldr     r1, [r0, #4]
+    str     r1, [r4, #20]
+    ldr     r1, [r0, #8]
+    str     r1, [r4, #24]
+    ldr     r1, [r0, #12]
+    str     r1, [r4, #28]
+    mov     r0, #0
+    mov     r1, r4
+    mov     r2, #RING_DW
+    bl      ring_hash_32
+    pop     {r4, pc}
+
+    .ltorg
+
+/* hpks_stern_ring_sign_32: ring_in, ring_msg, ring_e (the signer's   */
+/* secret), ring_j (its index in ring_in) -> ring_sig; r0 = 1, or 0   */
+/* for a ring listing one member twice                                */
+    .thumb_func
+hpks_stern_ring_sign_32:
+    push    {r3-r11, lr}
+    bl      ring_canon_32
+    cmp     r0, #0
+    blt     rsg_fail
+    ldr     r1, =ring_j
+    ldr     r1, [r1]
+    eor     r9, r1, r0          @ the signer's canonical index
+    ldr     r10, =ring_z
+    mov     r0, #0
+    str     r0, [r10]
+    str     r0, [r10, #4]
+    ldr     r1, =ring_e
+    ldr     r1, [r1]
+    str     r1, [r10, r9, lsl #2]
+    mov     r0, #1
+    lsl     r0, r0, r9
+    str     r0, [r10, #8]       @ z = (0..e..0 ; unit(j))
+    mov     r4, #0              @ round
+rsg_round:
+    cmp     r4, #SDF_ROUNDS
+    bge     rsg_rounds_done
+    mov     r0, #12
+    mul     r11, r4, r0         @ 12*i: 3-word slot offset
+    ldr     r5, =ring_r
+    add     r5, r5, r11
+    bl      prng_next
+    str     r0, [r5]
+    bl      prng_next
+    str     r0, [r5, #4]
+    bl      prng_next
+    and     r0, r0, #3
+    str     r0, [r5, #8]
+    bl      prng_next
+    mov     r8, r0              @ ps
+    ldr     r1, =ring_ps
+    str     r0, [r1, r4, lsl #2]
+    bl      prng_next
+    ldr     r1, =ring_s1
+    str     r0, [r1, r4, lsl #2]
+    bl      prng_next
+    ldr     r1, =ring_s2
+    str     r0, [r1, r4, lsl #2]
+    ldr     r6, =ring_y         @ y = z ^ r
+    add     r6, r6, r11
+    ldr     r0, [r10]
+    ldr     r1, [r5]
+    eor     r0, r0, r1
+    str     r0, [r6]
+    ldr     r0, [r10, #4]
+    ldr     r1, [r5, #4]
+    eor     r0, r0, r1
+    str     r0, [r6, #4]
+    ldr     r0, [r10, #8]
+    ldr     r1, [r5, #8]
+    eor     r0, r0, r1
+    str     r0, [r6, #8]
+    mov     r0, r8
+    bl      ring_perms_32
+    mov     r0, r5
+    ldr     r1, =ring_pr
+    add     r1, r1, r11
+    bl      ring_apply_32
+    mov     r0, r6
+    ldr     r1, =ring_py
+    add     r1, r1, r11
+    bl      ring_apply_32
+    ldr     r7, =ring_hw
+    mov     r0, r5              @ c0 = H1(ps, H~ r)
+    bl      ring_htilde_32
+    str     r8, [r7]
+    str     r0, [r7, #4]
+    mov     r0, #1
+    mov     r1, r7
+    mov     r2, #2
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #32]
+    ldr     r1, =ring_s1        @ c1 = H2(s1, PI r)
+    ldr     r0, [r1, r4, lsl #2]
+    ldr     r12, =ring_pr
+    bl      rsg_pack4
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #36]
+    ldr     r1, =ring_s2        @ c2 = H3(s2, PI y)
+    ldr     r0, [r1, r4, lsl #2]
+    ldr     r12, =ring_py
+    bl      rsg_pack4
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    ldr     r1, =ring_dbuf
+    add     r1, r1, r11
+    str     r0, [r1, #40]
+    add     r4, r4, #1
+    b       rsg_round
+rsg_rounds_done:
+    ldr     r0, =ring_msg
+    ldr     r0, [r0]
+    bl      ring_digest_32
+    ldr     r10, =ring_sig
+    str     r0, [r10]
+    bl      ring_challenges_32
+    mov     r4, #0
+rsg_fill:
+    cmp     r4, #SDF_ROUNDS
+    bge     rsg_filled
+    mov     r0, #36
+    mul     r5, r4, r0
+    add     r5, r5, r10
+    add     r5, r5, #4          @ the round's 9 words
+    mov     r0, #12
+    mul     r11, r4, r0
+    mov     r0, #0
+    mov     r2, #0
+rsg_zero:
+    str     r0, [r5, r2, lsl #2]
+    add     r2, r2, #1
+    cmp     r2, #9
+    blt     rsg_zero
+    ldr     r1, =ring_b
+    ldr     r6, [r1, r4, lsl #2]
+    ldr     r7, =ring_dbuf
+    add     r7, r7, r11
+    add     r7, r7, #32         @ this round's c0, c1, c2
+    cmp     r6, #0
+    bne     rsg_fill_b12
+    ldr     r0, [r7]
+    str     r0, [r5]            @ c0 unopened
+    ldr     r1, =ring_s1
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #4]
+    ldr     r1, =ring_s2
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_pr
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #12
+    stm     r3, {r0-r2}
+    ldr     r12, =ring_py
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #24
+    stm     r3, {r0-r2}
+    b       rsg_fill_next
+rsg_fill_b12:
+    cmp     r6, #1
+    bne     rsg_fill_b2
+    ldr     r0, [r7, #8]
+    str     r0, [r5]            @ c2 unopened
+    ldr     r1, =ring_s1
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_r
+    b       rsg_fill_common
+rsg_fill_b2:
+    ldr     r0, [r7, #4]
+    str     r0, [r5]            @ c1 unopened
+    ldr     r1, =ring_s2
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #8]
+    ldr     r12, =ring_y
+rsg_fill_common:
+    add     r12, r12, r11
+    ldm     r12, {r0-r2}
+    add     r3, r5, #12
+    stm     r3, {r0-r2}
+    ldr     r1, =ring_ps
+    ldr     r0, [r1, r4, lsl #2]
+    str     r0, [r5, #4]
+rsg_fill_next:
+    add     r4, r4, #1
+    b       rsg_fill
+rsg_filled:
+    mov     r0, #1
+    pop     {r3-r11, pc}
+rsg_fail:
+    mov     r0, #0
+    pop     {r3-r11, pc}
+
+/* rsg_pack4: r0=salt, r12=3-word array base, r11=slot offset ->      */
+/* ring_hw = (salt, the slot's 3 words)                               */
+    .thumb_func
+rsg_pack4:
+    ldr     r3, =ring_hw
+    str     r0, [r3]
+    add     r12, r12, r11
+    ldr     r0, [r12]
+    str     r0, [r3, #4]
+    ldr     r0, [r12, #4]
+    str     r0, [r3, #8]
+    ldr     r0, [r12, #8]
+    str     r0, [r3, #12]
+    bx      lr
+
+    .ltorg
+
+/* hpks_stern_ring_verify_32: r0=msg; ring_in, ring_sig -> r0 = 1     */
+/* iff every opening is well-formed and the commitments it rebuilds   */
+/* hash to the signature's D                                          */
+    .thumb_func
+hpks_stern_ring_verify_32:
+    push    {r3-r11, lr}
+    mov     r9, r0              @ msg
+    bl      ring_canon_32
+    cmp     r0, #0
+    blt     rvf_fail
+    ldr     r10, =ring_sig
+    ldr     r0, [r10]
+    bl      ring_challenges_32
+    mov     r4, #0
+rvf_round:
+    cmp     r4, #SDF_ROUNDS
+    bge     rvf_digest
+    mov     r0, #36
+    mul     r5, r4, r0
+    add     r5, r5, r10
+    add     r5, r5, #4          @ o = the round's 9 words
+    mov     r0, #12
+    mul     r11, r4, r0
+    ldr     r6, =ring_dbuf
+    add     r6, r6, r11
+    add     r6, r6, #32         @ c = this round's c0, c1, c2
+    ldr     r7, =ring_hw
+    ldr     r1, =ring_b
+    ldr     r8, [r1, r4, lsl #2]
+    cmp     r8, #0
+    bne     rvf_b12
+    ldr     r0, [r5, #20]       @ b=0: PI r, PI y indicators are 2 bits
+    ldr     r1, [r5, #32]
+    orr     r0, r0, r1
+    lsrs    r0, r0, #2
+    bne     rvf_fail
+    ldr     r3, =ring_v         @ PI z = PI r ^ PI y must be in S
+    ldr     r0, [r5, #12]
+    ldr     r1, [r5, #24]
+    eor     r0, r0, r1
+    str     r0, [r3]
+    ldr     r0, [r5, #16]
+    ldr     r1, [r5, #28]
+    eor     r0, r0, r1
+    str     r0, [r3, #4]
+    ldr     r0, [r5, #20]
+    ldr     r1, [r5, #32]
+    eor     r0, r0, r1
+    str     r0, [r3, #8]
+    mov     r0, r3
+    bl      ring_in_S_32
+    cmp     r0, #0
+    beq     rvf_fail
+    ldr     r0, [r5]
+    str     r0, [r6]            @ c0 as sent
+    ldr     r0, [r5, #4]
+    add     r12, r5, #12
+    bl      rvf_pack4
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #4]        @ c1 = H2(s1, PI r)
+    ldr     r0, [r5, #8]
+    add     r12, r5, #24
+    bl      rvf_pack4
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #8]        @ c2 = H3(s2, PI y)
+    b       rvf_next
+rvf_b12:
+    ldr     r0, [r5, #24]       @ b=1,2: the unused words are zero
+    ldr     r1, [r5, #28]
+    orr     r0, r0, r1
+    ldr     r1, [r5, #32]
+    orr     r0, r0, r1
+    cmp     r0, #0
+    bne     rvf_fail
+    ldr     r0, [r5, #20]       @ and the indicator is 2 bits
+    lsrs    r0, r0, #2
+    bne     rvf_fail
+    ldr     r0, [r5, #4]
+    bl      ring_perms_32
+    add     r0, r5, #12
+    ldr     r1, =ring_v
+    bl      ring_apply_32       @ ring_v = PI(r or y)
+    add     r0, r5, #12
+    bl      ring_htilde_32
+    ldr     r1, [r5, #4]
+    str     r1, [r7]
+    str     r0, [r7, #4]
+    mov     r0, #1
+    mov     r1, r7
+    mov     r2, #2
+    bl      ring_hash_32
+    str     r0, [r6]            @ c0 = H1(ps, H~ v)
+    ldr     r0, [r5, #8]
+    ldr     r12, =ring_v
+    bl      rvf_pack4
+    cmp     r8, #1
+    bne     rvf_b2
+    mov     r0, #2
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #4]        @ c1 = H2(s1, PI r)
+    ldr     r0, [r5]
+    str     r0, [r6, #8]        @ c2 as sent
+    b       rvf_next
+rvf_b2:
+    mov     r0, #3
+    mov     r1, r7
+    mov     r2, #4
+    bl      ring_hash_32
+    str     r0, [r6, #8]        @ c2 = H3(s2, PI y)
+    ldr     r0, [r5]
+    str     r0, [r6, #4]        @ c1 as sent
+rvf_next:
+    add     r4, r4, #1
+    b       rvf_round
+rvf_digest:
+    mov     r0, r9
+    bl      ring_digest_32
+    ldr     r1, [r10]
+    cmp     r0, r1
+    bne     rvf_fail
+    mov     r0, #1
+    pop     {r3-r11, pc}
+rvf_fail:
+    mov     r0, #0
+    pop     {r3-r11, pc}
+
+/* rvf_pack4: r0=salt, r12=3 words -> ring_hw = (salt, the 3 words)   */
+    .thumb_func
+rvf_pack4:
+    ldr     r3, =ring_hw
+    str     r0, [r3]
+    ldr     r0, [r12]
+    str     r0, [r3, #4]
+    ldr     r0, [r12, #4]
+    str     r0, [r3, #8]
+    ldr     r0, [r12, #8]
+    str     r0, [r3, #12]
+    bx      lr
 
     .ltorg
 

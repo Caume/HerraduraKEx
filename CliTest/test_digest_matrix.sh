@@ -151,6 +151,8 @@ done
 echo "=== hpks-t: threshold-aggregate --digest, aggregator rotated ==="
 ${CLI[py]} genpkey --algo hpks --out "$TMP/ta.pem" >/dev/null 2>&1
 ${CLI[py]} genpkey --algo hpks --out "$TMP/tb.pem" >/dev/null 2>&1
+${CLI[py]} pkey --in "$TMP/ta.pem" --pubout --out "$TMP/ta_pub.pem" >/dev/null 2>&1
+${CLI[py]} pkey --in "$TMP/tb.pem" --pubout --out "$TMP/tb_pub.pem" >/dev/null 2>&1
 ${CLI[py]} threshold-commit --key "$TMP/ta.pem" --commit-out "$TMP/ca.pem" \
            --nonce-out "$TMP/na.pem" >/dev/null 2>&1
 ${CLI[py]} threshold-commit --key "$TMP/tb.pem" --commit-out "$TMP/cb.pem" \
@@ -175,12 +177,12 @@ for agg in "${LANGS[@]}"; do
 
     for v in "${LANGS[@]}"; do
         verify_ok "hpks-t digest agg=$agg -> $v" \
-            ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" \
+            ${CLI[$v]} verify --algo hpks-t --pubkey "$TMP/ta_pub.pem,$TMP/tb_pub.pem" --in "$TMP/msg.bin" \
             --sig "$TMP/tsig.pem" --digest hfscx-256
         verify_ok "hpks-t digest agg=$agg -> $v, flag omitted" \
-            ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" --sig "$TMP/tsig.pem"
+            ${CLI[$v]} verify --algo hpks-t --pubkey "$TMP/ta_pub.pem,$TMP/tb_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/tsig.pem"
         verify_rejects "hpks-t digest-agg verified WITH --digest none agg=$agg -> $v" \
-            ${CLI[$v]} verify --algo hpks-t --in "$TMP/msg.bin" \
+            ${CLI[$v]} verify --algo hpks-t --pubkey "$TMP/ta_pub.pem,$TMP/tb_pub.pem" --in "$TMP/msg.bin" \
             --sig "$TMP/tsig.pem" --digest none
     done
 done

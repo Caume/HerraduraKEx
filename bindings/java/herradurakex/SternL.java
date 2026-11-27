@@ -23,8 +23,9 @@ import java.util.List;
  * <li>message: 256 bits; the Fiat-Shamir state advances by nl_fscx_v1 at
  *     256 bits.</li>
  * </ul>
- * Signatures reuse {@link Stern.SternSignature} and
- * {@link SternRing.RingSignature}: commitments are 256-bit values there.
+ * Signatures reuse {@link Stern.SternSignature}: commitments are 256-bit values
+ * there.  The ring ({@link SternRing}) covers both forms in one implementation
+ * (TODO #415).
  */
 public final class SternL {
     private SternL() { }
@@ -215,99 +216,6 @@ public final class SternL {
         for (int i = 0; i < rounds; i++)
             if (!checkRound(sig.challenges[i], sig.c0[i], sig.c1[i], sig.c2[i],
                             sig.resp0[i], sig.resp1[i], h, syn, n)) return false;
-        return true;
-    }
-
-    /** SternRing's simulator, draw for draw, on the long-form primitives:
-     * {c0, c1, c2, respA, respB}. */
-    private static BigInteger[] simulate(int b, BigInteger syn, BigInteger[] h, int n, SecureRandom rng) {
-        if (b == 0) {
-            BigInteger sr = new BigInteger(n, rng);
-            BigInteger sy = sr.xor(Stern.csprngWeightT(n, n / 16, rng));
-            BigInteger piDum = new BigInteger(n, rng);
-            return new BigInteger[] { hash(1, bytesN(piDum, n), bytesN(BigInteger.ZERO, n)),
-                                      hash(2, bytesN(sr, n)), hash(3, bytesN(sy, n)), sr, sy };
-        }
-        BigInteger pi = new BigInteger(n, rng);
-        BigInteger v = new BigInteger(n, rng);
-        int[] perm = genPerm(pi, n);
-        BigInteger hv = Stern.sternSyndromeH(h, v);
-        BigInteger sv = Stern.sternApplyPerm(perm, v);
-        BigInteger dum = new BigInteger(n, rng);
-        if (b == 1)
-            return new BigInteger[] { hash(1, bytesN(pi, n), bytesN(hv, n)), hash(2, bytesN(sv, n)),
-                                      hash(3, bytesN(dum, n)), pi, v };
-        return new BigInteger[] { hash(1, bytesN(pi, n), bytesN(hv.xor(syn), n)), hash(2, bytesN(dum, n)),
-                                  hash(3, bytesN(sv, n)), pi, v };
-    }
-
-    private static BitArray ringState(BigInteger msg, BigInteger[][] c0, BigInteger[][] c1, BigInteger[][] c2) {
-        int k = c0.length, rounds = c0[0].length;
-        BigInteger[] flat = new BigInteger[3 * k * rounds];
-        int idx = 0;
-        for (int i = 0; i < k; i++)
-            for (int r = 0; r < rounds; r++) {
-                flat[idx++] = c0[i][r]; flat[idx++] = c1[i][r]; flat[idx++] = c2[i][r];
-            }
-        return fsState(msg, flat);
-    }
-
-    /** Long-form ring signature as member j (SternRing's member-major order
-     * and challenge splitting). */
-    public static SternRing.RingSignature ringSign(BigInteger msg, BigInteger e, int j,
-                                                   List<SternRing.RingKey> ring, int rounds, int n,
-                                                   SecureRandom rng) {
-        int k = ring.size();
-        BigInteger[][] c0 = new BigInteger[k][rounds], c1 = new BigInteger[k][rounds], c2 = new BigInteger[k][rounds];
-        BigInteger[][] r0 = new BigInteger[k][rounds], r1 = new BigInteger[k][rounds];
-        int[][] ch = new int[k][rounds];
-        for (int i = 0; i < k; i++) {
-            if (i == j) continue;
-            BigInteger[] h = buildH(ring.get(i).seed, n);
-            for (int r = 0; r < rounds; r++) {
-                int b = SternRing.ringTrit(rng);
-                ch[i][r] = b;
-                BigInteger[] s = simulate(b, ring.get(i).syndrome, h, n, rng);
-                c0[i][r] = s[0]; c1[i][r] = s[1]; c2[i][r] = s[2]; r0[i][r] = s[3]; r1[i][r] = s[4];
-            }
-        }
-        BigInteger[] hj = buildH(ring.get(j).seed, n);
-        BigInteger[][] data = new BigInteger[rounds][];
-        for (int r = 0; r < rounds; r++) {
-            BigInteger rv = new BigInteger(n, rng), pi = new BigInteger(n, rng);
-            data[r] = commit(hj, e, rv, pi, n);
-            c0[j][r] = data[r][0]; c1[j][r] = data[r][1]; c2[j][r] = data[r][2];
-        }
-        int[] joint = chain(ringState(msg, c0, c1, c2), rounds);
-        for (int r = 0; r < rounds; r++) {
-            int sim = 0;
-            for (int i = 0; i < k; i++) if (i != j) sim += ch[i][r];
-            int b = Math.floorMod(joint[r] - sim, 3);
-            ch[j][r] = b;
-            BigInteger[] rr = respond(b, data[r]);
-            r0[j][r] = rr[0]; r1[j][r] = rr[1];
-        }
-        return new SternRing.RingSignature(c0, c1, c2, ch, r0, r1);
-    }
-
-    public static boolean ringVerify(BigInteger msg, SternRing.RingSignature sig,
-                                     List<SternRing.RingKey> ring, int n) {
-        int k = ring.size();
-        if (k == 0 || sig.ringSize() != k) return false;
-        int rounds = sig.rounds();
-        int[] joint = chain(ringState(msg, sig.c0, sig.c1, sig.c2), rounds);
-        for (int r = 0; r < rounds; r++) {
-            int s = 0;
-            for (int i = 0; i < k; i++) s += sig.challenges[i][r];
-            if (s % 3 != joint[r]) return false;
-        }
-        for (int i = 0; i < k; i++) {
-            BigInteger[] h = buildH(ring.get(i).seed, n);
-            for (int r = 0; r < rounds; r++)
-                if (!checkRound(sig.challenges[i][r], sig.c0[i][r], sig.c1[i][r], sig.c2[i][r],
-                                sig.resp0[i][r], sig.resp1[i][r], h, ring.get(i).syndrome, n))
-                    return false;
-        }
         return true;
     }
 

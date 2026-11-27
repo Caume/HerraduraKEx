@@ -229,8 +229,11 @@ Given a private key `a`, message `msg`:
    `msg_digest` is `msg` reduced/padded to `n` bits (`i = n/4` as in §3.1)
    — this is the suite's Fiat-Shamir hash-substitute, binding the
    challenge to both the commitment and the message.
-4. Compute the response `s = (k − a·e) mod (2^n − 1)` (arithmetic mod the
-   group order, not mod `2^n`).
+4. Compute the response `s = (k − a·e) mod ord(g)`, the order of `g`.  `g = 3`
+   generates all of GF(2^n)* at `n = 64` and `256`, so there `ord(g) = 2^n − 1`;
+   at `n = 32` and `128` it generates a subgroup of index 15 and 3, so
+   `ord(g) = (2^n − 1)/15` and `(2^n − 1)/3` (TODO #423).  Arithmetic is mod
+   the order, not mod `2^n`.
 5. The signature is `(s, e)` (equivalently `(s, R)`, since `e` is
    recomputable from `R` and `msg`; the CLI stores `(s, e)`).
 
@@ -238,6 +241,8 @@ Given a private key `a`, message `msg`:
 
 Given public key `C`, message `msg`, signature `(s, e)`:
 
+0. Refuse `s ≥ ord(g)` (TODO #423): `g^s` depends on `s mod ord(g)` only, so a
+   larger `s` would be a second encoding of the same signature.
 1. Recompute `R' = g^s · C^e mod P(z)`.
 2. Recompute `e' = FSCX_REVOLVE(R', msg_digest, i)`.
 3. Accept iff `e' = e`.
@@ -652,7 +657,7 @@ its own document rather than a condensed section here; see
 `SecurityProofs-5.md` §11.8.3–11.9 for the full construction and
 `SecurityProofs-7.md` for the accompanying Σ-protocol/ZKBoo analysis.
 One step is stated here because the four CLIs once disagreed on it
-(TODO #390): the Fiat-Shamir challenges of hpks-stern, hpks-ring and the
+(TODO #390): the Fiat-Shamir challenges of hpks-stern and the
 HCRED credential signature are derived from `ch_st = stern_hash(msg ‖
 commitments)` by `ch_st = nl_fscx_v1(ch_st, i)` for round `i = 0, 1, …`,
 where `i` is the WHOLE round index as an n-bit integer (not its low byte),
@@ -685,19 +690,101 @@ responses, weight check and ds tags); these rules apply above N = 256:
 - **Message and challenges.** The signed message is 256 bits (the whole
   HFSCX-256 pre-hash, or the input's first 32 octets). `ch_st =
   H_0(msg ‖ c0_0 ‖ c1_0 ‖ c2_0 ‖ …)` and advances by `nl_fscx_v1(ch_st, i)`
-  at 256 bits, exactly as above; a ring signature hashes every member's
-  commitments, member-major.
+  at 256 bits, exactly as above.
 - **Demo KEM (`hpke-stern`).** `K = H_4(seed, e′)`; the payload is one
-  32-octet block, `E = fscx_revolve(P, K, 64)`.
+  32-octet block, `E = fscx_revolve(P, K, 64)`.  Library only since v20.0.0
+  (TODO #413): the CLI's ciphertext carried e′, so anyone holding it and the
+  public key decrypted it, and `enc`/`dec --algo hpke-stern` are refused.
 - **Wire.** The short form's PEM layouts with `n = 2304`: keys
   `(e or syndrome, seed, n)`, each N/8 octets; a signature
   `(n, rounds, commitments, challenges, responses)` with 3 × 32 commitment
   octets and 2 × N/8 response octets a round (147,249 DER octets at 219
-  rounds); the HPKE-Stern ciphertext's `K` and `E` are 32 octets.
+  rounds).
 
 Random draws keep the short form's order (seed, then the error; per round
 `r`, then the π-seed), and `KAT/operation_replay.json` pins keygen,
 signing and ring signing at N = 2304 in all four ports.
+
+### 11.2 HPKS-Ring: one Stern proof over the ring (TODO #415)
+
+`sign` / `verify --algo hpks-ring` prove that the signer holds the secret of
+ONE of k hpks-stern keys `(seed_i, s_i)`, without saying which. It is a single
+Stern proof over the ring's block-diagonal statement. It replaced (v20.0.0) an
+OR-composition of k Stern proofs that split each round's challenge across the
+members mod 3; that split was unsound for Stern's three challenges, and a
+ring signature could be forged with no member's key. Signatures of that
+construction carry the label `HERRADURA HPKS-RING SIGNATURE`, and every CLI
+names and refuses them.
+
+- **Ring.** 1 ≤ k ≤ 1024 keys of ONE width n (32, 64, 128 or 256, or the long
+  form's 512..2304 in steps of 256), t = max(2, n/16). Member i's encoding is
+  `seed_i ‖ s_i` (n/8 and n/16 octets, big-endian; `s_i` is the n/2-bit
+  syndrome, bit `j` = row `j`). The ring is sorted by that encoding, and a ring
+  listing one member twice is refused, so a signature does not depend on the
+  order the ring is given in. `H_i` is member i's parity matrix (§11 for
+  n ≤ 256, §11.1 above).
+- **Statement.** `H~ = diag([H_1 | s_1], …, [H_k | s_k])`. A vector is
+  `z = (x_1, …, x_k ; c)`, where each `x_i` has n bits and `c` is a k-bit
+  indicator. The statement is `H~ z = 0`, that is `H_i x_i ⊕ c_i s_i = 0` for
+  every i, together with `z ∈ S`. Here `S` holds the vectors with exactly one
+  `c_p = 1`, `wt(x_p) = t`, and every other `x_q = 0`. The member at canonical
+  index j proves it with `x_j = e_j`, `c = 1 << j`. A vector is
+  `x_1 ‖ … ‖ x_k ‖ c` on the wire, `c` in ⌈k/8⌉ octets with every bit at or
+  above k zero.
+- **Hash.** `H_tag(x) = HFSCX-256-DS(0x32, tag ‖ x)`, 256 bits at every width:
+  tag 0 is the digest, 1–3 the commitments c0–c2, 4 the member-shuffle key,
+  5 a block's permutation key, 6 the challenge expander.
+- **Permutation.** `Π = (τ, π_1, …, π_k)` from a 32-octet `π-seed`.
+  `τ = gen(H_4(π-seed), k)` and `π_i = gen(H_5(π-seed ‖ i_hi ‖ i_lo), n)`,
+  where `gen(key, N)` is §11.1's Fisher–Yates generator over N positions with
+  the 256-bit key. `Π(z)` puts `π_i(x_i)` at block `τ(i)` and moves c's bit i
+  to bit `τ(i)`, with `π(v)[π[j]] = v[j]`. `S` is one orbit of that group: a
+  shuffled witness is uniform on `S` whoever signed, and anything in `S` is a
+  member's key.
+- **Round.** The round draws `r` (its k blocks, then ⌈k/8⌉ indicator octets
+  masked to k bits), `π-seed`, `salt1` and `salt2`, 32 octets each, in that
+  order. Set `y = r ⊕ z`. The commitments are
+  `c0 = H_1(π-seed ‖ H~ r)`, where `H~ r` is k syndromes of n/16 octets and
+  equals `H~ y`; `c1 = H_2(salt1 ‖ Π(r))`; and `c2 = H_3(salt2 ‖ Π(y))`.
+- **Transcript.** `D = H_0(0x02 ‖ n ‖ k ‖ rounds ‖ msg ‖ ring ‖ c0 ‖ c1 ‖ c2 ‖ …)`,
+  with n, k and rounds as 2-octet integers, `msg` the 32-octet pre-hash (or the
+  input's first 32 octets), and the ring in canonical order. Each round's
+  challenge `b ∈ {0, 1, 2}` comes from the octets of
+  `H_6(D ‖ ctr)` for ctr = 0, 1, … (4 octets): an octet of 255 is skipped, and
+  any other gives `b = octet mod 3`.
+- **Signature.** The signature is `D`, then per round the ONE unopened
+  commitment and the opening:
+  - `b = 0`: `c0 ‖ salt1 ‖ salt2 ‖ Π(r) ‖ Π(y)`, and `Π(r) ⊕ Π(y)` must lie in `S`;
+  - `b = 1`: `c2 ‖ π-seed ‖ salt1 ‖ r`;
+  - `b = 2`: `c1 ‖ π-seed ‖ salt2 ‖ y`.
+
+  The verifier rebuilds the two opened commitments of every round, from
+  `H~ w` and `Π(w)` for the revealed `w`, then recomputes D and compares it.
+  The length is fixed by the challenges: 32 + Σ (96 + vector or two vectors).
+- **Wire.** PEM `HERRADURA HPKS-RING-V2 SIGNATURE`, `SEQ(n, k, rounds, D, body)`.
+  D is a fixed 32 octets; the body is the rest, minimal DER. The verifier
+  refuses `rounds` below `--min-rounds` (219 by default).
+
+Soundness: three valid openings of one commitment give `r ⊕ y ∈ S` with
+`H~ (r ⊕ y) = 0`, which is a member's key, or else a hash collision. So a
+forger answers at most two of the three challenges per round:
+(2/3)^219 < 2^-128. Anonymity: each opening is uniform whoever signed, and the
+salts keep `c1` and `c2` hiding even from someone who holds every member's key
+(`c0` is hidden by the unopened 256-bit `π-seed`). `KAT/operation_replay.json`
+pins whole signatures at N = 256 and N = 2304 in all four ports.
+
+**32-bit demo (assembly, Arduino; TODO #424).** The ARM Thumb-2, NASM i386
+and Arduino suites run the same construction at N = 32, t = 2, k = 2 and 4
+rounds, with that port's 32-bit primitives in place of the 256-bit ones:
+`H_ds(w…) = HFSCX-32(0x32000000 | ds, w…)` over 32-bit words, a 32-bit
+`π-seed`, salts and D, `τ = H_4(π-seed) & 1`, `π_b` from
+`H_5(π-seed, b)`, the challenges from the bytes of `H_6(D, ctr)` with 255
+rejected, and D over `(2, k, rounds, msg, seed_0, s_0, seed_1, s_1)` and
+the commitments. Each round is the unopened commitment and 8 words, the
+unused ones zero. It has no security at these parameters and is not
+interoperable with the 256-bit ports; the three harnesses' `[13]` pin one
+signature (D = `0x4fb8b39f`) from a fixed PRNG state, which holds the three to
+one construction.
 
 This SPEC.md's §9 NL/PQC coverage and this pointer satisfy TODO #193's
 scope (HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC/Stern variants); a
@@ -726,3 +813,16 @@ particular:
 - Nonce/counter reuse breaks HPKS (§6.2 step 1), HPKE (§7.1 step 1), and
   HSKE-NL-A1 (§9.2) — each MUST use a fresh, non-repeating value per
   operation under a given key.
+- Integrity (TODO #414): only `hske-duplex`, `hske-duplex3`, `hske-nla1 --aead`
+  (ciphertext format tag 2) and `encfile` carry an authentication tag.  Every
+  other `enc --algo` — `hske`, `hske-nla1` without `--aead`, `hske-nla2`,
+  `hske-nla3`, `hpke`, `hpke-nl`, `hpke-nl3` and `hpke-stern-kem` — has NO
+  integrity: `dec` of a modified ciphertext, or under the wrong key, writes
+  wrong bytes and exits 0.  `hske`, `hske-nla1`, `hpke` and `hpke-stern-kem` are
+  moreover predictably malleable, being linear in E: flipping bit j of E flips
+  plaintext bit j (`hske-nla1`, E = P ⊕ keystream) or bits j and j ± n/4 (the
+  rest: E's part of `fscx_revolve` is M^(3n/4) = M^(n/4) = I ⊕ ROL^(n/4) ⊕
+  ROR^(n/4)), whatever the key.  The NL-FSCX v2/v3 modes spread a flip over
+  about half the block, which is still undetected.  The machine-readable
+  statement is the spec's `enc_integrity` table; every CLI prints its warning to
+  stderr on `enc` and `dec` of an untagged mode.

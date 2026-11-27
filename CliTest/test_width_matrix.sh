@@ -19,7 +19,8 @@
 #   - hpks-stern (TODO #383 stage 2): as hpks, at SR reduced rounds (the
 #     verifier is given --min-rounds SR); and an hpks-ring signature by the
 #     writer over a ring of every listed CLI's key verifies under the reader,
-#     and not on a changed message.  hpke-stern runs the hpke* checks.
+#     and not on a changed message.  hpke-stern runs the hpks-stern sign/verify
+#     checks on its own key (TODO #413 retired enc/dec --algo hpke-stern).
 #   - hcred (TODO #383 stage 3): the writer's presentation proof verifies under
 #     the reader, and not under another message; a credential the writer issues
 #     over the reader's key, under an n-bit hpks-stern issuer key, verifies under
@@ -246,7 +247,6 @@ EOF
                     else fail "$L: verify $dg on a changed message: rc=$RC, not 'Verification FAILED'"; fi
                 done
                 ring=$(printf "$D/%s_pub.pem," "${gens[@]}"); ring=${ring%,}
-                if [ "${#gens[@]}" -lt 2 ]; then ring="$ring,$ring"; fi
                 q "$g" sign --algo hpks-ring --rounds $SR --key "$D/$g.pem" --ring "$ring" --in "$D/m.bin" --out "$D/rs.pem"
                 if [ "$RC" -ne 0 ]; then fail "$L: ring sign (rc=$RC) $(head -c 160 "$TMP/err")"
                 else
@@ -301,6 +301,15 @@ EOF
                     if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
                     else fail "$L: rnl-sigma verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi
                 fi ;;
+            hpke-stern)   # a Stern signing key since TODO #413 retired its enc/dec
+                { cat "$D/m.bin"; printf x; } > "$D/m2.bin"
+                q "$g" sign --algo hpks-stern --rounds $SR --key "$D/$g.pem" --in "$D/m.bin" --out "$D/s.pem"
+                [ "$RC" -eq 0 ] || { fail "$L: sign (rc=$RC) $(head -c 160 "$TMP/err")"; continue; }
+                q "$r" verify --algo hpks-stern --min-rounds $SR --pubkey "$D/${g}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
+                if [ "$RC" -eq 0 ]; then pass; else fail "$L: verify refused a valid signature (rc=$RC) $(head -c 160 "$TMP/err")"; fi
+                q "$r" verify --algo hpks-stern --min-rounds $SR --pubkey "$D/${g}_pub.pem" --in "$D/m2.bin" --sig "$D/s.pem"
+                if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
+                else fail "$L: verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi ;;
             hpke*)
                 rm -f "$D/ct.pem" "$D/d.bin"
                 q "$g" enc --algo "$a" --pubkey "$D/${r}_pub.pem" --in "$D/m.bin" --out "$D/ct.pem"
@@ -317,6 +326,9 @@ EOF
         has_port "$ports" "$c" && continue
         q "$c" pkey --in "$D/$ref.pem" --text;                              refused "$a/$n pkey --text ($c)"
         case $a in
+        hpke-stern) q "$ref" sign --algo hpks-stern --rounds $SR --key "$D/$ref.pem" --in "$D/m.bin" --out "$D/s.pem"
+                q "$c" verify --algo hpks-stern --min-rounds $SR --pubkey "$D/${ref}_pub.pem" --in "$D/m.bin" --sig "$D/s.pem"
+                refused "$a/$n verify ($c)" ;;
         hpke*)  q "$c" enc --algo "$a" --pubkey "$D/${ref}_pub.pem" --in "$D/m.bin" --out "$D/ct_$c.pem"
                 refused "$a/$n enc ($c)" ;;
         hpks*)  sr=(); vr=()
@@ -351,7 +363,7 @@ rnl_mixed() {  # label: refused as a ring size mismatch naming our 64, then 128
     else fail "$1: rc=$RC, not refused as a ring size mismatch (64, then 128): $(head -c 160 "$TMP/err")"; fi; }
 M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
 [ "$SHARD_K" -eq 1 ] && for c in "${LANGS[@]}"; do
-    for a in hkex-gf hpke hpks hpke-stern hpks-stern hcred hkex-rnl; do
+    for a in hkex-gf hpke hpks hpks-stern hcred hkex-rnl; do
         runs_both "$a" "$c" || continue
         q "$c" genpkey --algo "$a" --bits 64  --out "$M/k64.pem"
         q "$c" genpkey --algo "$a" --bits 128 --out "$M/k128.pem"
@@ -377,13 +389,6 @@ M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
             q "$c" sign --algo hpks --key "$M/k128.pem" --in "$M/m.bin" --out "$M/s128.pem"
             q "$c" verify --algo hpks --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s128.pem"
             mixed "mixed-width verify ($c)" "signature n is 128, public key n is 64" ;;
-        hpke-stern)   # TODO #383 stage 2: Python and Go decrypted this with exit 0
-            q "$c" enc --algo hpke-stern --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --out "$M/ct64.pem"
-            q "$c" dec --algo hpke-stern --key "$M/k64.pem" --in "$M/ct64.pem" --out "$M/d.bin"
-            [ "$RC" -eq 0 ] && cmp -s "$M/d.bin" "$M/m.bin" && pass || fail "mixed control: same-width hpke-stern dec ($c) rc=$RC"
-            q "$c" enc --algo hpke-stern --pubkey "$M/k128_pub.pem" --in "$M/m.bin" --out "$M/ct128.pem"
-            q "$c" dec --algo hpke-stern --key "$M/k64.pem" --in "$M/ct128.pem" --out "$M/d.bin"
-            mixed "mixed-width hpke-stern dec ($c)" "ciphertext n is 128, private key n is 64" ;;
         hpks-stern)   # Go panicked, Python failed inside its hash
             q "$c" sign --algo hpks-stern --rounds $SR --key "$M/k64.pem" --in "$M/m.bin" --out "$M/s64.pem"
             q "$c" verify --algo hpks-stern --min-rounds $SR --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s64.pem"
@@ -399,7 +404,7 @@ M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
             [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width ring verify ($c) rc=$RC"
             q "$c" sign --algo hpks-ring --rounds $SR --key "$M/k64.pem" --ring "$M/k64_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --out "$M/x.pem"
             mixed "mixed-width ring members ($c)" "all ring members must share the same n"
-            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k128_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
+            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k128_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
             mixed "mixed-width ring signature ($c)" "signature n=64 != ring n=128" ;;
         hcred)   # TODO #383 stage 3: Go panicked on both; Python failed the credential unnamed
             q "$c" cred-prove --rounds $SR --in "$M/k64.pem" --out "$M/p64.pem"

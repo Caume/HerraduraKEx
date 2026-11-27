@@ -21,8 +21,6 @@ final class KeyLabelTable {
         {"dec", "hpke-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", "HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"},
         {"enc", "hpke-nl3", "--pubkey", "hpke-nl3", "HERRADURA HPKE-NL3 PUBLIC KEY"},
         {"dec", "hpke-nl3", "--key", "hpke-nl3", "HERRADURA HPKE-NL3 PRIVATE KEY"},
-        {"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"},
-        {"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"},
         {"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem", "HERRADURA HPKE-STERN-KEM PUBLIC KEY"},
         {"dec", "hpke-stern-kem", "--key", "hpke-stern-kem", "HERRADURA HPKE-STERN-KEM PRIVATE KEY"},
         {"sign", "hpks", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", "HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"},
@@ -43,6 +41,7 @@ final class KeyLabelTable {
         {"verify", "hpks-xmss", "--pubkey", "hpks-xmss", "HERRADURA HPKS-XMSS PUBLIC KEY"},
         {"sign", "hpks-wots", "--key", "hpks-wots", "HERRADURA HPKS-WOTS PRIVATE KEY"},
         {"verify", "hpks-wots", "--pubkey", "hpks-wots", "HERRADURA HPKS-WOTS PUBLIC KEY"},
+        {"verify", "hpks-t", "--pubkey", "hpks, hpks-nl", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY"},
         {"threshold-commit", "", "--key", "hpks, hpks-nl", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"},
         {"threshold-respond", "", "--key", "hpks, hpks-nl", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"},
         {"oprf-eval", "", "--key", "oprf", "HERRADURA OPRF PRIVATE KEY"},
@@ -81,7 +80,7 @@ final class KeyLabelTable {
         {"HERRADURA HPKS PUBLIC KEY", "2", "2"},
         {"HERRADURA HPKS-NL PRIVATE KEY", "3", "3"},
         {"HERRADURA HPKS-NL PUBLIC KEY", "2", "2"},
-        {"HERRADURA HPKS-RING SIGNATURE", "4", "4"},
+        {"HERRADURA HPKS-RING-V2 SIGNATURE", "5", "5"},
         {"HERRADURA HPKS-STERN PRIVATE KEY", "3", "3"},
         {"HERRADURA HPKS-STERN PUBLIC KEY", "3", "3"},
         {"HERRADURA HPKS-WOTS PRIVATE KEY", "2", "2"},
@@ -451,16 +450,18 @@ final class KeyLabelTable {
                 return null;
             }
             return null;
-        case "HERRADURA HPKS-RING SIGNATURE":
-            if (n >= 4 && n <= 4) {
-                if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
+        case "HERRADURA HPKS-RING-V2 SIGNATURE":
+            if (n >= 5 && n <= 5) {
+                if (n > 0) { long c = 2L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
                 if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
-                if (n > 3) { long c = F0.applyAsLong(0) * F0.applyAsLong(1) * (3L * Math.min(F0.applyAsLong(2)/8L, 32L) + 2L * (F0.applyAsLong(2)/8L) + 1L); if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
+                if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
+                if (n > 4) { long c = F0.applyAsLong(2) * (96L + 2L * (F0.applyAsLong(1) * (F0.applyAsLong(0)/8L) + (F0.applyAsLong(1) + 7L)/8L)); if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
                 if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
                 if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
                 if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
-                if (n > 3) { long c = F0.applyAsLong(0) * F0.applyAsLong(1) * (3L * Math.min(F0.applyAsLong(2)/8L, 32L) + 2L * (F0.applyAsLong(2)/8L) + 1L); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
                 return null;
             }
             return null;
@@ -656,7 +657,7 @@ final class KeyLabelTable {
                 if (n > 2) { long c = (F0.applyAsLong(3) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
                 return null;
             }
-            if (n >= 5 && n <= 5 && (F0.applyAsLong(0) == 2L)) {
+            if (n >= 5 && n <= 5) {
                 if (n > 0) { long c = 1L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
                 if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
                 if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
@@ -667,19 +668,6 @@ final class KeyLabelTable {
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
                 if (n > 1) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 if (n > 2) { long c = (F0.applyAsLong(4) + 7L)/8L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                return null;
-            }
-            if (n >= 5 && n <= 5) {
-                if (n > 4) { long c = 2L; if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
-                if (n > 0) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
-                if (n > 1) { long c = F0.applyAsLong(4)/8L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
-                if (n > 2) { long c = Math.min(F0.applyAsLong(4)/8L, 32L); if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
-                if (n > 3) { long c = Math.min(F0.applyAsLong(4)/8L, 32L); if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
-                if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
-                if (n > 0) { long c = F0.applyAsLong(4)/8L; if (!(ew[0] == c || (lz[0] == 2 && ew[0] + 1 == c) || (c == 0 && ew[0] == 1 && L.applyAsInt(0) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, (long) ew[0], c); }
-                if (n > 1) { long c = F0.applyAsLong(4)/8L; if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
-                if (n > 2) { long c = Math.min(F0.applyAsLong(4)/8L, 32L); if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
-                if (n > 3) { long c = Math.min(F0.applyAsLong(4)/8L, 32L); if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
                 return null;
             }
             if (n >= 6 && n <= 6) {
@@ -864,5 +852,29 @@ final class KeyLabelTable {
         {"oprf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)"},
     };
     static final int PARAM_GAP_TODO = 384;
+
+    /** TODO #414: {algo, integrity (tag | none | aead-flag), stderr warning|""}. */
+    static final String[][] ENC_INTEGRITY = {
+        {"hske", "none",
+         "--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+        {"hske-nla1", "aead-flag",
+         "--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+        {"hske-nla2", "none",
+         "--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+        {"hske-nla3", "none",
+         "--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+        {"hske-duplex", "tag",
+         ""},
+        {"hske-duplex3", "tag",
+         ""},
+        {"hpke", "none",
+         "--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+        {"hpke-nl", "none",
+         "--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+        {"hpke-nl3", "none",
+         "--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+        {"hpke-stern-kem", "none",
+         "--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    };
 
 }

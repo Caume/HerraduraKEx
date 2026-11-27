@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -132,6 +133,8 @@ public final class HerraduraCli {
         String cmd = args[0];
         Map<String, String> opt = parseOpts(cmd, args, 1);
         checkUnknownFlags(cmd, opt);
+        // TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign
+        // and verify refuse it before any file is read, until the redesign.
         checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
@@ -188,7 +191,9 @@ public final class HerraduraCli {
             if (!r[0].equals(cmd) || !r[1].equals(algo)) continue;
             String v = opt.get(r[2].substring(2));
             if (v == null || v.isEmpty()) continue;
-            String[] paths = r[2].equals("--ring") ? v.split(",", -1) : new String[] { v };
+            // A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+            boolean isList = r[2].equals("--ring") || (r[2].equals("--pubkey") && algo.equals("hpks-t"));
+            String[] paths = isList ? v.split(",", -1) : new String[] { v };
             for (String p : paths) {
                 String label = pemFileLabel(p.trim());
                 // TODO #397: an envelope is refused here, by name, in every key
@@ -579,6 +584,7 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-wots")) {
+            otsRequireKeyFile("genpkey", out, "--out");   // TODO #420
             byte[] masterSeed = new byte[32];
             RNG.nextBytes(masterSeed);
             writeString(out, Codec.encodeWotsPrivKey(masterSeed, 0));
@@ -598,6 +604,7 @@ public final class HerraduraCli {
             return;
         }
         if (algo.equals("hpks-xmss")) {
+            otsRequireKeyFile("genpkey", out, "--out");   // TODO #420
             int h = numArg(opt, "xmss-height", 1, Codec.XMSS_MAX_H, Xmss.DEFAULT_H, "genpkey");
             // Codec.XMSS_MAX_H's own comment calls itself "genpkey's
             // --xmss-height cap", and until TODO #278 genpkey was the one path
@@ -1244,11 +1251,34 @@ public final class HerraduraCli {
         return new DuplexCt(nonce, ct, tag, nbits);
     }
 
+    /** TODO #413 (v20.0.0): {@code enc}/{@code dec --algo hpke-stern} are gone.  The
+     *  demo ciphertext carried the error vector e', and K = hash(seed, e') needs only
+     *  the PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
+    private static void retiredHpkeStern(String sub, String algo) {
+        if (algo.equals("hpke-stern"))
+            throw new CliError(sub + ": --algo hpke-stern was removed in v20.0.0 (TODO #413): "
+                + "its ciphertext carried the error vector, so anyone could decrypt it; "
+                + "use --algo hpke-stern-kem");
+    }
+
+    /** TODO #414: say on stderr that this mode cannot detect a modified ciphertext
+     *  or a wrong key, from the generated KeyLabelTable.ENC_INTEGRITY table. */
+    private static void warnNoIntegrity(String sub, String algo, boolean authenticated) {
+        for (String[] r : KeyLabelTable.ENC_INTEGRITY) {
+            if (!r[0].equals(algo)) continue;
+            if (r[1].equals("none") || (r[1].equals("aead-flag") && !authenticated))
+                System.err.println(sub + ": warning: " + r[2]);
+            return;
+        }
+    }
+
     private static void cmdEnc(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "enc");
+        retiredHpkeStern("enc", algo);
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
         aeadFlagsOK("enc", algo, opt);
+        warnNoIntegrity("enc", algo, opt.containsKey("aead"));
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1347,19 +1377,6 @@ public final class HerraduraCli {
             Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(BitArray.fromBytes(padTrunc(inBytes, pub.nbits / 8), pub.nbits), BitArray.fromBigInteger(pub.pub, pub.nbits), RNG);
             if (ct == null) throw new CliError("enc: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeString(out, Codec.encodeAsymCt(ct.r.toBigInteger(), ct.ct.toBigInteger(), pub.nbits));
-        } else if (algo.equals("hpke-stern")) {
-            sternDemoWarning();
-            String pubPem = readString(req(opt, "pubkey", "enc"));
-            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
-            Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
-            int n = pub.nbits;   // TODO #384: the key's width
-            int w = Math.min(n, 256);   // the payload block: 256 bits above 256 (TODO #382)
-            oneBlockOK(algo, inBytes.length, w / 8);
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, w / 8));
-            Stern.SternEncapResult enc = SternL.isLong(n) ? SternL.encapWithE(pub.seed, n, RNG)
-                                                          : Stern.hpkeSternFEncapWithE(pub.seed, n, RNG);
-            BitArray e = Herradura.fscxRevolve(BitArray.fromBigInteger(p, w), BitArray.fromBigInteger(enc.k, w), Herradura.iSteps(w));
-            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e.toBigInteger(), n));
         } else if (algo.equals("hpke-stern-kem")) {
             String pubPem = readString(req(opt, "pubkey", "enc"));
             Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
@@ -1374,14 +1391,17 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemCt(enc.syn, e.toBigInteger()));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern-kem)");
         }
     }
 
     private static void cmdDec(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "dec");
+        retiredHpkeStern("dec", algo);
         String out = req(opt, "out", "dec");
         aeadFlagsOK("dec", algo, opt);
+        // hske-nla1's integrity is the ciphertext's (format tag 2): warned below.
+        warnNoIntegrity("dec", algo, algo.equals("hske-nla1"));
 
         if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
             boolean v3 = algo.equals("hske-duplex3");
@@ -1430,6 +1450,7 @@ public final class HerraduraCli {
                     throw new CliError("dec: --ad given, but this hske-nla1 ciphertext "
                         + "is not an AEAD one (it has no tag to bind it to)");
                 }
+                warnNoIntegrity("dec", algo, false);
                 // No --aead on dec, in any of the four CLIs: the format tag is
                 // what the artifact IS, so decryption never needs telling.
                 nla1WidthOK(nbits, "dec", "key");
@@ -1488,19 +1509,6 @@ public final class HerraduraCli {
             BitArray d = HerraduraNl.hpkeNl3Decrypt(BitArray.fromBigInteger(ct.e, nbits), BitArray.fromBigInteger(ct.r, nbits), key);
             if (d == null) throw new CliError("dec: ciphertext R is the GF(2^n)* identity/zero element (rejected: degenerate key)");
             writeBytes(out, d.toBytes());
-        } else if (algo.equals("hpke-stern")) {
-            sternDemoWarning();
-            String pem = readString(req(opt, "key", "dec"));
-            Codec.PemBlock block = Codec.pemUnwrap(pem);
-            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
-            Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
-            int n = pk.nbits;   // TODO #384: the key's width
-            asymSameWidth(ct.nbits, n);
-            int w = Math.min(n, 256);   // TODO #382
-            BigInteger k = SternL.isLong(n) ? SternL.decapKnown(ct.eP, pk.seed, n)
-                                            : Stern.hpkeSternFDecap(ct.eP, pk.seed, n);
-            BitArray d = Herradura.fscxRevolve(BitArray.fromBigInteger(ct.e, w), BitArray.fromBigInteger(k, w), Herradura.rSteps(w));
-            writeBytes(out, d.toBytes());
         } else if (algo.equals("hpke-stern-kem")) {
             String pem = readString(req(opt, "key", "dec"));
             Codec.PemBlock block = Codec.pemUnwrap(pem);
@@ -1517,7 +1525,7 @@ public final class HerraduraCli {
             writeBytes(out, d.toBytes());
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern-kem)");
         }
     }
 
@@ -1607,46 +1615,42 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
 
     /** Parses a comma-separated list of hpks-stern public-key PEM paths for
-     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys.
-     * Returns the ring's member keys, all sharing one width n (any GF width
-     * since TODO #384), as Python's does; that n is returned in nOut[0]. */
+     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys: 1 to
+     * RING_MAX_K members of one width (returned in nOut[0]), none repeated. */
     private static List<SternRing.RingKey> loadRingPubkeys(String ringArg, int[] nOut) throws IOException {
-        String[] paths = ringArg.split(",");
+        List<String> paths = new java.util.ArrayList<>();
+        for (String p : ringArg.split(",")) if (!p.isEmpty()) paths.add(p);
+        if (paths.isEmpty()) throw new CliError("hpks-ring: --ring needs at least one member public key");
+        if (paths.size() > RING_MAX_K) {
+            throw new CliError("hpks-ring: --ring lists " + paths.size() + " members, at most "
+                + RING_MAX_K + " supported");
+        }
         List<SternRing.RingKey> keys = new java.util.ArrayList<>();
         int n = 0;
         for (String p : paths) {
-            if (p.isEmpty()) continue;
             String pem = readString(p);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
             if (!block.label.equals(Codec.PEM_HPKS_STERN_PUB)) {
-                throw new CliError("hpks-ring: ring member " + p + " is " + block.label + ", expected " + Codec.PEM_HPKS_STERN_PUB);
+                throw new CliError("hpks-ring: ring member '" + p + "' is " + block.label + ", expected hpks-stern");
             }
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pem, block.label);
             if (n == 0) n = pub.nbits;
             if (pub.nbits != n) {
                 throw new CliError("hpks-ring: all ring members must share the same n");
             }
-            keys.add(new SternRing.RingKey(pub.seed, pub.syndrome));
-        }
-        if (keys.size() < 2) {
-            throw new CliError("hpks-ring: --ring needs at least 2 member public keys");
-        }
-        // TODO #272.  RING_MAX_K bounds the READER in C, Go and Python (TODO
-        // #240 adopted C's constant), but only C's writer enforced it -- so
-        // this port signed rings that no verifier anywhere would accept, and
-        // has no ring verifier of its own to notice.  Bounding it here is what
-        // makes the four agree about what an hpks-ring signature can be.
-        if (keys.size() > RING_MAX_K) {
-            throw new CliError("hpks-ring: ring has " + keys.size() + " members, at most "
-                + RING_MAX_K + " supported (a larger ring produces a signature no CLI "
-                + "will verify)");
+            SternRing.RingKey m = new SternRing.RingKey(pub.seed, pub.syndrome, n);
+            for (SternRing.RingKey o : keys) {
+                if (java.util.Arrays.equals(o.seed, m.seed) && java.util.Arrays.equals(o.syndrome, m.syndrome))
+                    throw new CliError("hpks-ring: --ring lists the member '" + p + "' twice");
+            }
+            keys.add(m);
         }
         nOut[0] = n;
         return keys;
     }
 
-    /** Matches herradura_cli.c's RING_MAX_K and herradura.py's _RING_MAX_K. */
-    private static final int RING_MAX_K = 64;
+    /** Matches herradura_cli.c's RING_MAX_K and herradura.py's _RING_MAX_K (TODO #415). */
+    private static final int RING_MAX_K = 1024;
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
@@ -1718,23 +1722,25 @@ public final class HerraduraCli {
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
             int[] ringNOut = new int[1];
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"), ringNOut);
+            int ringN = ringNOut[0];
+            if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
+                throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
+            }
+            // The signer's own public key, matched by seed AND syndrome.
+            BigInteger syn = SternL.isLong(pk.nbits) ? SternL.syndrome(pk.seed, pk.e, pk.nbits)
+                : Stern.sternSyndromeH(Stern.sternBuildH(pk.seed, pk.nbits / 2, pk.nbits), pk.e);
+            SternRing.RingKey own = new SternRing.RingKey(pk.seed, syn, pk.nbits);
             int j = -1;
             for (int i = 0; i < ring.size(); i++) {
-                if (ring.get(i).seed.equals(pk.seed)) { j = i; break; }
+                if (java.util.Arrays.equals(ring.get(i).seed, own.seed)
+                        && java.util.Arrays.equals(ring.get(i).syndrome, own.syndrome)) { j = i; break; }
             }
             if (j < 0) {
                 throw new CliError("hpks-ring sign: signer's public key is not in --ring "
                     + "(run pkey --pubout on the signer key and include it)");
             }
-            int ringN = ringNOut[0];
-            if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
-                throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
-            }
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
-            SternRing.RingSignature sig = SternL.isLong(pk.nbits)    // TODO #382
-                ? SternL.ringSign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG)
-                : SternRing.sign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG);
-            writeString(out, Codec.encodeRingSig(sig, pk.nbits));
+            byte[] sig = SternRing.sign(padTrunc(msg, 32), pk.e, j, ring, pk.nbits, rounds, RNG);
+            writeString(out, Codec.encodeRingSig(sig, pk.nbits, ring.size(), rounds));
             System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
             return;
         }
@@ -1759,15 +1765,16 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
+            otsRequireKeyFile("sign", keyPath, "--key");   // TODO #420 (before the key is read)
             Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(readString(keyPath));
-            int leafIdx = readIdxState(keyPath);
             int numLeaves = 1 << pk.h;
+            int leafIdx = (int) readIdxState(keyPath, numLeaves);   // TODO #419
             if (leafIdx >= numLeaves) {
                 throw new CliError("sign: XMSS key exhausted (" + numLeaves + " leaves used). Generate a new key.");
             }
+            writeIdxState(keyPath, leafIdx + 1); // TODO #417: consume the leaf first
             Xmss.Signature sig = Xmss.sign(msg, pk.masterSeed, pk.leafHashes, leafIdx);
             writeString(out, Codec.encodeXmssSig(sig));
-            writeIdxState(keyPath, leafIdx + 1);
             System.err.println("XMSS leaf " + leafIdx + " used; " + (numLeaves - leafIdx - 1) + " leaves remaining.");
             return;
         }
@@ -1775,14 +1782,15 @@ public final class HerraduraCli {
             String keyPath = req(opt, "key", "sign");
             byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
-            if (readIdxState(keyPath) != 0) {
+            otsRequireKeyFile("sign", keyPath, "--key");   // TODO #420
+            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
+            if (readIdxState(keyPath, 1) != 0) {   // TODO #419
                 throw new CliError("sign: this HPKS-WOTS key was already used — WOTS keys are "
                     + "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).");
             }
-            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
+            writeIdxState(keyPath, 1); // TODO #417: burn the key first
             Wots.Signature sig = Wots.sign(msg, pk.masterSeed, pk.leafIdx);
             writeString(out, Codec.encodeWotsSig(sig.sig));
-            writeIdxState(keyPath, 1);
             System.err.println("HPKS-WOTS key burned (one-time use); do not sign again with it.");
             return;
         }
@@ -1935,6 +1943,32 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-t")) {
             Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
+            // TODO #412: the signature carries its aggregate key, and checking it
+            // against that key alone proves only that SOME group signed.  The
+            // group to trust is --pubkey's: every member's public key, comma-
+            // separated (L is built sorted, so their order does not matter).  The
+            // signature must carry exactly the aggregate those keys give.
+            String group = opt.get("pubkey");
+            if (group == null || group.isEmpty()) {
+                throw new CliError("verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated");
+            }
+            List<BigInteger> members = new ArrayList<>();
+            for (String p : group.split(",", -1)) {
+                String path = p.trim();
+                String pem = readString(path);
+                Codec.PubKey pk = Codec.decodePubKey(pem, Codec.pemUnwrap(pem).label);
+                if (pk.nbits != sig.nbits) {
+                    throw new CliError("verify: hpks-t public keys are " + sig.nbits + "-bit; "
+                        + path + " is " + pk.nbits + "-bit");
+                }
+                gfPeerOK(pk.pub, pk.nbits, "verify: public key");
+                members.add(pk.pub);
+            }
+            if (!HpksT.aggregatePublicKeys(members).cAgg.equals(sig.cAgg)) {
+                System.err.println("verify: the signature's aggregate key is not the one --pubkey gives");
+                System.out.println("Verification FAILED");
+                System.exit(1);
+            }
             byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
             boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);
@@ -1946,18 +1980,16 @@ public final class HerraduraCli {
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"), ringNOut);
             int ringN = ringNOut[0];
             Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
-            requireRounds(sig.sig.rounds(), minRounds(opt, "verify"), "hpks-ring signature", "verify");
+            requireRounds(sig.rounds, minRounds(opt, "verify"), "hpks-ring signature", "verify");
             if (sig.nbits != ringN) {
                 throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + ringN);
             }
-            if (sig.sig.ringSize() != ring.size()) {
-                throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
+            if (sig.k != ring.size()) {
+                throw new CliError("hpks-ring verify: signature ring size " + sig.k
                     + " != " + ring.size() + " provided members");
             }
             byte[] msg = readMessage(opt, "verify");
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(ringN, 256) / 8));
-            boolean ok = SternL.isLong(ringN) ? SternL.ringVerify(msgInt, sig.sig, ring, ringN)   // TODO #382
-                                              : SternRing.verify(msgInt, sig.sig, ring, ringN);
+            boolean ok = SternRing.verify(padTrunc(msg, 32), sig.sig, ring, ringN, sig.rounds);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }
@@ -1981,15 +2013,20 @@ public final class HerraduraCli {
         }
         BitArray rBa = BitArray.fromBigInteger(sig.r, pub.nbits);
         BitArray mBa = BitArray.fromBigInteger(msgInt, pub.nbits);
+        // TODO #423: checked AFTER the algebra and e below, in the other three
+        // CLIs' order and words, so the suite verifier's own s bound must not
+        // turn this into a plain "Verification FAILED" first.
+        boolean sCanonical = sig.s.compareTo(Herradura.genOrder(pub.nbits)) < 0;
+        BigInteger sAlg = sCanonical ? sig.s : sig.s.mod(Herradura.genOrder(pub.nbits));
         BitArray eV = algo.equals("hpks") ? Herradura.fscxRevolve(rBa, mBa, pub.nbits / 4)
                                           : HerraduraNl.hpksNlChallenge(rBa, mBa);
         boolean ok = algo.equals("hpks")
             ? Herradura.hpksVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
-                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits))
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sAlg, pub.nbits))
             : HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
-                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits));
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sAlg, pub.nbits));
         if (!ok) {
             System.out.println("Verification FAILED");
             System.exit(1);
@@ -2001,6 +2038,10 @@ public final class HerraduraCli {
         // ordinary "Verification FAILED".
         if (!eV.toBigInteger().equals(sig.e)) {
             throw new CliError("verify: signature challenge e is not the recomputed one "
+                + "(rejected: non-canonical signature)");
+        }
+        if (!sCanonical) {
+            throw new CliError("verify: signature scalar s is not below the order of g "
                 + "(rejected: non-canonical signature)");
         }
         System.out.println("Signature OK");
@@ -2668,18 +2709,41 @@ public final class HerraduraCli {
             out.flush();
             return;
         }
+        writeOutFile(path, data, false);
+    }
+
+    /** Every output file (TODO #395, #417).  A new file is created 0600; an
+     * existing regular file is overwritten and keeps its mode, as O_CREAT does
+     * in the other three CLIs; on a filesystem without POSIX modes the file is
+     * created plainly.  The last path component must not be a symbolic link:
+     * following one truncated the link's target and left a private key in
+     * whatever mode that target had (a world-readable file stayed
+     * world-readable).  NOFOLLOW_LINKS is O_NOFOLLOW.  {@code durable} forces
+     * the data to disk before returning (the one-time-signature sidecars). */
+    private static void writeOutFile(String path, byte[] data, boolean durable) throws IOException {
         Path p = Paths.get(path);
-        // TODO #395: create every output 0600, so nothing the CLI writes is
-        // world-readable under the default umask.  A file that already exists
-        // keeps its mode, as O_CREAT does in the other three CLIs; on a
-        // filesystem without POSIX modes the file is created plainly.
         try {
             Files.createFile(p, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
                     java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
         } catch (java.nio.file.FileAlreadyExistsException | UnsupportedOperationException e) {
-            // existing file: keep its mode; no POSIX attributes: default creation below
+            // existing entry (a link included -- refused below): keep its mode;
+            // no POSIX attributes: default creation below
         }
-        Files.write(p, data);
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(p,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(data);
+            while (buf.hasRemaining()) ch.write(buf);
+            if (durable) ch.force(true);
+        } catch (IOException e) {
+            if (Files.isSymbolicLink(p)) {
+                throw new CliError(path + ": is a symbolic link; refusing to write through it "
+                    + "(use - for stdout)");
+            }
+            throw e;
+        }
     }
 
     // -----------------------------------------------------------------
@@ -2830,18 +2894,75 @@ public final class HerraduraCli {
     // stores a 0/1 used flag (reusing the same file name convention).
     // -----------------------------------------------------------------
 
+    /** TODO #417: a one-time-signature sidecar is written directly (never
+     * through writeString's passphrase envelope) and forced to disk, BEFORE the
+     * signature it accounts for is produced; a failure stops the command. */
     private static void writeIdxState(String keyPath, int value) throws IOException {
-        if (keyPath == null || keyPath.equals("-")) return;
-        writeString(keyPath + ".idx", value + "\n");
+        String sp = keyPath + ".idx";   // TODO #420: no stdin key reaches here
+        try {
+            writeOutFile(sp, (value + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII), true);
+        } catch (IOException e) {
+            throw new CliError("cannot write one-time-signature state file " + sp + ": " + e.getMessage());
+        }
     }
 
-    private static int readIdxState(String keyPath) {
-        try {
-            String s = readString(keyPath + ".idx").trim();
-            return Integer.parseInt(s);
-        } catch (Exception e) {
-            return 0;
+    /** TODO #420: a one-time-signature key must be a regular file, because its
+     * state lives beside it in <key>.idx.  From stdin ({@code -}), a pipe or a
+     * device there is no such place: C and Go used to keep it in ./-.idx, shared
+     * by every key piped in from that directory, and this CLI kept none at all
+     * (writeIdxState returned early), so a WOTS key read from stdin signed twice. */
+    private static void otsRequireKeyFile(String cmd, String path, String flag) {
+        boolean bad = path == null || path.equals("-");
+        if (!bad) {
+            java.nio.file.Path p = java.nio.file.Paths.get(path);
+            bad = java.nio.file.Files.exists(p) && !java.nio.file.Files.isRegularFile(p);
         }
+        if (bad) {
+            throw new CliError(cmd + ": a one-time-signature key must be a regular file given by " + flag
+                + " (its state lives in <key>.idx); it cannot be read from or written to "
+                + "stdin, a pipe or a device");
+        }
+    }
+
+    /** The ONE reader of a one-time-signature state sidecar, for WOTS (max 1)
+     * and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must exist, be
+     * a regular file (not a link), and hold exactly one canonical decimal
+     * ({@code 0}, or digits with no leading zero, at most 10, an optional single
+     * trailing newline) no larger than max.  Anything else used to read as 0
+     * (unused), so an empty file left by a crash let a WOTS key sign again. */
+    private static long readIdxState(String keyPath, long max) {
+        String sp = keyPath + ".idx";
+        java.nio.file.Path p = java.nio.file.Paths.get(sp);
+        String why = null;
+        long v = 0;
+        if (!java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            why = "missing";
+        } else if (!java.nio.file.Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            why = "not a regular file";
+        } else {
+            byte[] b = null;
+            try (java.io.InputStream in = java.nio.file.Files.newInputStream(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                b = in.readNBytes(16);
+            } catch (IOException e) {
+                why = "unreadable";
+            }
+            if (b != null) {
+                int d = b.length;
+                if (d > 0 && b[d - 1] == '\n') d--;
+                boolean ok = b.length < 16 && d >= 1 && d <= 10 && !(d > 1 && b[0] == '0');
+                for (int i = 0; ok && i < d; i++) {
+                    if (b[i] < '0' || b[i] > '9') ok = false;
+                    else v = v * 10 + (b[i] - '0');
+                }
+                if (!ok) why = "damaged (not one canonical decimal count)";
+                else if (v > max) why = "damaged (count out of range)";
+            }
+        }
+        if (why != null) {
+            throw new CliError("sign: one-time-signature state file " + sp + " is " + why
+                + "; refusing to sign (restore it, or generate a new key)");
+        }
+        return v;
     }
 
     /** Refuses --aead / --ad on an --algo that would ignore them (TODO #378).

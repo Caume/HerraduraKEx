@@ -83,7 +83,7 @@ for t in $TAGS; do
     $C pkey --in "$F/$t.pem" --pubout --out "$F/${t}_pub.pem" 2>/dev/null || true
 done
 printf 'key label test message, 32 by.' > "$F/msg.bin"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     $C enc --algo $a --pubkey "$F/${a}_pub.pem" --in "$F/msg.bin" --out "$F/ct_$a.pem" 2>/dev/null
 done
 signwith() {   # algo, key tag, extra sign args...
@@ -107,6 +107,10 @@ $C cred-prove --in "$F/hcred.pem" --msg n --rounds 2 --out "$F/proof.pem" 2>/dev
 $C cred-issue --our "$F/hpks-stern.pem" --in "$F/hcred_pub.pem" --rounds 2 --out "$F/cred.pem" 2>/dev/null
 $C threshold-commit --key "$F/hpks.pem" --commit-out "$F/commit.pem" --nonce-out "$F/nonce.pem"
 $C threshold-aggregate --commits "$F/commit.pem" --in "$F/msg.bin" --out "$F/agg.pem" 2>/dev/null
+# TODO #412: a one-member threshold signature, verified against that member.
+$C threshold-respond --key "$F/hpks.pem" --commits "$F/commit.pem" --aggregate "$F/agg.pem" \
+       --nonce "$F/nonce.pem" --out "$F/partial.pem" 2>/dev/null
+$C threshold-combine --aggregate "$F/agg.pem" --partials "$F/partial.pem" --out "$F/tsig.pem" 2>/dev/null
 
 # ── Templates: "cmd|algo|flag" -> "home tag|argv" ({X} key, {F} fixtures, {O} out)
 declare -A T=()
@@ -118,7 +122,7 @@ T["kex|hybrid-rnl-stern|--our"]="hkex-rnl|kex --algo hybrid-rnl-stern --our {X} 
 T["kex|hybrid-rnl-stern|--their"]="hkex-rnl|kex --algo hybrid-rnl-stern --our {F}/rnl2.pem --their {X} --their-kem {F}/hpke-stern-kem_pub.pem --out {O}"
 T["kex|hybrid-rnl-stern|--their-kem"]="hpke-stern-kem|kex --algo hybrid-rnl-stern --our {F}/rnl2.pem --their {F}/hkex-rnl_pub.pem --their-kem {X} --out {O}"
 T["kex|hybrid-rnl-stern|--our-kem"]="hpke-stern-kem|kex --algo hybrid-rnl-stern --our {F}/hkex-rnl.pem --our-kem {X} --their {F}/hyb_resp.pem --out {O}"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     T["enc|$a|--pubkey"]="$a|enc --algo $a --pubkey {X} --in {F}/msg.bin --out {O}"
     T["dec|$a|--key"]="$a|dec --algo $a --key {X} --in {F}/ct_$a.pem --out {O}"
 done
@@ -133,6 +137,7 @@ for a in hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-xmss hpks-wots
 done
 T["sign|hpks-ring|--key"]="hpks-stern|sign --algo hpks-ring --rounds 2 --key {X} --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --out {O}"
 T["verify|hpks-ring|--ring"]="hpks-stern|verify --algo hpks-ring --min-rounds 2 --ring {X},{F}/m2_pub.pem --in {F}/msg.bin --sig {F}/sig_hpks-ring.pem"
+T["verify|hpks-t|--pubkey"]="hpks|verify --algo hpks-t --pubkey {X} --in {F}/msg.bin --sig {F}/tsig.pem"
 T["threshold-commit||--key"]="hpks|threshold-commit --key {X} --commit-out {O} --nonce-out {O}.nonce"
 T["threshold-respond||--key"]="hpks|threshold-respond --key {X} --commits {F}/commit.pem --aggregate {F}/agg.pem --nonce {F}/nonce.pem --out {O}"
 T["oprf-eval||--key"]="oprf|oprf-eval --key {X} --in {F}/oprf_state.pem --out {O}"

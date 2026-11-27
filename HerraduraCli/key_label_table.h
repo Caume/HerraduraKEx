@@ -36,10 +36,6 @@ static const HkxKeySite HKX_KEY_SITES[] = {
      {"HERRADURA HPKE-NL3 PUBLIC KEY", 0}},
     {"dec", "hpke-nl3", "--key", "hpke-nl3",
      {"HERRADURA HPKE-NL3 PRIVATE KEY", 0}},
-    {"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY", 0}},
-    {"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY", 0}},
     {"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem",
      {"HERRADURA HPKE-STERN-KEM PUBLIC KEY", 0}},
     {"dec", "hpke-stern-kem", "--key", "hpke-stern-kem",
@@ -80,6 +76,8 @@ static const HkxKeySite HKX_KEY_SITES[] = {
      {"HERRADURA HPKS-WOTS PRIVATE KEY", 0}},
     {"verify", "hpks-wots", "--pubkey", "hpks-wots",
      {"HERRADURA HPKS-WOTS PUBLIC KEY", 0}},
+    {"verify", "hpks-t", "--pubkey", "hpks, hpks-nl",
+     {"HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", 0}},
     {"threshold-commit", "", "--key", "hpks, hpks-nl",
      {"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", 0}},
     {"threshold-respond", "", "--key", "hpks, hpks-nl",
@@ -131,7 +129,7 @@ static const HkxDerItems HKX_DER_ITEMS[] = {
     {"HERRADURA HPKS PUBLIC KEY", 2, 2},
     {"HERRADURA HPKS-NL PRIVATE KEY", 3, 3},
     {"HERRADURA HPKS-NL PUBLIC KEY", 2, 2},
-    {"HERRADURA HPKS-RING SIGNATURE", 4, 4},
+    {"HERRADURA HPKS-RING-V2 SIGNATURE", 5, 5},
     {"HERRADURA HPKS-STERN PRIVATE KEY", 3, 3},
     {"HERRADURA HPKS-STERN PUBLIC KEY", 3, 3},
     {"HERRADURA HPKS-WOTS PRIVATE KEY", 2, 2},
@@ -640,16 +638,18 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
         }
         return 0;
     }
-    if (strcmp(label, "HERRADURA HPKS-RING SIGNATURE") == 0) {
-        if (n >= 4 && n <= 4) {
-            if (n > 0) HKX_WIDE(0, 1LL);
+    if (strcmp(label, "HERRADURA HPKS-RING-V2 SIGNATURE") == 0) {
+        if (n >= 5 && n <= 5) {
+            if (n > 0) HKX_WIDE(0, 2LL);
             if (n > 1) HKX_WIDE(1, 2LL);
             if (n > 2) HKX_WIDE(2, 2LL);
-            if (n > 3) HKX_WIDE(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
+            if (n > 3) HKX_WIDE(3, 32LL);
+            if (n > 4) HKX_WIDE(4, F(2) * (96LL + 2LL * (F(1) * (F(0)/8LL) + (F(1) + 7LL)/8LL)));
             if (n > 0) HKX_MINIMAL(0);
             if (n > 1) HKX_MINIMAL(1);
             if (n > 2) HKX_MINIMAL(2);
-            if (n > 3) HKX_EXACT(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
+            if (n > 3) HKX_EXACT(3, 32LL);
+            if (n > 4) HKX_MINIMAL(4);
             return 0;
         }
         return 0;
@@ -860,7 +860,7 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 2) HKX_EXACT(2, (F(3) + 7LL)/8LL);
             return 0;
         }
-        if (n >= 5 && n <= 5 && (F(0) == 2LL)) {
+        if (n >= 5 && n <= 5) {
             if (n > 0) HKX_WIDE(0, 1LL);
             if (n > 3) HKX_WIDE(3, 32LL);
             if (n > 4) HKX_WIDE(4, 2LL);
@@ -871,19 +871,6 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 4) HKX_MINIMAL(4);
             if (n > 1) HKX_EXACT(1, (F(4) + 7LL)/8LL);
             if (n > 2) HKX_EXACT(2, (F(4) + 7LL)/8LL);
-            return 0;
-        }
-        if (n >= 5 && n <= 5) {
-            if (n > 4) HKX_WIDE(4, 2LL);
-            if (n > 0) HKX_WIDE(0, F(4)/8LL);
-            if (n > 1) HKX_WIDE(1, F(4)/8LL);
-            if (n > 2) HKX_WIDE(2, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 3) HKX_WIDE(3, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 4) HKX_MINIMAL(4);
-            if (n > 0) HKX_EXACT(0, F(4)/8LL);
-            if (n > 1) HKX_EXACT(1, F(4)/8LL);
-            if (n > 2) HKX_EXACT(2, HKX_MIN(F(4)/8LL, 32LL));
-            if (n > 3) HKX_EXACT(3, HKX_MIN(F(4)/8LL, 32LL));
             return 0;
         }
         if (n >= 6 && n <= 6) {
@@ -1059,5 +1046,34 @@ static const char *const HKX_PARAM_LEVEL_NOTES[] = {
     "oprf", "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
     0};
 #define HKX_PARAM_GAP_TODO 383   /* this CLI's narrow-width TODO */
+
+/* TODO #414: each enc/dec --algo's integrity: "tag", "none", or "aead-flag"
+ * (none unless --aead).  warning: what enc/dec print to stderr when there is
+ * no tag (0 for a tagged mode). */
+typedef struct { const char *algo, *integrity, *warning; } HkxEncIntegrity;
+
+static const HkxEncIntegrity HKX_ENC_INTEGRITY[] = {
+    {"hske", "none",
+     "--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla1", "aead-flag",
+     "--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla2", "none",
+     "--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-nla3", "none",
+     "--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+    {"hske-duplex", "tag",
+     0},
+    {"hske-duplex3", "tag",
+     0},
+    {"hpke", "none",
+     "--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-nl", "none",
+     "--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-nl3", "none",
+     "--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+    {"hpke-stern-kem", "none",
+     "--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+};
+static const int HKX_ENC_INTEGRITY_N = (int)(sizeof(HKX_ENC_INTEGRITY) / sizeof(HKX_ENC_INTEGRITY[0]));
 
 #endif /* HKX_KEY_LABEL_TABLE_H */

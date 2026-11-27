@@ -524,7 +524,10 @@ static void check_key_labels(const char *cmd, int argc, char **argv)
         if (strcmp(r->cmd, cmd) != 0 || strcmp(r->algo, algo) != 0) continue;
         const char *v = get_arg(argc, argv, r->flag);
         if (!v || !*v) continue;
-        if (strcmp(r->flag, "--ring") != 0) { check_key_label(r, cmd, algo, v); continue; }
+        /* A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412). */
+        int is_list = strcmp(r->flag, "--ring") == 0 ||
+                      (strcmp(r->flag, "--pubkey") == 0 && strcmp(algo, "hpks-t") == 0);
+        if (!is_list) { check_key_label(r, cmd, algo, v); continue; }
         char path[4096];
         for (const char *p = v; *p; ) {
             const char *c = strchr(p, ',');
@@ -1634,22 +1637,110 @@ static void wots_idx_path(const char *key_path, char *buf, size_t buflen)
     snprintf(buf, buflen, "%s.idx", key_path);
 }
 
-static int wots_is_used(const char *key_path)
+/* TODO #420: a one-time-signature key must be a regular file, because its
+ * state lives beside it in <key>.idx.  From stdin (`-`), a pipe or a device
+ * there is no such place: C and Go used to keep it in ./-.idx, shared by every
+ * key ever piped in from that directory, and Java kept none at all. */
+static void ots_require_key_file(const char *cmd, const char *path, const char *flag)
+{
+    struct stat st;
+    if (!path || strcmp(path, "-") == 0 || (stat(path, &st) == 0 && !S_ISREG(st.st_mode)))
+        dievf("%s: a one-time-signature key must be a regular file given by %s "
+             "(its state lives in <key>.idx); it cannot be read from or written to "
+             "stdin, a pipe or a device", cmd, flag);
+}
+
+/* TODO #419: the ONE reader of a one-time-signature state sidecar, for WOTS
+ * (max 1) and XMSS (max 2^h).  It fails CLOSED: the file must exist, be a
+ * regular file (not a link), and hold exactly one canonical decimal -- `0` or
+ * a digit string with no leading zero, at most 10 digits, an optional single
+ * trailing newline -- no larger than max.  Anything else used to read as 0
+ * (unused), so an empty file left by a crash let a WOTS key sign again. */
+static uint64_t ots_state_read(const char *key_path, uint64_t max)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "r");
-    if (!f) return 0;
-    int v = 0;
-    if (fscanf(f, "%d", &v) != 1) v = 0;
-    fclose(f);
-    return v != 0;
+    const char *why = NULL;
+    char buf[16]; size_t n = 0;
+    struct stat st;
+#ifndef _WIN32
+    /* Open first, then judge what was OPENED (CodeQL cpp/toctou-race-condition):
+     * an lstat of the name followed by an fopen of the same name let the entry
+     * be swapped in between.  O_NOFOLLOW refuses a link at the open itself, and
+     * O_NONBLOCK keeps a FIFO from hanging the open before fstat refuses it. */
+#ifdef O_NOFOLLOW
+    int fd = open(p, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+#else
+    int fd = open(p, O_RDONLY | O_NONBLOCK);
+#endif
+    if (fd < 0) {
+        if (errno == ENOENT) why = "missing";
+        else if (errno == ELOOP || errno == EMLINK) why = "not a regular file";  /* EMLINK: FreeBSD */
+        else why = "unreadable";
+    } else {
+        if (fstat(fd, &st) != 0) why = "unreadable";
+        else if (!S_ISREG(st.st_mode)) why = "not a regular file";
+        else {
+            ssize_t r = 0;
+            while (n < sizeof buf && (r = read(fd, buf + n, sizeof buf - n)) > 0) n += (size_t)r;
+            if (r < 0) why = "unreadable";
+        }
+        close(fd);
+    }
+#else
+    if (stat(p, &st) != 0) why = "missing";
+    else if (!S_ISREG(st.st_mode)) why = "not a regular file";
+    else {
+        FILE *f = fopen(p, "rb");
+        if (!f) why = "unreadable";
+        else { n = fread(buf, 1, sizeof buf, f); fclose(f); }
+    }
+#endif
+    uint64_t v = 0;
+    if (!why) {
+        size_t d = n;
+        if (d > 0 && buf[d - 1] == '\n') d--;
+        int ok = d >= 1 && d <= 10 && n < sizeof buf && !(d > 1 && buf[0] == '0');
+        for (size_t i = 0; ok && i < d; i++) {
+            if (buf[i] < '0' || buf[i] > '9') ok = 0;
+            else v = v * 10 + (uint64_t)(buf[i] - '0');
+        }
+        if (!ok) why = "damaged (not one canonical decimal count)";
+        else if (v > max) why = "damaged (count out of range)";
+    }
+    if (why)
+        dievf("sign: one-time-signature state file %s is %s; refusing to sign "
+             "(restore it, or generate a new key)", p, why);
+    return v;
+}
+
+static int wots_is_used(const char *key_path)
+{
+    return ots_state_read(key_path, 1) != 0;
+}
+
+/* Write a one-time-signature state sidecar, or die.  TODO #417: this used to
+ * drop a failed open silently, and sign wrote the signature BEFORE burning the
+ * leaf -- so an unwritable .idx (read-only directory, full disk, or a symlink
+ * hkx_fopen_out now refuses) released a signature and left its WOTS leaf
+ * unconsumed, and the next sign reused it.  Now the state is written, flushed
+ * and fsync'd first, and any failure stops the command before a signature
+ * exists.  A failure AFTER the burn wastes the leaf, which is the safe side. */
+static void idx_state_write_or_die(const char *p, int val)
+{
+    FILE *f = hkx_fopen_out(p, "w");
+    if (!f) dief("cannot write one-time-signature state file %s", p);
+    int bad = fprintf(f, "%d\n", val) < 0 || fflush(f) != 0;
+#ifndef _WIN32
+    if (!bad && fsync(fileno(f)) != 0) bad = 1;
+#endif
+    if (fclose(f) != 0) bad = 1;
+    if (bad) dief("cannot write one-time-signature state file %s", p);
 }
 
 static void wots_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = hkx_fopen_out(p, "w");
-    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+    idx_state_write_or_die(p, val);
 }
 
 /* Serialise ℓ WOTS chain values into a flat (WOTS_L * KEYBYTES)-byte blob. */
@@ -1680,22 +1771,15 @@ static void wots_blob_unpack(BitArray vals[WOTS_L], const uint8_t *v, size_t vl)
  * reused by HPKS-WOTS-F (see wots_idx_path above) for its 0/1 burned flag.
  * ───────────────────────────────────────────────────────────────────────────── */
 
-static int xmss_read_idx(const char *key_path)
+static uint32_t xmss_read_idx(const char *key_path, size_t num_leaves)
 {
-    char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = fopen(p, "r");
-    if (!f) return 0;
-    int v = 0;
-    if (fscanf(f, "%d", &v) != 1) v = 0;
-    fclose(f);
-    return v < 0 ? 0 : v;
+    return (uint32_t)ots_state_read(key_path, (uint64_t)num_leaves);   /* TODO #419 */
 }
 
 static void xmss_write_idx(const char *key_path, int val)
 {
     char p[4096]; wots_idx_path(key_path, p, sizeof p);
-    FILE *f = hkx_fopen_out(p, "w");
-    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+    idx_state_write_or_die(p, val);
 }
 
 /* Upper bound on the XMSS tree height this build accepts, on the wire and on
@@ -2028,6 +2112,7 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* HPKS-WOTS-F one-time key: SEQUENCE(INTEGER(seed,32), INTEGER(leaf_idx=0)) */
     if (strcmp(algo, "hpks-wots") == 0) {
+        ots_require_key_file("genpkey", out, "--out");     /* TODO #420 */
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         uint8_t is[DER_INT_LEN(KEYBYTES)], il0[DER_INT_LEN(8)];
@@ -2036,7 +2121,7 @@ static void cmd_genpkey(int argc, char **argv)
         der_i_uint(0, il0, &ll);
         const uint8_t *it[2] = {is, il0}; size_t ill[2] = {ls, ll};
         seq_and_write(it, ill, 2, PEM_HPKS_WOTS_PRIV, out);
-        if (out && strcmp(out, "-") != 0) wots_write_idx(out, 0);
+        wots_write_idx(out, 0);
         fprintf(stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.\n");
         explicit_bzero(seed, KEYBYTES);
         fclose(urnd); return;
@@ -2045,6 +2130,7 @@ static void cmd_genpkey(int argc, char **argv)
     /* HPKS-XMSS-F key: SEQUENCE(INTEGER(seed,32), INTEGER(h), INTEGER(next_idx=0),
      * INTEGER(leaf_hashes_blob, 32*2^h)) — mirrors the Python CLI exactly. */
     if (strcmp(algo, "hpks-xmss") == 0) {
+        ots_require_key_file("genpkey", out, "--out");     /* TODO #420 */
         int h_val = (int)num_arg(argc, argv, "--xmss-height", "genpkey", 1, XMSS_MAX_H, 10);
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
@@ -2066,7 +2152,7 @@ static void cmd_genpkey(int argc, char **argv)
         const uint8_t *it[4] = {is, ih, iidx, ib};
         size_t ill[4] = {ls, lh, lidx, lb};
         seq_and_write(it, ill, 4, PEM_HPKS_XMSS_PRIV, out);
-        if (out && strcmp(out, "-") != 0) xmss_write_idx(out, 0);
+        xmss_write_idx(out, 0);
         free(ib); free(flat);
         explicit_bzero(seed, KEYBYTES);
         fclose(urnd); return;
@@ -3425,6 +3511,21 @@ static int ad_algo(const char *algo)
            strcmp(algo, "hske-nla1") == 0;
 }
 
+/* TODO #414: say on stderr that this mode cannot detect a modified ciphertext
+ * or a wrong key, from the generated HKX_ENC_INTEGRITY table. */
+static void warn_no_integrity(const char *cmd, const char *algo, int authenticated)
+{
+    int i;
+    for (i = 0; i < HKX_ENC_INTEGRITY_N; i++) {
+        const HkxEncIntegrity *r = &HKX_ENC_INTEGRITY[i];
+        if (strcmp(r->algo, algo) != 0) continue;
+        if (strcmp(r->integrity, "none") == 0 ||
+            (strcmp(r->integrity, "aead-flag") == 0 && !authenticated))
+            fprintf(stderr, "%s: warning: %s\n", cmd, r->warning);
+        return;
+    }
+}
+
 static void aead_flags_ok(const char *cmd, const char *algo, const char *ad, int aead)
 {
     char msg[160];
@@ -3651,166 +3752,139 @@ static int stern_sig_load(const char *path, SternSig *sig)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * HPKS-Stern-Ring signature CLI helpers (TODO #121)
+ * HPKS-Ring signature CLI helpers (TODO #415)
  *
- * Wire format matches the Python/Go CLIs: SEQ(k, rounds, n, blob) where blob is
- * member-major / round-major: c0||c1||c2||b(1 byte)||resp_a||resp_b per entry.
+ * PEM "HERRADURA HPKS-RING-V2 SIGNATURE": SEQ(n, k, rounds, D, blob) -- D the
+ * 32-byte transcript digest, blob the rest of herradura.h's signature (per
+ * round the unopened commitment and the opening), minimal DER; its exact
+ * length follows from the challenges D derives.  SPEC.md §11.2.  The v1 label
+ * (the forgeable OR-composition) is named and refused.
  * ───────────────────────────────────────────────────────────────────────────── */
 
-#define RING_MAX_K 64
+#define RING_MAX_K 1024
+#define RING_V1_REFUSED "this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING " \
+    "SIGNATURE), which is forgeable without any member's key (TODO #415) and is no " \
+    "longer accepted; re-sign it with this release"
 
-/* Parse comma-separated hpks-stern public-key PEM paths.  Fills seeds[k] and
- * syndrs_flat[k*SDF_SYNBYTES] (the first N/16 octets of each slot) and *n_out
- * with the members' one width N (TODO #383 stage 2).  Returns k (>=2). */
-static int ring_load_members(const char *ring_arg, BitArray *seeds,
-                             uint8_t *syndrs_flat, int *n_out)
+/* --ring: *seeds (k x n/8) and *syns (k x n/16, big-endian), heap-allocated for
+ * the caller to free; returns k (1..RING_MAX_K). */
+static int ring_load(const char *ring_arg, uint8_t **seeds, uint8_t **syns, int *n_out)
 {
-    int ring_n = 0;
-    char buf[8192];
-    size_t al = strlen(ring_arg);
-    if (al >= sizeof buf) die("hpks-ring: --ring too long");
-    memcpy(buf, ring_arg, al + 1);
-    int k = 0;
-    char *save = NULL;
-    char *tok = strtok_r(buf, ",", &save);
-    while (tok) {
-        if (*tok) {
-            if (k >= RING_MAX_K) die("hpks-ring: too many ring members");
-            PemKey pub;
-            pem_key_load(&pub, tok);
-            if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
-                fprintf(stderr, "hpks-ring: ring member %s is %s, expected "
-                                "hpks-stern public key\n", tok, pub.label);
+    int ring_n = 0, k = 0, count = 0, i;
+    char *buf = strdup(ring_arg), *save = NULL, *tok;
+    if (!buf) die("out of memory");
+    for (i = 0; ring_arg[i]; i++)
+        if ((i == 0 || ring_arg[i - 1] == ',') && ring_arg[i] != ',') count++;
+    if (count == 0) die("hpks-ring: --ring needs at least one member public key");
+    if (count > RING_MAX_K) {
+        fprintf(stderr, "hpks-ring: --ring lists %d members, at most %d supported\n",
+                count, RING_MAX_K);
+        exit(1);
+    }
+    *seeds = (uint8_t *)calloc((size_t)count, STERN_L_MAXB);
+    *syns  = (uint8_t *)calloc((size_t)count, STERN_L_MAXB);
+    if (!*seeds || !*syns) die("out of memory");
+    for (tok = strtok_r(buf, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        PemKey pub;
+        uint8_t full[STERN_L_MAXB];
+        int mn, a;
+        if (!*tok) continue;
+        pem_key_load(&pub, tok);
+        if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
+            fprintf(stderr, "hpks-ring: ring member '%s' is %s, expected hpks-stern\n",
+                    tok, pub.label);
+            exit(1);
+        }
+        mn = stern_key_width(&pub);
+        if (ring_n == 0) ring_n = mn;
+        else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
+        stern_l_field(*seeds + (size_t)k * (mn / 8), &pub, 1, mn);
+        stern_l_field(full, &pub, 0, mn);
+        memcpy(*syns + (size_t)k * (mn / 16), full + mn / 8 - mn / 16, (size_t)mn / 16);
+        pem_key_free(&pub);
+        for (a = 0; a < k; a++)
+            if (!memcmp(*seeds + (size_t)a * (mn / 8), *seeds + (size_t)k * (mn / 8), (size_t)mn / 8) &&
+                !memcmp(*syns + (size_t)a * (mn / 16), *syns + (size_t)k * (mn / 16), (size_t)mn / 16)) {
+                fprintf(stderr, "hpks-ring: --ring lists the member '%s' twice\n", tok);
                 exit(1);
             }
-            /* pubkey: vals[0]=syndrome(N-bit int), vals[1]=seed, vals[2]=n */
-            int mn = gf_key_width(&pub);
-            if (ring_n == 0) ring_n = mn;
-            else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
-            BitArray syn_ba = BA_INIT;
-            ba_from_ra_n(&seeds[k], pub.vals[1], pub.vlens[1], mn);
-            ba_from_ra_n(&syn_ba,   pub.vals[0], pub.vlens[0], mn);
-            /* syndrome integer stores syndr[j] at byte N/8-1-j (see pkey). */
-            { int j, nb = mn / 8; for (j = 0; j < nb / 2; j++)
-                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[nb - 1 - j]; }
-            pem_key_free(&pub);
-            k++;
-        }
-        tok = strtok_r(NULL, ",", &save);
+        k++;
     }
-    if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
+    free(buf);
     *n_out = ring_n;
     return k;
 }
 
-static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_path)
+static void ring_sig_write(const uint8_t *sig, size_t siglen, int n, int k, int rounds,
+                           const char *out_path)
 {
-    int k = sig->k, rounds = sig->rounds;
-    int sn = sig->c0[0].nbits;                  /* the ring's N (TODO #383) */
-    size_t nb = (size_t)sn / 8;
-    size_t entry = 5 * nb + 1;
-    size_t blen  = (size_t)k * rounds * entry;
-    uint8_t *blob = (uint8_t *)malloc(blen);
-    if (!blob) die("out of memory");
-    size_t off = 0;
-    int i, r;
-    for (i = 0; i < k; i++) {
-        for (r = 0; r < rounds; r++) {
-            int idx = i * rounds + r;
-            memcpy(blob + off, sig->c0[idx].b, nb); off += nb;
-            memcpy(blob + off, sig->c1[idx].b, nb); off += nb;
-            memcpy(blob + off, sig->c2[idx].b, nb); off += nb;
-            blob[off++] = (uint8_t)(sig->b[idx] & 0xFF);
-            memcpy(blob + off, sig->resp_a[idx].b, nb); off += nb;
-            memcpy(blob + off, sig->resp_b[idx].b, nb); off += nb;
-        }
-    }
-    uint8_t ik[DER_INT_LEN(8)], ir[DER_INT_LEN(8)], in[8];
-    size_t lk, lr, ln, lb;
-    uint8_t *ib = (uint8_t *)malloc(DER_INT_LEN(blen));
+    size_t bl = siglen - 32, off = 0, l[5];
+    uint8_t in[8], ik[8], ir[8], iD[DER_INT_LEN(32)], *ib;
+    while (off + 1 < bl && sig[32 + off] == 0) off++;      /* minimal DER */
+    ib = (uint8_t *)malloc(DER_INT_LEN(bl));
     if (!ib) die("out of memory");
-    der_i_uint((uint64_t)k, ik, &lk);
-    der_i_uint((uint64_t)rounds, ir, &lr);
-    der_i_uint((uint64_t)sn, in, &ln);
-    der_int_enc(blob, blen, ib, &lb);
-    const uint8_t *it[4] = {ik, ir, in, ib};
-    size_t il[4] = {lk, lr, ln, lb};
-    seq_and_write(it, il, 4, PEM_HPKS_RING_SIG, out_path);
-    free(blob); free(ib);
+    der_i_uint((uint64_t)n, in, &l[0]);
+    der_i_uint((uint64_t)k, ik, &l[1]);
+    der_i_uint((uint64_t)rounds, ir, &l[2]);
+    der_int_enc(sig, 32, iD, &l[3]);
+    der_int_enc(sig + 32 + off, bl - off, ib, &l[4]);
+    {
+        const uint8_t *it[5] = { in, ik, ir, iD, ib };
+        seq_and_write(it, l, 5, PEM_HPKS_RING_SIG, out_path);
+    }
+    free(ib);
 }
 
-/* Load a ring signature into an allocated SternRingSig.  Caller frees via
- * stern_ring_free.  Returns k; *n_out is the signature's N (TODO #383). */
-static int ring_sig_load(const char *path, SternRingSig *sig, int *n_out)
+/* Load a ring signature: the malloc'd signature bytes (D || blob) and its
+ * declared n, k and rounds, each bounded before it sizes anything. */
+static uint8_t *ring_sig_load(const char *path, size_t *siglen, int *n_out, int *k_out,
+                              int *rounds_out)
 {
     PemKey pk;
+    char peek[80] = {0};
+    uint8_t *sig;
+    uint64_t k_raw, r_raw;
+    long sn;
+    size_t len;
+    zkp_pem_peek_label(path, peek);
+    if (strcmp(peek, PEM_HPKS_RING_SIG_V1) == 0) {
+        fprintf(stderr, "verify: %s\n", RING_V1_REFUSED);
+        exit(1);
+    }
     pem_key_load(&pk, path);
-    if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items < 4)
-        dief("verify: expected HPKS-RING SIGNATURE PEM, got: %s", pk.label);
-    /* Range-check k and rounds BEFORE either is used in an arithmetic
-     * expression (TODO #239).  Both come straight off the wire; unbounded they
-     * drive `blen` — and `stern_ring_alloc`'s size — to values that at best
-     * abort in calloc and at worst wrap.  The caller's k is only compared
-     * against the signature's after this function has returned, so
-     * ring_load_members' RING_MAX_K bound does not reach here.  Reject rather
-     * than clamp: a signature declaring more members than RING_MAX_K, or more
-     * rounds than SDF_MAX_ROUNDS, is malformed, not merely large. */
-    uint64_t k_raw = parse_be_uint(pk.vals[0], pk.vlens[0]);
-    uint64_t r_raw = parse_be_uint(pk.vals[1], pk.vlens[1]);
-    if (pk.vlens[0] == 0 || pk.vlens[0] > 4 || k_raw < 2 || k_raw > RING_MAX_K) {
-        fprintf(stderr, "verify: HPKS-RING signature declares %llu ring members "
-                        "(expected 2..%d)\n", (unsigned long long)k_raw, RING_MAX_K);
+    if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items != 5)
+        dief("verify: expected HPKS-RING-V2 SIGNATURE PEM, got: %s", pk.label);
+    sn = der_small(pk.vals[0], pk.vlens[0]);
+    if (!stern_width_ok(sn)) gf_width_refuse(pk.label, sn);
+    k_raw = parse_be_uint(pk.vals[1], pk.vlens[1]);
+    r_raw = parse_be_uint(pk.vals[2], pk.vlens[2]);
+    if (pk.vlens[1] == 0 || pk.vlens[1] > 4 || k_raw < 1 || k_raw > RING_MAX_K) {
+        fprintf(stderr, "verify: ring member count is %llu (expected 1..%d)\n",
+                (unsigned long long)k_raw, RING_MAX_K);
         exit(1);
     }
-    if (pk.vlens[1] == 0 || pk.vlens[1] > 4 || r_raw < 1 || r_raw > SDF_MAX_ROUNDS) {
-        fprintf(stderr, "verify: HPKS-RING signature declares %llu rounds "
-                        "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
+    if (pk.vlens[2] == 0 || pk.vlens[2] > 4 || r_raw < 1 || r_raw > SDF_MAX_ROUNDS) {
+        fprintf(stderr, "verify: round count is %llu (expected 1..%d)\n",
+                (unsigned long long)r_raw, SDF_MAX_ROUNDS);
         exit(1);
     }
-    long sn_l = der_small(pk.vals[2], pk.vlens[2]);
-    if (!gf_width_ok(sn_l)) gf_width_refuse(pk.label, sn_l);
-    int sn = (int)sn_l;
-    size_t nb = (size_t)sn / 8;
-    int k      = (int)k_raw;
-    int rounds = (int)r_raw;
-    size_t entry = 5 * nb + 1;
-    size_t blen  = (size_t)k * (size_t)rounds * entry;
-    /* Declared-vs-actual agreement, the counterpart of the check TODO #236 gave
-     * the Stern-F reader: a payload longer than (k, rounds) describe is a
-     * mismatch, not something to truncate.  Shorter is legal — DER integer
-     * encoding strips leading zero bytes — and is right-aligned below. */
-    if (pk.vlens[3] > blen) {
-        fprintf(stderr, "verify: HPKS-RING signature payload is %zu bytes, but "
-                        "k=%d rounds=%d describe %zu\n",
-                pk.vlens[3], k, rounds, blen);
-        exit(1);
-    }
-    uint8_t *blob = (uint8_t *)calloc(blen ? blen : 1, 1);
-    if (!blob) die("out of memory");
-    size_t vl = pk.vlens[3];
-    memcpy(blob + (blen - vl), pk.vals[3], vl);   /* right-align */
-    pem_key_free(&pk);
-
-    stern_ring_alloc(sig, k, rounds);
-    size_t off = 0;
-    int i, r;
-    for (i = 0; i < k; i++) {
-        for (r = 0; r < rounds; r++) {
-            int idx = i * rounds + r;
-            ba_zero_w(&sig->c0[idx], sn); ba_zero_w(&sig->c1[idx], sn);
-            ba_zero_w(&sig->c2[idx], sn);
-            ba_zero_w(&sig->resp_a[idx], sn); ba_zero_w(&sig->resp_b[idx], sn);
-            memcpy(sig->c0[idx].b, blob + off, nb); off += nb;
-            memcpy(sig->c1[idx].b, blob + off, nb); off += nb;
-            memcpy(sig->c2[idx].b, blob + off, nb); off += nb;
-            sig->b[idx] = blob[off++];
-            memcpy(sig->resp_a[idx].b, blob + off, nb); off += nb;
-            memcpy(sig->resp_b[idx].b, blob + off, nb); off += nb;
+    {
+        uint8_t D[32];
+        der_right_align(D, 32, pk.vals[3], pk.vlens[3]);
+        len = stern_ring_sig_len(D, (int)k_raw, (int)sn, (int)r_raw);
+        if (pk.vlens[4] > len - 32) {
+            fprintf(stderr, "verify: signature body is %zu bytes (expected at most %zu)\n",
+                    pk.vlens[4], len - 32);
+            exit(1);
         }
+        sig = (uint8_t *)malloc(len);
+        if (!sig) die("out of memory");
+        memcpy(sig, D, 32);
+        der_right_align(sig + 32, len - 32, pk.vals[4], pk.vlens[4]);
     }
-    free(blob);
-    *n_out = sn;
-    return k;
+    pem_key_free(&pk);
+    *siglen = len; *n_out = (int)sn; *k_out = (int)k_raw; *rounds_out = (int)r_raw;
+    return sig;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3896,134 +3970,6 @@ static int stern_l_sig_load(const char *path, const char *label, SternLSig *sig)
     free(chal);
     pem_key_free(&pk);
     return 0;
-}
-
-/* The first --ring member's width, screened (TODO #382: picks the form). */
-static int ring_peek_n(const char *ring_arg)
-{
-    char buf[8192];
-    size_t al = strlen(ring_arg);
-    if (al >= sizeof buf) die("hpks-ring: --ring too long");
-    memcpy(buf, ring_arg, al + 1);
-    char *save = NULL, *tok = strtok_r(buf, ",", &save);
-    while (tok && !*tok) tok = strtok_r(NULL, ",", &save);
-    if (!tok) die("hpks-ring: --ring needs at least 2 member public keys");
-    PemKey pub;
-    pem_key_load(&pub, tok);
-    if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
-        fprintf(stderr, "hpks-ring: ring member %s is %s, expected hpks-stern public key\n",
-                tok, pub.label);
-        exit(1);
-    }
-    int n = stern_key_width(&pub);
-    pem_key_free(&pub);
-    return n;
-}
-
-/* ring_load_members for the long form: *seeds and *syns are k x N/8 bytes,
- * heap-allocated for the caller to free. */
-static int ring_load_members_l(const char *ring_arg, uint8_t **seeds, uint8_t **syns,
-                               int *n_out)
-{
-    int ring_n = 0, k = 0;
-    char buf[8192];
-    size_t al = strlen(ring_arg);
-    if (al >= sizeof buf) die("hpks-ring: --ring too long");
-    memcpy(buf, ring_arg, al + 1);
-    *seeds = (uint8_t *)malloc((size_t)RING_MAX_K * STERN_L_MAXB);
-    *syns  = (uint8_t *)malloc((size_t)RING_MAX_K * STERN_L_MAXB);
-    if (!*seeds || !*syns) die("out of memory");
-    char *save = NULL, *tok = strtok_r(buf, ",", &save);
-    while (tok) {
-        if (*tok) {
-            if (k >= RING_MAX_K) die("hpks-ring: too many ring members");
-            PemKey pub;
-            pem_key_load(&pub, tok);
-            if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
-                fprintf(stderr, "hpks-ring: ring member %s is %s, expected "
-                                "hpks-stern public key\n", tok, pub.label);
-                exit(1);
-            }
-            int mn = stern_key_width(&pub);
-            if (ring_n == 0) ring_n = mn;
-            else if (mn != ring_n) die("hpks-ring: all ring members must share the same n");
-            stern_l_field(*seeds + (size_t)k * (mn / 8), &pub, 1, mn);
-            stern_l_field(*syns  + (size_t)k * (mn / 8), &pub, 0, mn);
-            pem_key_free(&pub);
-            k++;
-        }
-        tok = strtok_r(NULL, ",", &save);
-    }
-    if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
-    *n_out = ring_n;
-    return k;
-}
-
-static void ring_sig_write_l(const SternLRingSig *sig, const char *out_path)
-{
-    size_t nb = (size_t)sig->n / 8, m = (size_t)sig->k * (size_t)sig->rounds;
-    size_t entry = 96 + 1 + 2 * nb, blen = m * entry, i;
-    uint8_t *blob = (uint8_t *)malloc(blen);
-    if (!blob) die("out of memory");
-    for (i = 0; i < m; i++) {
-        uint8_t *p = blob + i * entry;
-        memcpy(p, sig->c + 96 * i, 96);
-        p[96] = (uint8_t)(sig->b[i] & 0xFF);
-        memcpy(p + 97, sig->resp + i * 2 * nb, 2 * nb);
-    }
-    {
-        uint64_t lead[3] = { (uint64_t)sig->k, (uint64_t)sig->rounds, (uint64_t)sig->n };
-        const uint8_t *bl[1] = { blob };
-        size_t bll[1] = { blen };
-        stern_l_write_seq(lead, 3, bl, bll, 1, PEM_HPKS_RING_SIG, out_path);
-    }
-    free(blob);
-}
-
-/* ring_sig_load for the long form; the caller checks k and n against its ring. */
-static int ring_sig_load_l(const char *path, SternLRingSig *sig, int *n_out)
-{
-    PemKey pk;
-    pem_key_load(&pk, path);
-    if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items < 4)
-        dief("verify: expected HPKS-RING SIGNATURE PEM, got: %s", pk.label);
-    uint64_t k_raw = parse_be_uint(pk.vals[0], pk.vlens[0]);
-    uint64_t r_raw = parse_be_uint(pk.vals[1], pk.vlens[1]);
-    if (pk.vlens[0] == 0 || pk.vlens[0] > 4 || k_raw < 2 || k_raw > RING_MAX_K) {
-        fprintf(stderr, "verify: HPKS-RING signature declares %llu ring members "
-                        "(expected 2..%d)\n", (unsigned long long)k_raw, RING_MAX_K);
-        exit(1);
-    }
-    if (pk.vlens[1] == 0 || pk.vlens[1] > 4 || r_raw < 1 || r_raw > SDF_MAX_ROUNDS) {
-        fprintf(stderr, "verify: HPKS-RING signature declares %llu rounds "
-                        "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
-        exit(1);
-    }
-    long sn = der_small(pk.vals[2], pk.vlens[2]);
-    if (!stern_width_ok(sn)) gf_width_refuse(pk.label, sn);
-    *n_out = (int)sn;
-    if (!stern_is_long((int)sn)) { pem_key_free(&pk); return -1; }  /* the short form's */
-    size_t nb = (size_t)sn / 8, m = (size_t)k_raw * (size_t)r_raw;
-    size_t entry = 96 + 1 + 2 * nb, blen = m * entry, i;
-    if (pk.vlens[3] > blen) {
-        fprintf(stderr, "verify: HPKS-RING signature payload is %zu bytes, but "
-                        "k=%d rounds=%d describe %zu\n",
-                pk.vlens[3], (int)k_raw, (int)r_raw, blen);
-        exit(1);
-    }
-    uint8_t *blob = (uint8_t *)malloc(blen);
-    if (!blob) die("out of memory");
-    der_right_align(blob, blen, pk.vals[3], pk.vlens[3]);
-    pem_key_free(&pk);
-    stern_l_ring_alloc(sig, (int)sn, (int)k_raw, (int)r_raw);
-    for (i = 0; i < m; i++) {
-        const uint8_t *p = blob + i * entry;
-        memcpy(sig->c + 96 * i, p, 96);
-        sig->b[i] = p[96];
-        memcpy(sig->resp + i * 2 * nb, p + 97, 2 * nb);
-    }
-    free(blob);
-    return (int)k_raw;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4159,6 +4105,17 @@ static void cmd_rand(int argc, char **argv)
  * enc
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* TODO #413 (v20.0.0): `enc`/`dec --algo hpke-stern` are gone.  The demo
+ * ciphertext carried the error vector e', and K = hash(seed, e') needs only the
+ * PUBLIC seed, so anyone holding the ciphertext and the public key decrypted it. */
+static void retired_hpke_stern(const char *sub, const char *algo)
+{
+    if (strcmp(algo, "hpke-stern") == 0)
+        dief("%s: --algo hpke-stern was removed in v20.0.0 (TODO #413): its "
+             "ciphertext carried the error vector, so anyone could decrypt it; "
+             "use --algo hpke-stern-kem", sub);
+}
+
 static void cmd_enc(int argc, char **argv)
 {
     const char *algo       = get_arg(argc, argv, "--algo");
@@ -4167,10 +4124,12 @@ static void cmd_enc(int argc, char **argv)
     const char *in_path    = get_arg(argc, argv, "--in");
     const char *out_path   = get_arg(argc, argv, "--out");
     if (!algo)    die("enc: --algo required");
+    retired_hpke_stern("enc", algo);
     if (!in_path) die("enc: --in required");
     if (!out_path) die("enc: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("enc", algo, get_arg(argc, argv, "--ad"),
                   has_flag(argc, argv, "--aead"));
+    warn_no_integrity("enc", algo, has_flag(argc, argv, "--aead"));
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -4440,64 +4399,6 @@ static void cmd_enc(int argc, char **argv)
         const uint8_t *it2[3] = {isyn, iE, ir}; size_t il2[3] = {lsyn, lE, lr};
         seq_and_write(it2, il2, 3, PEM_CIPHERTEXT, out_path);
 
-    } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
-                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
-                        "Do not use for production.\n");
-        /* vals[0]=syndrome (N bits), vals[1]=seed (N bits), vals[2]=n */
-        if (pub_k.n_items < 2) die("enc: malformed Stern public key");
-        int sn = stern_key_width(&pub_k);   /* TODO #383 stage 2: the key's N */
-        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
-            uint8_t lseed[STERN_L_MAXB], lct[STERN_L_MAXB], lep[STERN_L_MAXB];
-            BitArray Kl = BA_INIT, El = BA_INIT, Pw = BA_INIT;
-            one_block_ok(algo, in_len, 32);
-            stern_l_field(lseed, &pub_k, 1, sn);
-            pem_key_free(&pub_k);
-            make_msg_ba_n(&Pw, P.b, KEYBYTES, 256);
-            FILE *urnd = fopen("/dev/urandom", "rb");
-            if (!urnd) die("cannot open /dev/urandom");
-            hpke_stern_l_encap(&Kl, lct, lep, lseed, sn, urnd);
-            fclose(urnd);
-            ba_fscx_revolve(&El, &Pw, &Kl, 64);
-            uint8_t ict[DER_INT_LEN(STERN_L_MAXB)], iep[DER_INT_LEN(STERN_L_MAXB)];
-            uint8_t ik[DER_INT_LEN(32)], iE[DER_INT_LEN(32)], in[8];
-            size_t lct_, lep_, lk, lE, ln;
-            der_int_enc(lct, (size_t)sn / 8, ict, &lct_);
-            der_int_enc(lep, (size_t)sn / 8, iep, &lep_);
-            der_ba(&Kl, ik, &lk); der_ba(&El, iE, &lE);
-            der_i_uint((uint64_t)sn, in, &ln);
-            const uint8_t *it[5] = {ict, iep, ik, iE, in};
-            size_t         il[5] = {lct_, lep_, lk, lE, ln};
-            seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
-            return;
-        }
-        one_block_ok(algo, in_len, (size_t)sn / 8);
-        BitArray seed_ba = BA_INIT, K_ba = BA_INIT, e_p = BA_INIT, E = BA_INIT, Pn = BA_INIT;
-        ba_from_ra_n(&seed_ba, pub_k.vals[1], pub_k.vlens[1], sn);
-        make_msg_ba_n(&Pn, P.b, KEYBYTES, sn);
-        pem_key_free(&pub_k);
-
-        FILE *urnd = fopen("/dev/urandom", "rb");
-        if (!urnd) die("cannot open /dev/urandom");
-        uint8_t ct_syndr[SDF_SYNBYTES];
-        hpke_stern_f_encap(&K_ba, ct_syndr, &e_p, &seed_ba, urnd);
-        fclose(urnd);
-        ba_fscx_revolve(&E, &Pn, &K_ba, sn / 4);
-
-        /* The N/2-bit syndrome as an N-bit integer (bit i = row i). */
-        BitArray ct_ba = BA_INIT;
-        syndr_to_ba_w(&ct_ba, ct_syndr, sn);
-
-        uint8_t ict[DER_INT_LEN(KEYBYTES)], iep[DER_INT_LEN(KEYBYTES)];
-        uint8_t ik[DER_INT_LEN(KEYBYTES)],  iE[DER_INT_LEN(KEYBYTES)], in[8];
-        size_t lct, lep, lk, lE, ln;
-        der_ba(&ct_ba, ict, &lct); der_ba(&e_p, iep, &lep);
-        der_ba(&K_ba,  ik,  &lk);  der_ba(&E,   iE,  &lE);
-        der_i_uint((uint64_t)sn, in, &ln);
-        const uint8_t *it[5] = {ict, iep, ik, iE, in};
-        size_t         il[5] = {lct, lep, lk, lE, ln};
-        seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
-
     } else {
         pem_key_free(&pub_k);
         dief("enc: unsupported algorithm: %s", algo);
@@ -4515,9 +4416,12 @@ static void cmd_dec(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
     if (!algo)    die("dec: --algo required");
+    retired_hpke_stern("dec", algo);
     if (!in_path) die("dec: --in required");
     if (!out_path) die("dec: --out required");   /* TODO #381: was stdout */
     aead_flags_ok("dec", algo, get_arg(argc, argv, "--ad"), 0);
+    /* hske-nla1's integrity is the ciphertext's (format tag 2): warned below. */
+    warn_no_integrity("dec", algo, strcmp(algo, "hske-nla1") == 0);
 
     /* Load ciphertext PEM. */
     PemKey ct;
@@ -4625,6 +4529,7 @@ static void cmd_dec(int argc, char **argv)
             if (get_arg(argc, argv, "--ad"))
                 die("dec: --ad given, but this hske-nla1 ciphertext is not an AEAD "
                     "one (it has no tag to bind it to)");
+            warn_no_integrity("dec", algo, 0);
             nla1_width_ok(key_nbits, "dec", "key");
             {   /* The ciphertext's own declared width, item[3] of format tag 1.
                    Checked against the KEY's rather than against 256 since TODO
@@ -4747,41 +4652,6 @@ static void cmd_dec(int argc, char **argv)
         qcmdpc_decap_bgf(&K_dec, &syn, &priv);
         ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
         write_binary_file(out_path, D.b, KEYBYTES);
-
-    } else if (strcmp(algo, "hpke-stern") == 0) {
-        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security "
-                        "(demo parameters); the 128-bit set is N=2304 (genpkey --level 128). "
-                        "Do not use for production.\n");
-        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int, vals[4]=n */
-        if (ct.n_items < 5) die("dec: malformed HPKE-Stern ciphertext");
-        if (priv_k.n_items < 2) die("dec: malformed Stern private key");
-        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
-        if (stern_is_long(sn)) {    /* TODO #382: K and the payload block are 256 bits */
-            long cn = der_small(ct.vals[4], ct.vlens[4]);
-            if (cn != sn) {
-                fprintf(stderr, "dec: ciphertext n is %ld, private key n is %d\n", cn, sn);
-                exit(1);
-            }
-            uint8_t lseed[STERN_L_MAXB], lep[STERN_L_MAXB];
-            BitArray Kl = BA_INIT, El = BA_INIT, Dl = BA_INIT;
-            stern_l_field(lep, &ct, 1, sn);
-            ba_from_ra_n(&El, ct.vals[3], ct.vlens[3], 256);
-            stern_l_field(lseed, &priv_k, 1, sn);
-            pem_key_free(&ct); pem_key_free(&priv_k);
-            hpke_stern_l_decap_known(&Kl, lep, lseed, sn);
-            ba_fscx_revolve(&Dl, &El, &Kl, 192);
-            write_binary_file(out_path, Dl.b, 32);
-            return;
-        }
-        check_item_gf_width(&ct, 4, sn, "dec: ciphertext", "private key");
-        BitArray e_p_ba = BA_INIT, E_ba = BA_INIT, seed_ba = BA_INIT, K_dec = BA_INIT, D = BA_INIT;
-        ba_from_ra_n(&e_p_ba,  ct.vals[1],       ct.vlens[1], sn);
-        ba_from_ra_n(&E_ba,    ct.vals[3],       ct.vlens[3], sn);
-        ba_from_ra_n(&seed_ba, priv_k.vals[1],   priv_k.vlens[1], sn);
-        pem_key_free(&ct); pem_key_free(&priv_k);
-        hpke_stern_f_decap_known(&K_dec, &e_p_ba, &seed_ba);
-        ba_fscx_revolve(&D, &E_ba, &K_dec, 3 * sn / 4);
-        write_binary_file(out_path, D.b, (size_t)sn / 8);
 
     } else {
         pem_key_free(&ct); pem_key_free(&priv_k);
@@ -5181,6 +5051,55 @@ static void cmd_threshold_verify(int argc, char **argv)
     ba_from_ra(&s,     sk.vals[2], sk.vlens[2]);
     pem_key_free(&sk);
 
+    /* TODO #412: the signature carries its aggregate key, and checking it
+     * against that key alone proves only that SOME group signed.  The group to
+     * trust is --pubkey's: every member's public key, comma-separated (L is
+     * built sorted, so their order does not matter).  The signature must carry
+     * exactly the aggregate those keys give. */
+    const char *pub_arg = get_arg(argc, argv, "--pubkey");
+    if (!pub_arg || !*pub_arg)
+        die("verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated");
+    size_t np = 1;
+    for (const char *c = pub_arg; *c; c++) if (*c == ',') np++;
+    BitArray *members = (BitArray *)calloc(np, sizeof *members);
+    uint8_t (*mu)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc(np * KEYBYTES);
+    if (!members || !mu) die("verify: oom");
+    size_t j = 0;
+    for (const char *p = pub_arg; j < np; j++) {
+        const char *c = strchr(p, ',');
+        size_t len = c ? (size_t)(c - p) : strlen(p);
+        char path[4096];
+        while (len && (*p == ' ' || *p == '\t')) { p++; len--; }
+        while (len && (p[len-1] == ' ' || p[len-1] == '\t')) len--;
+        if (len >= sizeof path) die("verify: hpks-t --pubkey path too long");
+        memcpy(path, p, len); path[len] = '\0';
+        PemKey pk; pem_key_load(&pk, path);
+        if (pk.n_items < 1) die("verify: malformed public key");
+        int gn = gf_key_width(&pk);
+        if (gn != KEYBITS) {
+            fprintf(stderr, "verify: hpks-t public keys are %d-bit; %s is %d-bit\n",
+                    KEYBITS, path, gn);
+            exit(1);
+        }
+        members[j] = (BitArray)BA_INIT;
+        ba_from_ra_n(&members[j], pk.vals[0], pk.vlens[0], gn);
+        pem_key_free(&pk);
+        if (!gf_pub_is_valid(&members[j]))
+            die("verify: public key is the GF(2^n)* identity/zero element "
+                "(rejected: degenerate key)");
+        p = c ? c + 1 : p + len;
+    }
+    { size_t llen;
+      uint8_t *L_bytes = _hpkst_build_L(members, np, &llen);
+      BitArray expect = BA_INIT;
+      _hpkst_aggregate(members, np, L_bytes, llen, mu, &expect);
+      free(L_bytes); free(mu); free(members);
+      if (memcmp(expect.b, C_agg.b, KEYBYTES) != 0) {
+          fputs("verify: the signature's aggregate key is not the one --pubkey gives\n", stderr);
+          puts("Verification FAILED");
+          exit(1);
+      } }
+
     int ok = hpkst_verify(&C_agg, &R, &s, &msg);
     if (ok) { puts("Signature OK");        exit(0); }
     else    { puts("Verification FAILED"); exit(1); }
@@ -5210,6 +5129,7 @@ static void cmd_sign(int argc, char **argv)
     /* HPKS-WOTS-F signs the full message (hashed internally), not a truncated
      * 256-bit block — handle it before the block-truncation logic below. */
     if (strcmp(algo, "hpks-wots") == 0) {
+        ots_require_key_file("sign", key_path, "--key");   /* TODO #420 */
         PemKey wk;
         pem_key_load(&wk, key_path);
         if (strcmp(wk.label, PEM_HPKS_WOTS_PRIV) != 0)
@@ -5230,6 +5150,8 @@ static void cmd_sign(int argc, char **argv)
         } else {
             wmsg = in_buf; wmlen = in_len;
         }
+        /* TODO #417: burn the key before the signature exists. */
+        wots_write_idx(key_path, 1);
         BitArray sig[WOTS_L]; ba_init_array(sig, WOTS_L);
         hpks_wots_sign(sig, wmsg, wmlen, seed_ba.b, leaf_idx);
         free(in_buf);
@@ -5244,7 +5166,6 @@ static void cmd_sign(int argc, char **argv)
         const uint8_t *it[2] = {ib, iell}; size_t il[2] = {lb, lell};
         seq_and_write(it, il, 2, PEM_HPKS_WOTS_SIG, out_path);
         free(ib);
-        wots_write_idx(key_path, 1);
         fprintf(stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.\n");
         return;
     }
@@ -5252,6 +5173,7 @@ static void cmd_sign(int argc, char **argv)
     /* HPKS-XMSS-F signs the full message (hashed internally) at the next unused
      * leaf, tracked in the `<key>.idx` sidecar. */
     if (strcmp(algo, "hpks-xmss") == 0) {
+        ots_require_key_file("sign", key_path, "--key");   /* TODO #420 */
         PemKey xk;
         pem_key_load(&xk, key_path);
         if (strcmp(xk.label, PEM_HPKS_XMSS_PRIV) != 0)
@@ -5267,7 +5189,7 @@ static void cmd_sign(int argc, char **argv)
         xmss_blob_align(flat, blob_len, xk.vals[3], xk.vlens[3]);
         pem_key_free(&xk);
 
-        uint32_t leaf_idx = (uint32_t)xmss_read_idx(key_path);
+        uint32_t leaf_idx = xmss_read_idx(key_path, num_leaves);
         if (leaf_idx >= num_leaves) {
             free(flat);
             fprintf(stderr, "sign: XMSS key exhausted (%zu leaves used). "
@@ -5282,6 +5204,8 @@ static void cmd_sign(int argc, char **argv)
         } else {
             wmsg = in_buf; wmlen = in_len;
         }
+        /* TODO #417: consume the leaf before its signature exists. */
+        xmss_write_idx(key_path, (int)(leaf_idx + 1));
         HpksXmssSig sig;
         hpks_xmss_sign(&sig, wmsg, wmlen, seed, flat, num_leaves, leaf_idx);
         free(in_buf);
@@ -5305,7 +5229,6 @@ static void cmd_sign(int argc, char **argv)
         seq_and_write(it, il, 5, PEM_HPKS_XMSS_SIG, out_path);
         free(isig); free(ipath);
         hpks_xmss_sig_free(&sig);
-        xmss_write_idx(key_path, (int)(leaf_idx + 1));
         fprintf(stderr, "XMSS leaf %u used; %zu leaves remaining.\n",
                 leaf_idx, num_leaves - leaf_idx - 1);
         return;
@@ -5480,63 +5403,42 @@ static void cmd_sign(int argc, char **argv)
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring sign: --ring (comma-separated member public keys) required");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
-        int sn = stern_key_width(&priv_k);   /* TODO #383 stage 2: the key's N */
-        if (stern_is_long(sn)) {             /* TODO #382: the long form */
-            uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB], *seeds_l, *syns_l;
-            int ring_n = 0, k, j = -1, i;
-            stern_l_field(le, &priv_k, 0, sn);
-            stern_l_field(lseed, &priv_k, 1, sn);
-            pem_key_free(&priv_k);
-            k = ring_load_members_l(ring_arg, &seeds_l, &syns_l, &ring_n);
-            if (ring_n != sn) {
-                fprintf(stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", sn, ring_n);
-                exit(1);
-            }
-            for (i = 0; i < k; i++)
-                if (!memcmp(seeds_l + (size_t)i * (sn / 8), lseed, (size_t)sn / 8)) { j = i; break; }
-            if (j < 0)
-                die("hpks-ring sign: signer's public key is not in --ring "
-                    "(run pkey --pubout on the signer key and include it)");
-            SternLRingSig lr;
-            stern_l_ring_alloc(&lr, sn, k,
-                               rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS));
-            stern_l_ring_sign(&lr, msg_bytes, le, j, seeds_l, syns_l, urnd);
-            ring_sig_write_l(&lr, out_path);
-            stern_l_ring_free(&lr);
-            free(seeds_l); free(syns_l);
-            fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
-            fclose(urnd);
-            return;
-        }
-        BitArray e_ba = BA_INIT, signer_seed = BA_INIT;
-        ba_from_ra_n(&e_ba,        priv_k.vals[0], priv_k.vlens[0], sn);
-        ba_from_ra_n(&signer_seed, priv_k.vals[1], priv_k.vlens[1], sn);
+        int sn = stern_key_width(&priv_k);
+        uint8_t le[STERN_L_MAXB], lseed[STERN_L_MAXB], lsyn[STERN_L_MAXB], *seeds, *syns, *rsig;
+        int ring_n = 0, k, j = -1, i;
+        int rr = rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS);
+        size_t siglen = 0;
+        stern_l_field(le, &priv_k, 0, sn);
+        stern_l_field(lseed, &priv_k, 1, sn);
         pem_key_free(&priv_k);
-
-        BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
-        uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int ring_n = 0;
-        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
+        if (stern_is_long(sn)) {
+            stern_l_syndrome(lsyn, lseed, le, sn);          /* N/8 bytes, high half 0 */
+            memmove(lsyn, lsyn + sn / 8 - sn / 16, (size_t)sn / 16);
+        } else {
+            BitArray se = BA_INIT, ss = BA_INIT;
+            uint8_t sy[SDF_SYNBYTES];
+            ba_zero_w(&se, sn); ba_zero_w(&ss, sn);
+            memcpy(se.b, le, (size_t)sn / 8); memcpy(ss.b, lseed, (size_t)sn / 8);
+            stern_syndrome(sy, &ss, &se);
+            stern_syndr_be(lsyn, sy, sn);
+        }
+        k = ring_load(ring_arg, &seeds, &syns, &ring_n);
         if (ring_n != sn) {
             fprintf(stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", sn, ring_n);
             exit(1);
         }
-        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, sn);
-
-        int j = -1, i;
+        /* The signer's own public key, matched by seed AND syndrome. */
         for (i = 0; i < k; i++)
-            if (ba_equal(&seeds[i], &signer_seed)) { j = i; break; }
+            if (!memcmp(seeds + (size_t)i * (sn / 8), lseed, (size_t)sn / 8) &&
+                !memcmp(syns + (size_t)i * (sn / 16), lsyn, (size_t)sn / 16)) { j = i; break; }
         if (j < 0)
             die("hpks-ring sign: signer's public key is not in --ring "
                 "(run pkey --pubout on the signer key and include it)");
-
-        SternRingSig rsig;
-        /* Honours --rounds like Python/Go/Java; it used SDF_ROUNDS (32) always. */
-        stern_ring_alloc(&rsig, k,
-                         rounds_arg(argc, argv, "--rounds", "sign", SDF_PRODUCTION_ROUNDS));
-        stern_ring_sign(&rsig, &msg, &e_ba, j, seeds, syndrs, urnd);
-        ring_sig_pack_and_write(&rsig, out_path);
-        stern_ring_free(&rsig);
+        rsig = stern_ring_sign(&siglen, msg_bytes, le, j, seeds, syns, k, sn, rr, urnd);
+        memset(le, 0, sizeof le);
+        if (!rsig) die("hpks-ring sign: the ring or the signer key was refused");
+        ring_sig_write(rsig, siglen, sn, k, rr, out_path);
+        free(rsig); free(seeds); free(syns);
         fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
 
     } else if (strcmp(algo, "rnl-sigma") == 0) {
@@ -5695,66 +5597,33 @@ static void cmd_verify(int argc, char **argv)
     BitArray msg = BA_INIT;
     memcpy(msg.b, msg_bytes, KEYBYTES);
 
-    /* hpks-t: C_agg is embedded in the sig — no pubkey file needed. */
+    /* hpks-t: checked against --pubkey's group (TODO #412), in cmd_threshold_verify. */
     if (strcmp(algo, "hpks-t") == 0) {
         cmd_threshold_verify(argc, argv);
         return;  /* cmd_threshold_verify exits via exit() — this is a safeguard */
     }
 
-    /* hpks-ring: anonymous verification against --ring members. */
+    /* hpks-ring: anonymous verification against --ring members (TODO #415). */
     if (strcmp(algo, "hpks-ring") == 0) {
         const char *ring_arg = get_arg(argc, argv, "--ring");
         if (!ring_arg) die("hpks-ring verify: --ring (comma-separated member public keys) required");
-        if (stern_is_long(ring_peek_n(ring_arg))) {     /* TODO #382: the long form */
-            uint8_t *seeds_l, *syns_l;
-            int ring_n = 0, sig_n = 0;
-            int k = ring_load_members_l(ring_arg, &seeds_l, &syns_l, &ring_n);
-            SternLRingSig lr;
-            int sig_k = ring_sig_load_l(sig_path, &lr, &sig_n);
-            if (sig_k < 0) {
-                fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
-                exit(1);
-            }
-            { int rr = lr.rounds;
-              if (rr < min_rounds) stern_l_ring_free(&lr);
-              require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
-            if (sig_n != ring_n) {
-                fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
-                exit(1);
-            }
-            if (sig_k != k) {
-                fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
-                                "provided members\n", sig_k, k);
-                exit(1);
-            }
-            int ok = stern_l_ring_verify(&lr, msg_bytes, seeds_l, syns_l);
-            stern_l_ring_free(&lr); free(seeds_l); free(syns_l);
-            if (ok) { puts("Signature OK");        exit(0); }
-            else    { puts("Verification FAILED"); exit(1); }
-        }
-        BitArray seeds[RING_MAX_K]; ba_init_array(seeds, RING_MAX_K);
-        uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
-        int ring_n = 0, sig_n = 0;
-        int k = ring_load_members(ring_arg, seeds, syndrs, &ring_n);
-        SternRingSig rsig;
-        int sig_k = ring_sig_load(sig_path, &rsig, &sig_n);
-        { int rr = rsig.rounds;
-          if (rr < min_rounds) stern_ring_free(&rsig);
-          require_rounds(rr, min_rounds, "hpks-ring signature", "verify"); }
-        if (sig_n != ring_n) {   /* TODO #383 stage 2: Python's text */
-            stern_ring_free(&rsig);
+        uint8_t *seeds, *syns, *rsig;
+        int ring_n = 0, sig_n = 0, sig_k = 0, rr = 0, ok;
+        size_t siglen = 0;
+        int k = ring_load(ring_arg, &seeds, &syns, &ring_n);
+        rsig = ring_sig_load(sig_path, &siglen, &sig_n, &sig_k, &rr);
+        require_rounds(rr, min_rounds, "hpks-ring signature", "verify");
+        if (sig_n != ring_n) {
             fprintf(stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sig_n, ring_n);
             exit(1);
         }
-        make_msg_ba_n(&msg, msg_bytes, KEYBYTES, ring_n);
         if (sig_k != k) {
-            stern_ring_free(&rsig);
             fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
                             "provided members\n", sig_k, k);
             exit(1);
         }
-        int ok = stern_ring_verify(&rsig, &msg, seeds, syndrs);
-        stern_ring_free(&rsig);
+        ok = stern_ring_verify(rsig, siglen, msg_bytes, seeds, syns, k, ring_n, rr);
+        free(rsig); free(seeds); free(syns);
         if (ok) { puts("Signature OK");        exit(0); }
         else    { puts("Verification FAILED"); exit(1); }
     }
@@ -5878,6 +5747,11 @@ static void cmd_verify(int argc, char **argv)
          * ordinary "Verification FAILED". */
         if (!ba_equal(&e_v, &e_stored))
             die("verify: signature challenge e is not the recomputed one "
+                "(rejected: non-canonical signature)");
+        /* TODO #423: g^s depends on s mod ord(g), and g generates a proper
+         * subgroup at n = 32 and 128, so s + ord(g) is a second encoding. */
+        if (!hpks_s_below_order(&s_ba))
+            die("verify: signature scalar s is not below the order of g "
                 "(rejected: non-canonical signature)");
         puts("Signature OK");
         exit(0);
@@ -7013,14 +6887,15 @@ static void usage(void)
 "    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
 "    nl-zkbpp:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-ring: --ring = member public keys; verifies anonymously (no signer revealed).\n"
-"    hpks-t:    --pubkey not required; C_agg is embedded in the signature.\n"
+"    hpks-t:    --pubkey = the signing group's public keys, comma-separated\n"
+"               (any order); the signature must be that group's (TODO #412).\n"
 "\n"
 "  threshold-commit / -aggregate / -respond / -combine  (HPKS-T, four phases)\n"
 "    1 commit: each signer writes a nonce and a commitment PEM.\n"
 "    2 aggregate (coordinator): --commit is repeatable; computes the challenge.\n"
 "    3 respond: each signer produces a partial signature scalar.\n"
 "    4 combine (coordinator): --partial is repeatable; writes HPKST SIGNATURE PEM.\n"
-"    Verify with: verify --algo hpks-t --in FILE --sig SIG.pem\n"
+"    Verify with: verify --algo hpks-t --pubkey P0,P1,... --in FILE --sig SIG.pem\n"
 "\n"
 "  dgst --in FILE\n"
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"

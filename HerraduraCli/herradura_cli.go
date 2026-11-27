@@ -26,6 +26,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
@@ -56,7 +57,7 @@ import (
 // "signature ring size != provided members" check runs after the allocation it
 // was meant to guard.
 const (
-	ringMaxK  = 64      // herradura_cli.c RING_MAX_K
+	ringMaxK  = 1024    // herradura_cli.c RING_MAX_K == RingMaxMembers (TODO #415)
 	xmssMaxH  = 20      // herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 	sternMaxN = 256     // the widest short-form Stern instance
 )
@@ -234,7 +235,8 @@ const (
 	lblHpksXmssPriv = "HERRADURA HPKS-XMSS PRIVATE KEY"
 	lblHpksXmssPub  = "HERRADURA HPKS-XMSS PUBLIC KEY"
 	lblHpksXmssSig  = "HERRADURA HPKS-XMSS SIGNATURE"
-	lblRingSig      = "HERRADURA HPKS-RING SIGNATURE"
+	lblRingSig      = "HERRADURA HPKS-RING-V2 SIGNATURE" // TODO #415
+	lblRingSigV1    = "HERRADURA HPKS-RING SIGNATURE"    // the forgeable v1; refused
 
 	lblSession    = "HERRADURA SESSION KEY"
 	lblRnlResp    = "HERRADURA HKEX-RNL RESPONSE"
@@ -334,7 +336,7 @@ func writeString(path, s string) error {
 		_, err := fmt.Fprint(os.Stdout, s)
 		return err
 	}
-	return os.WriteFile(path, []byte(s), 0600) // TODO #395: created 0600; an existing file keeps its mode
+	return writeOutFile(path, []byte(s), false)
 }
 
 func writeBytes(path string, b []byte) error {
@@ -342,7 +344,60 @@ func writeBytes(path string, b []byte) error {
 		_, err := os.Stdout.Write(b)
 		return err
 	}
-	return os.WriteFile(path, b, 0600) // TODO #395: created 0600; an existing file keeps its mode
+	return writeOutFile(path, b, false)
+}
+
+// errOutSymlink is the TODO #417 refusal, worded as in the other three CLIs.
+func errOutSymlink(path string) error {
+	return fmt.Errorf("%s: is a symbolic link; refusing to write through it (use - for stdout)", path)
+}
+
+// writeOutFile writes every output file (TODO #395, #417).  A new file is
+// created 0600; an existing regular file is overwritten and keeps its mode, as
+// O_CREAT does.  The last path component must not be a symbolic link: following
+// one truncated the link's target and left a private key in whatever mode that
+// target had (a world-readable file stayed world-readable).  The other CLIs use
+// O_NOFOLLOW; syscall.O_NOFOLLOW does not exist on every GOOS this single-file
+// build targets, so this is the portable equivalent, race-safe for what
+// matters: open WITHOUT O_TRUNC, check that the opened file is the same
+// non-link entry the path names (os.SameFile against Lstat), and only then
+// truncate and write.  A link swapped in at any point is caught before a byte
+// of its target changes.  (A dangling link created in the window between the
+// pre-check and the open can still leave an EMPTY file at its target.)
+// durable fsyncs before close: the one-time-signature state sidecars need it.
+func writeOutFile(path string, b []byte, durable bool) error {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return errOutSymlink(path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	opened, err1 := f.Stat()
+	named, err2 := os.Lstat(path)
+	if err1 != nil || err2 != nil || named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+		f.Close()
+		return errOutSymlink(path)
+	}
+	// O_TRUNC's semantics: only a regular file is truncated.  A device such as
+	// /dev/null cannot be, and O_TRUNC is ignored for it in the other CLIs.
+	if opened.Mode().IsRegular() {
+		if err := f.Truncate(0); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if durable {
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	return f.Close()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1374,17 +1429,110 @@ func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []by
 
 func wotsIdxPath(keyPath string) string { return keyPath + ".idx" }
 
-func wotsIsUsed(keyPath string) bool {
-	b, err := os.ReadFile(wotsIdxPath(keyPath))
-	if err != nil {
-		return false
+// otsRequireKeyFile: TODO #420.  A one-time-signature key must be a regular
+// file, because its state lives beside it in <key>.idx.  From stdin (`-`), a
+// pipe or a device there is no such place: C and Go used to keep it in
+// ./-.idx, shared by every key piped in from that directory, and Java kept
+// none at all.
+func otsRequireKeyFile(cmd, path, flagName string) {
+	bad := path == "" || path == "-"
+	if !bad {
+		if st, err := os.Stat(path); err == nil && !st.Mode().IsRegular() {
+			bad = true
+		}
 	}
-	v := strings.TrimSpace(string(b))
-	return v != "" && v != "0"
+	if bad {
+		fmt.Fprintf(os.Stderr, "%s: a one-time-signature key must be a regular file given by %s "+
+			"(its state lives in <key>.idx); it cannot be read from or written to "+
+			"stdin, a pipe or a device\n", cmd, flagName)
+		os.Exit(1)
+	}
 }
 
+// otsStateRead is the ONE reader of a one-time-signature state sidecar, for
+// WOTS (max 1) and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must
+// exist, be a regular file (not a link), and hold exactly one canonical decimal
+// (`0`, or digits with no leading zero, at most 10, an optional single trailing
+// newline) no larger than max.  Anything else used to read as 0 (unused), so an
+// empty file left by a crash let a WOTS key sign again.
+// otsStateOpenRead opens a state sidecar and reads it, refusing an opened file
+// that is not the regular, non-link entry the path names.
+func otsStateOpenRead(p string) ([]byte, string) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, "unreadable"
+	}
+	defer f.Close()
+	opened, err1 := f.Stat()
+	named, err2 := os.Lstat(p)
+	if err1 != nil || err2 != nil || !opened.Mode().IsRegular() ||
+		named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+		return nil, "not a regular file"
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 64))
+	if err != nil {
+		return nil, "unreadable"
+	}
+	return b, ""
+}
+
+func otsStateRead(keyPath string, max uint64) uint64 {
+	p := wotsIdxPath(keyPath)
+	why := ""
+	var v uint64
+	// Judge what was OPENED, not only the name (the race CodeQL reported in the
+	// C CLI): the opened file must be the same regular, non-link entry that
+	// Lstat names, as writeOutFile checks (TODO #417).  The pre-check keeps a
+	// FIFO from being opened at all.
+	if st, err := os.Lstat(p); err != nil {
+		why = "missing"
+	} else if !st.Mode().IsRegular() {
+		why = "not a regular file"
+	} else if b, rerr := otsStateOpenRead(p); rerr != "" {
+		why = rerr
+	} else {
+		d := b
+		if len(d) > 0 && d[len(d)-1] == '\n' {
+			d = d[:len(d)-1]
+		}
+		ok := len(d) >= 1 && len(d) <= 10 && !(len(d) > 1 && d[0] == '0')
+		for _, c := range d {
+			if !ok {
+				break
+			}
+			if c < '0' || c > '9' {
+				ok = false
+			} else {
+				v = v*10 + uint64(c-'0')
+			}
+		}
+		if !ok {
+			why = "damaged (not one canonical decimal count)"
+		} else if v > max {
+			why = "damaged (count out of range)"
+		}
+	}
+	if why != "" {
+		fmt.Fprintf(os.Stderr, "sign: one-time-signature state file %s is %s; refusing to sign "+
+			"(restore it, or generate a new key)\n", p, why)
+		os.Exit(1)
+	}
+	return v
+}
+
+func wotsIsUsed(keyPath string) bool { return otsStateRead(keyPath, 1) != 0 }
+
+// wotsWriteIdx writes a one-time-signature state sidecar or exits.  TODO
+// #417: the error used to be discarded, and sign wrote the signature BEFORE
+// burning the leaf, so an unwritable .idx released a signature and left its
+// leaf unconsumed for the next sign.  Now the state is written and fsync'd
+// first, and a failure stops the command before a signature exists.
 func wotsWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
+	p := wotsIdxPath(keyPath)
+	if err := writeOutFile(p, []byte(fmt.Sprintf("%d\n", val)), true); err != nil {
+		fmt.Fprintf(os.Stderr, "cannot write one-time-signature state file %s: %v\n", p, err)
+		os.Exit(1)
+	}
 }
 
 func wotsBlobPack(vals [WotsL]*BitArray) []byte {
@@ -1422,21 +1570,11 @@ func encodeWotsBlobPEM(vals [WotsL]*BitArray, label string) string {
 // (0-based next-unused-leaf), reusing the same convention as HPKS-WOTS-F's
 // 0/1 burned flag (wotsIdxPath above).
 
-func xmssReadIdx(keyPath string) int {
-	b, err := os.ReadFile(wotsIdxPath(keyPath))
-	if err != nil {
-		return 0
-	}
-	v, cerr := strconv.Atoi(strings.TrimSpace(string(b)))
-	if cerr != nil || v < 0 {
-		return 0
-	}
-	return v
+func xmssReadIdx(keyPath string, numLeaves int) int {
+	return int(otsStateRead(keyPath, uint64(numLeaves))) // TODO #419
 }
 
-func xmssWriteIdx(keyPath string, val int) {
-	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0600) // TODO #395: created 0600; an existing file keeps its mode
-}
+func xmssWriteIdx(keyPath string, val int) { wotsWriteIdx(keyPath, val) } // same sidecar, same rule (#417)
 
 // alignBlob right-aligns v into a dst_len-byte slice (generic version of
 // wotsBlobUnpack's alignment, for arbitrary blob sizes).
@@ -1449,34 +1587,43 @@ func alignBlob(v []byte, dstLen int) []byte {
 	return blob
 }
 
-// ── HPKS-Stern-Ring signature helpers (TODO #121) ────────────────────────────
+// ── HPKS-Ring signature helpers (TODO #415) ──────────────────────────────────
 //
-// Wire format matches the Python/C CLIs: SEQ(k, rounds, n, blob) where blob is a
-// member-major / round-major flat layout of c0||c1||c2||b(1 byte)||respA||respB
-// (each n-bit value = n/8 bytes) per (member, round).
+// PEM "HERRADURA HPKS-RING-V2 SIGNATURE": SEQ(n, k, rounds, D, blob) -- D the
+// 32-byte transcript digest, blob the rest of the package's signature (per
+// round the unopened commitment and the opening), minimal DER; its exact length
+// follows from the challenges D derives.  SPEC.md §11.2.
 
-func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
-	ring, _, n := loadRingPubkeysAny(ringArg)
-	return ring, n
-}
+const ringV1Refused = "this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING " +
+	"SIGNATURE), which is forgeable without any member's key (TODO #415) and is no " +
+	"longer accepted; re-sign it with this release"
 
-// loadRingPubkeysAny reads the ring at either form: the short form's members
-// in the first slice, the long form's (TODO #382) in the second.
-func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
-	paths := strings.Split(ringArg, ",")
-	var ring []RingKeypair
-	var ringL []SternLRingKey
+// loadRing reads --ring: every member's seed (n/8 bytes) and big-endian
+// syndrome (n/16), and the members' one width.
+func loadRing(ringArg string) ([]RingMember, int) {
+	var paths []string
+	for _, p := range strings.Split(ringArg, ",") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least one member public key")
+		os.Exit(1)
+	}
+	if len(paths) > ringMaxK {
+		fmt.Fprintf(os.Stderr, "hpks-ring: --ring lists %d members, at most %d supported\n", len(paths), ringMaxK)
+		os.Exit(1)
+	}
+	var ring []RingMember
 	ringN := -1
 	for _, p := range paths {
-		if p == "" {
-			continue
-		}
 		label, ints, err := readPEMInts(p)
 		if err != nil {
 			die("hpks-ring", err)
 		}
 		if label != lblHpksSternPub {
-			fmt.Fprintf(os.Stderr, "hpks-ring: ring member %q is %q, expected hpks-stern public key\n", p, label)
+			fmt.Fprintf(os.Stderr, "hpks-ring: ring member '%s' is %s, expected hpks-stern\n", p, label)
 			os.Exit(1)
 		}
 		n := sternWireN(ints[2], "hpks-ring")
@@ -1486,154 +1633,57 @@ func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
 			fmt.Fprintln(os.Stderr, "hpks-ring: all ring members must share the same n")
 			os.Exit(1)
 		}
-		if SternIsLong(n) {
-			ringL = append(ringL, SternLRingKey{
-				Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
-				Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring"),
-			})
-			continue
+		m := RingMember{
+			Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
+			Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring")[n/8-n/16:],
 		}
-		ring = append(ring, RingKeypair{
-			Seed:     NewBitArray(n, new(big.Int).SetBytes(ints[1])),
-			Syndrome: new(big.Int).SetBytes(ints[0]),
-		})
+		for _, o := range ring {
+			if bytes.Equal(o.Seed, m.Seed) && bytes.Equal(o.Syndrome, m.Syndrome) {
+				fmt.Fprintf(os.Stderr, "hpks-ring: --ring lists the member '%s' twice\n", p)
+				os.Exit(1)
+			}
+		}
+		ring = append(ring, m)
 	}
-	if len(ring)+len(ringL) < 2 {
-		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least 2 member public keys")
-		os.Exit(1)
-	}
-	return ring, ringL, ringN
+	return ring, ringN
 }
 
-// encodeRingSigL is encodeRingSig for the long form: 32-byte commitments,
-// n/8-byte responses.
-func encodeRingSigL(sig *SternLRingSig, n int) string {
-	nb := n / 8
-	blob := make([]byte, 0, sig.K*sig.Rounds*(3*32+2*nb+1))
-	for i := 0; i < sig.K; i++ {
-		for _, rd := range sig.Members[i].Rounds {
-			blob = append(blob, rd.C0.Bytes()...)
-			blob = append(blob, rd.C1.Bytes()...)
-			blob = append(blob, rd.C2.Bytes()...)
-			blob = append(blob, byte(rd.B))
-			blob = append(blob, rd.RespA...)
-			blob = append(blob, rd.RespB...)
-		}
-	}
-	kd, _ := derIntSmall(sig.K)
-	rdd, _ := derIntSmall(sig.Rounds)
+func encodeRingSig(sig []byte, n, k, rounds int) string {
 	nd, _ := derIntSmall(n)
-	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
-	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
+	kd, _ := derIntSmall(k)
+	rdd, _ := derIntSmall(rounds)
+	dd, _ := DerIntEnc(sig[:32])
+	body := new(big.Int).SetBytes(sig[32:]).Bytes()
+	if len(body) == 0 {
+		body = []byte{0}
+	}
+	bd, _ := DerIntEnc(body)
+	seq, _ := DerSeqEnc(nd, kd, rdd, dd, bd)
 	return PemWrap(lblRingSig, seq)
 }
 
-func encodeRingSig(sig *SternRingSig, n int) string {
-	nb := n / 8
-	blob := make([]byte, 0, sig.K*sig.Rounds*(5*nb+1))
-	put := func(ba *BitArray) {
-		b := make([]byte, nb)
-		fillBA(b, ba)
-		blob = append(blob, b...)
-	}
-	for i := 0; i < sig.K; i++ {
-		for r := 0; r < sig.Rounds; r++ {
-			rd := sig.Members[i].Rounds[r]
-			put(rd.C0)
-			put(rd.C1)
-			put(rd.C2)
-			blob = append(blob, byte(rd.B))
-			put(rd.RespA)
-			put(rd.RespB)
+// decodeRingSig returns the signature bytes (D || blob) and its n, k, rounds.
+func decodeRingSig(path string) ([]byte, int, int, int) {
+	if data, err := readFile(path); err == nil {
+		if label, _, err := PemUnwrap(string(data)); err == nil && label == lblRingSigV1 {
+			fmt.Fprintln(os.Stderr, "verify: "+ringV1Refused)
+			os.Exit(1)
 		}
 	}
-	kd, _ := derIntSmall(sig.K)
-	rdd, _ := derIntSmall(sig.Rounds)
-	nd, _ := derIntSmall(n)
-	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
-	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
-	return PemWrap(lblRingSig, seq)
-}
-
-func decodeRingSig(path string) (*SternRingSig, int) {
-	sig, _, n := decodeRingSigAny(path)
-	return sig, n
-}
-
-// decodeRingSigAny decodes either form (the long form's in the second result).
-func decodeRingSigAny(path string) (*SternRingSig, *SternLRingSig, int) {
 	label, ints, err := readPEMInts(path)
 	if err != nil {
 		die("verify", err)
 	}
 	if label != lblRingSig {
-		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING SIGNATURE PEM, got %q\n", label)
+		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING-V2 SIGNATURE PEM, got %q\n", label)
 		os.Exit(1)
 	}
-	// Bounded before use: k, rounds and n each multiply into the blob length
-	// below, and verify's own k/n cross-checks only run after this returns.
-	k := bounded(wireInt(ints[0], "ring member count", "verify"), 2, ringMaxK,
-		"ring member count", "verify")
-	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
-		"round count", "verify")
-	n := boundedSternN(wireInt(ints[2], "n", "verify"), "verify")
-	nb := n / 8
-	cb := nb
-	if SternIsLong(n) {
-		cb = 32 // 256-bit commitments (TODO #382)
-	}
-	entry := 3*cb + 2*nb + 1
-	blen := k * rounds * entry
-	// A payload longer than (k, rounds, n) describe is a mismatch, not
-	// something to truncate; shorter is legal (DER strips leading zero bytes)
-	// and FillBytes zero-pads it.
-	if len(ints[3]) > blen {
-		fmt.Fprintf(os.Stderr, "verify: HPKS-RING signature payload is %d bytes, "+
-			"but k=%d rounds=%d n=%d describe %d\n", len(ints[3]), k, rounds, n, blen)
-		os.Exit(1)
-	}
-	blob := make([]byte, blen)
-	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
-
-	if SternIsLong(n) {
-		lsig := &SternLRingSig{K: k, Rounds: rounds, Members: make([]SternLSig, k)}
-		off := 0
-		cut := func(w int) []byte { v := blob[off : off+w]; off += w; return v }
-		for i := 0; i < k; i++ {
-			lsig.Members[i].Rounds = make([]SternLRound, rounds)
-			for r := 0; r < rounds; r++ {
-				rd := &lsig.Members[i].Rounds[r]
-				rd.C0 = NewFromBytes(cut(32), 0, 256)
-				rd.C1 = NewFromBytes(cut(32), 0, 256)
-				rd.C2 = NewFromBytes(cut(32), 0, 256)
-				rd.B = int(cut(1)[0])
-				rd.RespA = cut(nb)
-				rd.RespB = cut(nb)
-			}
-		}
-		return nil, lsig, n
-	}
-	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
-	off := 0
-	take := func() *BitArray {
-		v := NewBitArray(n, new(big.Int).SetBytes(blob[off:off+nb]))
-		off += nb
-		return v
-	}
-	for i := 0; i < k; i++ {
-		sig.Members[i].Rounds = make([]SternRound, rounds)
-		for r := 0; r < rounds; r++ {
-			c0 := take()
-			c1 := take()
-			c2 := take()
-			b := int(blob[off])
-			off++
-			ra := take()
-			rb := take()
-			sig.Members[i].Rounds[r] = SternRound{C0: c0, C1: c1, C2: c2, B: b, RespA: ra, RespB: rb}
-		}
-	}
-	return sig, nil, n
+	n := boundedSternN(wireInt(ints[0], "n", "verify"), "verify")
+	k := bounded(wireInt(ints[1], "ring member count", "verify"), 1, ringMaxK, "ring member count", "verify")
+	rounds := bounded(wireInt(ints[2], "round count", "verify"), 1, SdfMaxRounds, "round count", "verify")
+	D := fitBytes(ints[3], 32, "digest", "verify")
+	blen := HpksSternRingSigLen(D, k, n, rounds) - 32
+	return append(D, fitBytes(ints[4], blen, "signature body", "verify")...), n, k, rounds
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -1914,6 +1964,7 @@ func cmdGenpkey(args []string) {
 		pem = PemWrap(lblOprfPriv, seq)
 
 	case *algo == "hpks-wots":
+		otsRequireKeyFile("genpkey", *out, "--out") // TODO #420
 		seed := NewRandBitArray(256).Bytes() // 32-byte master seed
 		sd, e1 := derIntBig(new(big.Int).SetBytes(seed), 32)
 		ld, e2 := derIntSmall(0) // leaf_idx = 0
@@ -1927,12 +1978,11 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = PemWrap(lblHpksWotsPriv, seq)
-		if *out != "-" {
-			wotsWriteIdx(*out, 0)
-		}
+		wotsWriteIdx(*out, 0)
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
 
 	case *algo == "hpks-xmss":
+		otsRequireKeyFile("genpkey", *out, "--out") // TODO #420
 		h := xmssHeight
 		fmt.Fprintf(os.Stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
 			h, 1<<uint(h))
@@ -1956,9 +2006,7 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = PemWrap(lblHpksXmssPriv, seq)
-		if *out != "-" {
-			xmssWriteIdx(*out, 0)
-		}
+		xmssWriteIdx(*out, 0)
 
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
@@ -2935,47 +2983,6 @@ func encodeAsymCT(R, E *big.Int, n int) (string, error) {
 		return "", err
 	}
 	seq, err := DerSeqEnc(rd, ed, nn)
-	if err != nil {
-		return "", err
-	}
-	return PemWrap(lblCT, seq), nil
-}
-
-// encodeSternCT encodes an HPKE-Stern-F KEM ciphertext.
-// K is stored for session-key extraction; e' stored for demo brute-force decap.
-func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (string, error) {
-	return encodeSternCTInts(ctSyn, ePrime.BigInt(), K.BigInt(), E, n)
-}
-
-// encodeSternCTInts: (ct, e', K, E, n); K and E are min(n, 256) bits, the
-// payload block (TODO #382).
-func encodeSternCTInts(ctSyn, ePrime, K, E *big.Int, n int) (string, error) {
-	nb := n / 8
-	kb := nb
-	if kb > 32 {
-		kb = 32
-	}
-	ca, err := derIntBig(ctSyn, nb)
-	if err != nil {
-		return "", err
-	}
-	ea, err := derIntBig(ePrime, nb)
-	if err != nil {
-		return "", err
-	}
-	ka, err := derIntBig(K, kb)
-	if err != nil {
-		return "", err
-	}
-	enc, err := derIntBig(E, kb)
-	if err != nil {
-		return "", err
-	}
-	nn, err := derIntSmall(n)
-	if err != nil {
-		return "", err
-	}
-	seq, err := DerSeqEnc(ca, ea, ka, enc, nn)
 	if err != nil {
 		return "", err
 	}
@@ -4335,6 +4342,28 @@ func cmdCredVerify(args []string) {
 
 // ── enc ───────────────────────────────────────────────────────────────────────
 
+// retiredHpkeStern refuses `enc`/`dec --algo hpke-stern` (TODO #413, v20.0.0).
+// The demo ciphertext carried the error vector e', and K = hash(seed, e') needs
+// only the PUBLIC seed, so anyone holding the ciphertext and the public key
+// decrypted it.
+func retiredHpkeStern(sub, algo string) {
+	if algo == "hpke-stern" {
+		fmt.Fprintf(os.Stderr, "%s: --algo hpke-stern was removed in v20.0.0 (TODO #413): "+
+			"its ciphertext carried the error vector, so anyone could decrypt it; "+
+			"use --algo hpke-stern-kem\n", sub)
+		os.Exit(1)
+	}
+}
+
+// warnNoIntegrity says on stderr that this mode cannot detect a modified
+// ciphertext or a wrong key, from the generated encIntegrity table (TODO #414).
+func warnNoIntegrity(sub, algo string, authenticated bool) {
+	r, ok := encIntegrity[algo]
+	if ok && (r[0] == "none" || (r[0] == "aead-flag" && !authenticated)) {
+		fmt.Fprintf(os.Stderr, "%s: warning: %s\n", sub, r[1])
+	}
+}
+
 func cmdEnc(args []string) {
 	fs := flag.NewFlagSet("enc", flag.ExitOnError)
 	algo   := fs.String("algo", "", "Encryption algorithm")
@@ -4345,6 +4374,7 @@ func cmdEnc(args []string) {
 	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
 	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (hske-duplex, hske-duplex3, or hske-nla1 with --aead; refused elsewhere)")
 	parseArgs(fs, args)
+	retiredHpkeStern("enc", *algo)
 	checkKeyLabels("enc", fs) // TODO #366
 
 	if *algo == "" {
@@ -4352,6 +4382,7 @@ func cmdEnc(args []string) {
 		os.Exit(1)
 	}
 	aeadFlagsOK("enc", *algo, isSet(fs, "ad"), isSet(fs, "aead"))
+	warnNoIntegrity("enc", *algo, *aead)
 
 	inBytes, err := readFile(*in)
 	if err != nil {
@@ -4507,43 +4538,6 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 
-	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
-		if *pubkey == "" {
-			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
-			os.Exit(1)
-		}
-		_, theirInts, err := readPEMInts(*pubkey)
-		if err != nil {
-			die("enc", err)
-		}
-		n    := sternWireN(theirInts[2], "enc")
-		w    := n // the payload block: 256 bits above 256 (TODO #382)
-		if SternIsLong(n) {
-			w = 256
-		}
-		nb   := w / 8
-		oneBlockOK(*algo, len(inBytes), nb)
-		P    := NewBitArray(w, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		var pem string
-		if SternIsLong(n) {
-			K, ct, eP := HpkeSternLEncap(sternLField(theirInts[1], n, "seed", "enc"))
-			E := FscxRevolve(P, K, w/4)
-			pem, err = encodeSternCTInts(new(big.Int).SetBytes(ct), new(big.Int).SetBytes(eP),
-				K.BigInt(), E.BigInt(), n)
-		} else {
-			seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
-			K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
-			E := FscxRevolve(P, K, n/4)
-			pem, err = encodeSternCT(ctSyn, ePrime, K, E.BigInt(), n)
-		}
-		if err != nil {
-			die("enc", err)
-		}
-		if err := writeString(*out, pem); err != nil {
-			die("enc", err)
-		}
-
 	case "hpke-stern-kem":
 		if *pubkey == "" {
 			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern-kem")
@@ -4583,6 +4577,7 @@ func cmdDec(args []string) {
 	out  := fs.String("out", "-", "Plaintext output file")
 	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad; refused on algos without AEAD)")
 	parseArgs(fs, args)
+	retiredHpkeStern("dec", *algo)
 	checkKeyLabels("dec", fs) // TODO #366
 
 	if *algo == "" {
@@ -4590,6 +4585,8 @@ func cmdDec(args []string) {
 		os.Exit(1)
 	}
 	aeadFlagsOK("dec", *algo, isSet(fs, "ad"), false)
+	// hske-nla1's integrity is the ciphertext's (format tag 2): warned below.
+	warnNoIntegrity("dec", *algo, *algo == "hske-nla1")
 
 	switch *algo {
 	case "hske-duplex", "hske-duplex3":
@@ -4742,6 +4739,7 @@ func cmdDec(args []string) {
 					"is not an AEAD one (it has no tag to bind it to)")
 				os.Exit(1)
 			}
+			warnNoIntegrity("dec", *algo, false)
 			if nonceInt == nil {
 				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
 				os.Exit(1)
@@ -4803,47 +4801,6 @@ func cmdDec(args []string) {
 			}
 			D = NlFscxRevolveV2Inv(E, decKey, n/4)
 		}
-		if err := writeBytes(*out, D.Bytes()); err != nil {
-			die("dec", err)
-		}
-
-	case "hpke-stern":
-		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~24-38 bits of security (demo parameters); the 128-bit set is N=2304 (genpkey --level 128). Do not use for production.")
-		if *key == "" {
-			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
-			os.Exit(1)
-		}
-		_, ourInts, err := readPEMInts(*key)
-		if err != nil {
-			die("dec", err)
-		}
-		_, ctInts, err := readPEMInts(*in)
-		if err != nil {
-			die("dec", err)
-		}
-		if len(ctInts) != 5 {
-			die("dec", checkDerItemsExact(lblCT, ctInts, 5))
-		}
-		n       := sternWireN(ourInts[2], "dec")
-		// TODO #383 stage 2: a ciphertext of another width was reduced into
-		// the key's and decrypted to garbage with exit 0
-		if cn := new(big.Int).SetBytes(ctInts[4]); !cn.IsInt64() || cn.Int64() != int64(n) {
-			die("dec", fmt.Errorf("ciphertext n is %s, private key n is %d", cn, n))
-		}
-		EInt    := new(big.Int).SetBytes(ctInts[3])
-		var K_dec *BitArray
-		w := n
-		if SternIsLong(n) { // the long form (TODO #382): K and the block are 256 bits
-			w = 256
-			K_dec = HpkeSternLDecapKnown(sternLField(ctInts[1], n, "e'", "dec"),
-				sternLField(ourInts[1], n, "seed", "dec"))
-		} else {
-			seed   := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
-			ePrime := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
-			K_dec = HpkeSternFDecapKnown(ePrime, seed)
-		}
-		E       := NewBitArray(w, EInt)
-		D       := FscxRevolve(E, K_dec, 3*w/4)
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
@@ -4967,6 +4924,9 @@ func cmdSign(args []string) {
 		return
 	}
 
+	if *algo == "hpks-wots" || *algo == "hpks-xmss" {
+		otsRequireKeyFile("sign", *key, "--key") // TODO #420
+	}
 	_, ourInts, err := readPEMInts(*key)
 	if err != nil {
 		die("sign", err)
@@ -5048,21 +5008,23 @@ func cmdSign(args []string) {
 			os.Exit(1)
 		}
 		n := sternWireN(ourInts[2], "sign")
-		signerSeed := new(big.Int).SetBytes(ourInts[1])
-		ringKeys, ringKeysL, ringN := loadRingPubkeysAny(*ring)
+		e := sternLField(ourInts[0], n, "e", "sign")
+		seed := sternLField(ourInts[1], n, "seed", "sign")
+		var syn []byte
+		if SternIsLong(n) {
+			syn = SternLSyndrome(seed, e)[n/8-n/16:]
+		} else {
+			syn = SternSyndromeBE(SternSyndrome(NewFromBytes(seed, 0, n), NewFromBytes(e, 0, n)), n)
+		}
+		members, ringN := loadRing(*ring)
 		if ringN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", n, ringN)
 			os.Exit(1)
 		}
+		// The signer's own public key, matched by seed AND syndrome.
 		j := -1
-		for idx := range ringKeys {
-			if ringKeys[idx].Seed.BigInt().Cmp(signerSeed) == 0 {
-				j = idx
-				break
-			}
-		}
-		for idx := range ringKeysL {
-			if new(big.Int).SetBytes(ringKeysL[idx].Seed).Cmp(signerSeed) == 0 {
+		for idx, m := range members {
+			if bytes.Equal(m.Seed, seed) && bytes.Equal(m.Syndrome, syn) {
 				j = idx
 				break
 			}
@@ -5072,30 +5034,14 @@ func cmdSign(args []string) {
 				"(run pkey --pubout on the signer key and include it)")
 			os.Exit(1)
 		}
-		// TODO #272: ringMaxK bounds the READER in every CLI (TODO #240), but
-		// only C's writer enforced it, so Go signed rings that every verifier
-		// -- Go's included -- then refused.
-		if len(ringKeys)+len(ringKeysL) > ringMaxK {
-			fmt.Fprintf(os.Stderr, "hpks-ring sign: ring has %d members, at most %d "+
-				"supported (a larger ring produces a signature no CLI will verify)\n",
-				len(ringKeys)+len(ringKeysL), ringMaxK)
-			os.Exit(1)
+		rsig, err := HpksSternRingSign(msgPad(inBytes, 32), e, j, members, n, sternRounds)
+		if err != nil {
+			die("hpks-ring sign", err)
 		}
-		msg := sternMsg(inBytes, n)
-		var pem string
-		if SternIsLong(n) {
-			lsig := HpksSternLRingSign(msg, sternLField(ourInts[0], n, "e", "sign"), j,
-				ringKeysL, sternRounds)
-			pem = encodeRingSigL(lsig, n)
-		} else {
-			e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
-			sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
-			pem = encodeRingSig(sig, n)
-		}
-		if err := writeString(*out, pem); err != nil {
+		if err := writeString(*out, encodeRingSig(rsig, n, len(members), sternRounds)); err != nil {
 			die("sign", err)
 		}
-		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys)+len(ringKeysL))
+		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(members))
 
 	case "hpks-wots":
 		if wotsIsUsed(*key) {
@@ -5108,12 +5054,12 @@ func cmdSign(args []string) {
 		if len(ourInts) >= 2 {
 			leafIdx = uint32(wireInt(ourInts[1], "WOTS leaf index", "sign"))
 		}
+		wotsWriteIdx(*key, 1) // TODO #417: burn the key before the signature exists
 		sig := HpksWotsSign(inBytes, seed, leafIdx)
 		pem := encodeWotsBlobPEM(sig, lblHpksWotsSig)
 		if err := writeString(*out, pem); err != nil {
 			die("sign", err)
 		}
-		wotsWriteIdx(*key, 1)
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.")
 
 	case "hpks-xmss":
@@ -5136,12 +5082,13 @@ func cmdSign(args []string) {
 		}
 		kp := &HpksXmssKeypair{MasterSeed: seed, Root: HaccumRoot(leafHashes), LeafHashes: leafHashes}
 
-		leafIdx := xmssReadIdx(*key)
+		leafIdx := xmssReadIdx(*key, numLeaves)
 		if leafIdx >= numLeaves {
 			fmt.Fprintf(os.Stderr, "sign: XMSS key exhausted (%d leaves used). Generate a new key.\n",
 				numLeaves)
 			os.Exit(1)
 		}
+		xmssWriteIdx(*key, leafIdx+1) // TODO #417: consume the leaf before its signature exists
 		sig, serr := HpksXmssSign(inBytes, kp, leafIdx)
 		if serr != nil {
 			die("sign", serr)
@@ -5169,7 +5116,6 @@ func cmdSign(args []string) {
 		if werr := writeString(*out, pem); werr != nil {
 			die("sign", werr)
 		}
-		xmssWriteIdx(*key, leafIdx+1)
 		fmt.Fprintf(os.Stderr, "XMSS leaf %d used; %d leaves remaining.\n",
 			leafIdx, numLeaves-leafIdx-1)
 
@@ -5213,38 +5159,25 @@ func cmdVerify(args []string) {
 		inBytes = Hfscx256(inBytes, nil)
 	}
 
-	// hpks-ring: anonymous ring verification against --ring members.
+	// hpks-ring: anonymous ring verification against --ring members (TODO #415).
 	if *algo == "hpks-ring" {
 		if *ring == "" {
 			fmt.Fprintln(os.Stderr, "hpks-ring verify: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		ringKeys, ringKeysL, n := loadRingPubkeysAny(*ring)
-		rsig, rsigL, sigN := decodeRingSigAny(*sig)
-		sigK, sigRounds := 0, 0
-		if rsigL != nil {
-			sigK, sigRounds = rsigL.K, rsigL.Rounds
-		} else {
-			sigK, sigRounds = rsig.K, rsig.Rounds
-		}
+		members, n := loadRing(*ring)
+		rsig, sigN, sigK, sigRounds := decodeRingSig(*sig)
 		requireRounds(sigRounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
 		}
-		if sigK != len(ringKeys)+len(ringKeysL) {
+		if sigK != len(members) {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature ring size %d != %d provided members\n",
-				sigK, len(ringKeys)+len(ringKeysL))
+				sigK, len(members))
 			os.Exit(1)
 		}
-		msg := sternMsg(inBytes, n)
-		var ok bool
-		if rsigL != nil {
-			ok = HpksSternLRingVerify(msg, rsigL, ringKeysL)
-		} else {
-			ok = HpksSternRingVerify(msg, rsig, ringKeys)
-		}
-		if ok {
+		if HpksSternRingVerify(msgPad(inBytes, 32), rsig, members, n, sigRounds) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		}
@@ -5252,10 +5185,10 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
-	// hpks-t: C_agg is embedded in sig — no pubkey file needed.
+	// hpks-t: checked against --pubkey's group (TODO #412), in cmdThresholdVerify.
 	if *algo == "hpks-t" {
-		// Pass --in, --sig, --digest directly from parsed values.
-		tvArgs := []string{"--sig", *sig, "--in", *in}
+		// Pass --in, --sig, --digest and --pubkey directly from parsed values.
+		tvArgs := []string{"--sig", *sig, "--in", *in, "--pubkey", *pubkey}
 		// digestValue normalised none to "", which threshold-verify would now
 		// read as the hfscx-256 default (TODO #365): forward it explicitly.
 		fwd := *digest
@@ -5422,6 +5355,11 @@ func cmdVerify(args []string) {
 		// ordinary "Verification FAILED".
 		if eV.BigInt().Cmp(eStored) != 0 {
 			die("verify", errors.New("signature challenge e is not the recomputed one (rejected: non-canonical signature)"))
+		}
+		// TODO #423: g^s depends on s mod ord(g), and g generates a proper
+		// subgroup at n = 32 and 128, so s + ord(g) is a second encoding.
+		if sInt.Cmp(GfGenOrder(n)) >= 0 {
+			die("verify", errors.New("signature scalar s is not below the order of g (rejected: non-canonical signature)"))
 		}
 		fmt.Println("Signature OK")
 		os.Exit(0)
@@ -6227,8 +6165,6 @@ var keySites = []keySite{
 	{"dec", "hpke-nl", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
 	{"enc", "hpke-nl3", "--pubkey", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PUBLIC KEY"}},
 	{"dec", "hpke-nl3", "--key", "hpke-nl3", []string{"HERRADURA HPKE-NL3 PRIVATE KEY"}},
-	{"enc", "hpke-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
-	{"dec", "hpke-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
 	{"enc", "hpke-stern-kem", "--pubkey", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PUBLIC KEY"}},
 	{"dec", "hpke-stern-kem", "--key", "hpke-stern-kem", []string{"HERRADURA HPKE-STERN-KEM PRIVATE KEY"}},
 	{"sign", "hpks", "--key", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PRIVATE KEY", "HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY", "HERRADURA HPKE PRIVATE KEY", "HERRADURA HPKE-NL PRIVATE KEY"}},
@@ -6249,6 +6185,7 @@ var keySites = []keySite{
 	{"verify", "hpks-xmss", "--pubkey", "hpks-xmss", []string{"HERRADURA HPKS-XMSS PUBLIC KEY"}},
 	{"sign", "hpks-wots", "--key", "hpks-wots", []string{"HERRADURA HPKS-WOTS PRIVATE KEY"}},
 	{"verify", "hpks-wots", "--pubkey", "hpks-wots", []string{"HERRADURA HPKS-WOTS PUBLIC KEY"}},
+	{"verify", "hpks-t", "--pubkey", "hpks, hpks-nl", []string{"HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY"}},
 	{"threshold-commit", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
 	{"threshold-respond", "", "--key", "hpks, hpks-nl", []string{"HERRADURA HPKS PRIVATE KEY", "HERRADURA HPKS-NL PRIVATE KEY"}},
 	{"oprf-eval", "", "--key", "oprf", []string{"HERRADURA OPRF PRIVATE KEY"}},
@@ -6287,7 +6224,7 @@ var derItems = map[string][2]int{
 	"HERRADURA HPKS PUBLIC KEY": {2, 2},
 	"HERRADURA HPKS-NL PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-NL PUBLIC KEY": {2, 2},
-	"HERRADURA HPKS-RING SIGNATURE": {4, 4},
+	"HERRADURA HPKS-RING-V2 SIGNATURE": {5, 5},
 	"HERRADURA HPKS-STERN PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-STERN PUBLIC KEY": {3, 3},
 	"HERRADURA HPKS-WOTS PRIVATE KEY": {2, 2},
@@ -7023,9 +6960,9 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			return ""
 		}
-	case "HERRADURA HPKS-RING SIGNATURE":
-		if n >= 4 && n <= 4 {
-			if c := int64(1); n > 0 && L(0) > c {
+	case "HERRADURA HPKS-RING-V2 SIGNATURE":
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
 			if c := int64(2); n > 1 && L(1) > c {
@@ -7034,8 +6971,11 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if c := int64(2); n > 2 && L(2) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
 			}
-			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && L(3) > c {
+			if c := int64(32); n > 3 && L(3) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(2) * (96 + 2 * (F(1) * (F(0)/8) + (F(1) + 7)/8))); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
 			}
 			if n > 0 && lz[0] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
@@ -7046,8 +6986,11 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			if n > 2 && lz[2] == 1 {
 				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
 			}
-			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
 			return ""
 		}
@@ -7447,7 +7390,7 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			return ""
 		}
-		if n >= 5 && n <= 5 && (F(0) == 2) {
+		if n >= 5 && n <= 5 {
 			if c := int64(1); n > 0 && L(0) > c {
 				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
 			}
@@ -7477,39 +7420,6 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			if c := int64((F(4) + 7)/8); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
-			}
-			return ""
-		}
-		if n >= 5 && n <= 5 {
-			if c := int64(2); n > 4 && L(4) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
-			}
-			if c := int64(F(4)/8); n > 0 && L(0) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
-			}
-			if c := int64(F(4)/8); n > 1 && L(1) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && L(2) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && L(3) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
-			}
-			if n > 4 && lz[4] == 1 {
-				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
-			}
-			if c := int64(F(4)/8); n > 0 && !(int64(ew[0]) == c || (lz[0] == 2 && int64(ew[0])+1 == c) || (c == 0 && ew[0] == 1 && L(0) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 0, ew[0], c)
-			}
-			if c := int64(F(4)/8); n > 1 && !(int64(ew[1]) == c || (lz[1] == 2 && int64(ew[1])+1 == c) || (c == 0 && ew[1] == 1 && L(1) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, ew[1], c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
-			}
-			if c := int64(hkxMin(F(4)/8, 32)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
 		}
@@ -7770,6 +7680,31 @@ var paramLevelNotes = map[string]string{
 	"oprf": "the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)",
 }
 
+// TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the
+// warning enc/dec print to stderr when there is no tag.
+var encIntegrity = map[string][2]string{
+	"hske": {"none",
+		"--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla1": {"aead-flag",
+		"--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla2": {"none",
+		"--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-nla3": {"none",
+		"--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)"},
+	"hske-duplex": {"tag",
+		""},
+	"hske-duplex3": {"tag",
+		""},
+	"hpke": {"none",
+		"--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-nl": {"none",
+		"--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-nl3": {"none",
+		"--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+	"hpke-stern-kem": {"none",
+		"--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)"},
+}
+
 // END GENERATED key-label table
 
 // pemFileLabel returns the first PEM BEGIN label in path, or "" (unreadable or
@@ -7809,7 +7744,8 @@ func checkKeyLabels(cmd string, fs *flag.FlagSet) {
 			continue
 		}
 		paths := []string{f.Value.String()}
-		if r.flag == "--ring" {
+		// A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+		if r.flag == "--ring" || (r.flag == "--pubkey" && algo == "hpks-t") {
 			paths = strings.Split(paths[0], ",")
 		}
 		for _, p := range paths {
@@ -7859,7 +7795,10 @@ required):
                        --rounds
   dec                  --ad --algo --in --key --out
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
-                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hske-duplex3 hpke hpke-nl hpke-nl3
+                               hpke-stern-kem
+                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)
+                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
   decfile              --algo --in --key --out
                        --algo: hske-nla1
@@ -7867,7 +7806,10 @@ required):
                        --algo: hfscx-256 hfscx-256-ds
   enc                  --ad --aead --algo --in --key --out --pubkey
                        --algo: hske hske-nla1 hske-nla2 hske-nla3 hske-duplex
-                               hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
+                               hske-duplex3 hpke hpke-nl hpke-nl3
+                               hpke-stern-kem
+                       NO INTEGRITY (TODO #414): hske hske-nla1 (unless --aead)
+                               hske-nla2 hske-nla3 hpke hpke-nl hpke-nl3
                                hpke-stern-kem
   encfile              --algo --in --key --out
                        --algo: hske-nla1
@@ -7895,7 +7837,7 @@ required):
   threshold-combine    --aggregate --out --partial --partials
   threshold-commit     --commit-out --key --nonce-out
   threshold-respond    --aggregate --commit --commits --key --nonce --out
-  threshold-verify     --digest --in --sig
+  threshold-verify     --digest --in --pubkey --sig
   twk                  --bidx --decrypt --encrypt --in --key --out --sector
                        --v3
   verify               --algo --digest --in --min-rounds --pubkey --ring --sig
@@ -8290,6 +8232,7 @@ func cmdThresholdVerify(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
 	digest := fs.String("digest", "", "Pre-hash: hfscx-256 (default) or none (pad/truncate to 32 bytes)")
+	pubkey := fs.String("pubkey", "", "the signing group's public keys, comma-separated (TODO #412)")
 	parseArgs(fs, args)
 	digestValue("threshold-verify", digest)
 	if *sig == "" {
@@ -8311,6 +8254,46 @@ func cmdThresholdVerify(args []string) {
 	R    := new(big.Int).SetBytes(sigInts[1])
 	s    := new(big.Int).SetBytes(sigInts[2])
 	n    := 256
+
+	// TODO #412: the signature carries its aggregate key, and checking it
+	// against that key alone proves only that SOME group signed.  The group to
+	// trust is --pubkey's: every member's public key, comma-separated (L is
+	// built sorted, so their order does not matter).  The signature must carry
+	// exactly the aggregate those keys give.
+	if *pubkey == "" {
+		fmt.Fprintln(os.Stderr, "verify: hpks-t needs --pubkey: the signing group's public keys, comma-separated")
+		os.Exit(1)
+	}
+	var members []*big.Int
+	for _, p := range strings.Split(*pubkey, ",") {
+		p = strings.TrimSpace(p)
+		lbl, ints, perr := readPEMInts(p)
+		if perr != nil {
+			die("verify", perr)
+		}
+		if lbl != lblHpksPub && lbl != lblHpksNLPub {
+			fmt.Fprintf(os.Stderr, "verify --algo hpks-t: wrong key type: --pubkey holds '%s'; accepted: hpks, hpks-nl\n", lbl)
+			os.Exit(1)
+		}
+		if len(ints) < 2 {
+			die("verify", errors.New("malformed public key"))
+		}
+		nj := gfWidth(bytesToInt(ints[len(ints)-1]), "verify")
+		if nj != n {
+			fmt.Fprintf(os.Stderr, "verify: hpks-t public keys are %d-bit; %s is %d-bit\n", n, p, nj)
+			os.Exit(1)
+		}
+		pk := new(big.Int).SetBytes(ints[0])
+		if !GfPubIsValid(NewBitArray(n, pk)) {
+			die("verify", errors.New("public key is the GF(2^n)* identity/zero element (rejected: degenerate key)"))
+		}
+		members = append(members, pk)
+	}
+	if expect, _ := HpkstAggregatePublickeys(members); expect.Cmp(Cagg) != 0 {
+		fmt.Fprintln(os.Stderr, "verify: the signature's aggregate key is not the one --pubkey gives")
+		fmt.Println("Verification FAILED")
+		os.Exit(1)
+	}
 
 	msg := msgPad(inBytes, n/8)
 	if HpkstVerify(Cagg, R, s, msg) {

@@ -855,6 +855,16 @@ def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) ->
 # Primitive polynomials (lower n bits; the x^n coefficient is implicit).
 GF_POLY = {32: 0x00400007, 64: 0x0000001B, 128: 0x00000087, 256: 0x00000425}
 GF_GEN  = 3   # g = x+1 in GF(2^n)[x]; DH correctness holds for any non-zero g
+# TODO #423: g generates all of GF(2^n)* at n = 64 and 256, but only a subgroup of
+# index 15 at n = 32 and index 3 at n = 128 (under GF_POLY).  g^s depends on s
+# mod ord(g) only, so an HPKS scalar is reduced mod ord(g) when signed and must
+# lie below it when verified; otherwise s + ord(g) was a second encoding.
+GF_GEN_INDEX = {32: 15, 64: 1, 128: 3, 256: 1}
+
+
+def gf_gen_order(n: int) -> int:
+    """ord(g) in GF(2^n)*: (2^n - 1) / GF_GEN_INDEX[n] (TODO #423)."""
+    return ((1 << n) - 1) // GF_GEN_INDEX[n]
 
 def gf_mul(a: int, b: int, poly: int, n: int) -> int:
     """Carryless polynomial multiply mod p(x) in GF(2^n). O(n) XOR+shift ops."""
@@ -953,6 +963,8 @@ def hpks_verify(msg: 'BitArray', pub: int, R: 'BitArray', s: int,
     R=g^s) pair verify trivially against any message)."""
     if not gf_pub_is_valid(pub):
         return False
+    if not 0 <= s < gf_gen_order(n):     # TODO #423: s + ord(g) is the same g^s
+        return False
     e = fscx_revolve(R, msg, n // 4).uint
     lhs = gf_mul(gf_pow(GF_GEN, s, poly, n), gf_pow(pub, e, poly, n), poly, n)
     return lhs == R.uint
@@ -971,7 +983,7 @@ def hpks_sign(msg: 'BitArray', priv: int, poly: int, n: int):
     k = BitArray.random(n).uint
     R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
     e = fscx_revolve(R, msg, n // 4)
-    return R, (k - priv * e.uint) % ((1 << n) - 1)
+    return R, (k - priv * e.uint) % gf_gen_order(n)    # TODO #423: below ord(g)
 
 
 def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
@@ -981,7 +993,7 @@ def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
     k = BitArray.random(n).uint
     R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
     e = hpks_nl_challenge(R, msg)
-    return R, (k - priv * e.uint) % ((1 << n) - 1)
+    return R, (k - priv * e.uint) % gf_gen_order(n)    # TODO #423: below ord(g)
 
 
 def hpke_encrypt(pt: 'BitArray', pub: int, poly: int, n: int):
@@ -1904,79 +1916,6 @@ def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
     return result
 
 
-def _stern_ring_trit() -> int:
-    """Rejection-sample a uniform trit in {0, 1, 2} for a SIMULATED ring member.
-
-    Extracted from hpks_stern_ring_sign's loop by TODO #297, and extracted in
-    all four ports at once, because one trit had THREE schemes: this
-    byte-with-rejection (C and Python), a whole n-bit draw reduced modulo 3
-    (Go), and Random.nextInt(3) (Java).  A sampler written inline in four places
-    is a sampler nobody compares.
-
-    256 is not divisible by 3, so a plain `byte % 3` is biased (86/256 against
-    85/256 per residue, TODO #164).  Rejecting the single value 255 leaves 255
-    values over 3 residues exactly.
-    """
-    while True:
-        v = os.urandom(1)[0]
-        if v != 255:
-            return v % 3
-
-
-def _stern_simulate_round(b: int, syndrome: int, H_rows: list, n: int, t: int):
-    """HVZK simulator for one Stern round given pre-chosen challenge b ∈ {0,1,2}.
-
-    Returns (c0, c1, c2, resp) where resp is the response tuple matching b:
-      b=0 → resp=(sr_sim, sy_sim);  c0 unchecked (random-looking)
-      b=1 → resp=(pi_sim, r_sim);   c2 unchecked (random-looking)
-      b=2 → resp=(pi_sim, y_sim);   c1 unchecked (random-looking)
-
-    Used in hpks_stern_ring_sign to simulate non-signer ring members.
-    """
-    mask = (1 << n) - 1
-    if b == 0:
-        # sr_sim is UNIFORM and sy_sim = sr_sim XOR (weight-t), because the
-        # real transcript's pair is (sigma(r), sigma(r) XOR sigma(e)) with r
-        # uniform: sigma(r) is then uniform and sigma(e) is an independent
-        # uniform weight-t vector, so this is a PERFECT simulation of the b = 0
-        # response (TODO #298).  Until v8.0.0 it drew sr_sim weight-t and
-        # sy_sim uniform, which is the transcript the OLD protocol produced --
-        # and the signer's sy was sigma(e XOR r) of weight <= 2t where every
-        # simulated one had weight ~n/2, so wt(sr XOR sy) was exactly t for the
-        # signer and ~n/2 for everyone else.  ONE b = 0 round named the signer.
-        sr_sim = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        sy_sim = sr_sim ^ _csprng_weight_t(n, t)
-        pi_dum = BitArray.random(n)
-        c0 = _stern_hash(n, pi_dum, BitArray(n, 0), ds=1)          # unchecked
-        c1 = _stern_hash(n, BitArray(n, sr_sim), ds=2)
-        c2 = _stern_hash(n, BitArray(n, sy_sim), ds=3)
-        return c0, c1, c2, (sr_sim, sy_sim)
-    elif b == 1:
-        pi_sim = BitArray.random(n)
-        # UNIFORM since v8.0.0: the b = 1 response reveals r itself, and the
-        # real r is now uniform rather than weight-t (TODO #298).
-        r_sim  = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        perm   = _stern_gen_perm(pi_sim, n)
-        Hr_sim = _stern_syndrome_H(H_rows, r_sim)
-        sr_sim = _stern_apply_perm(perm, r_sim, n)
-        sy_dum = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        c0 = _stern_hash(n, pi_sim, BitArray(n, Hr_sim), ds=1)
-        c1 = _stern_hash(n, BitArray(n, sr_sim), ds=2)
-        c2 = _stern_hash(n, BitArray(n, sy_dum), ds=3)              # unchecked
-        return c0, c1, c2, (pi_sim, r_sim)
-    else:  # b == 2
-        pi_sim = BitArray.random(n)
-        y_sim  = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        perm   = _stern_gen_perm(pi_sim, n)
-        Hy_sim = _stern_syndrome_H(H_rows, y_sim)
-        sy_sim = _stern_apply_perm(perm, y_sim, n)
-        sr_dum = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        c0 = _stern_hash(n, pi_sim, BitArray(n, Hy_sim ^ syndrome), ds=1)
-        c1 = _stern_hash(n, BitArray(n, sr_dum), ds=2)              # unchecked
-        c2 = _stern_hash(n, BitArray(n, sy_sim), ds=3)
-        return c0, c1, c2, (pi_sim, y_sim)
-
-
 def stern_f_keygen(n: int = None):
     """Stern-F key generation for HPKS-Stern-F and HPKE-Stern-F.
 
@@ -2624,153 +2563,6 @@ def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
 
 
 # ---------------------------------------------------------------------------
-# 78.I — Code-Based Ring/Group Signature via HPKS-Stern-F OR-composition
-# OR-compose k Stern identification instances: prove knowledge of one secret
-# key in a ring of k public keys without revealing which one.
-# Proof size: O(k × rounds).  Security: EUF-CMA under SD(N,t) per member.
-# ---------------------------------------------------------------------------
-
-def hpks_stern_ring_sign(msg: 'BitArray', e_int: int, j: int,
-                          ring_keys: list, n: int = None,
-                          rounds: int = None):
-    """Ring signature: prove knowledge of one HPKS-Stern-F key in a ring.
-
-    ring_keys = [(seed_0, syndrome_0), ..., (seed_{k-1}, syndrome_{k-1})]
-      where syndrome_i is the integer returned by stern_f_keygen.
-    j         = 0-based index of the actual signer.
-    e_int     = signer's weight-t error vector (secret key for ring_keys[j]).
-
-    Returns (all_commits, all_challenges, all_responses):
-      all_commits[i][r]   = (c0, c1, c2)  BitArray triples
-      all_challenges[i][r] = b ∈ {0,1,2}
-      all_responses[i][r]  = response tuple matching b
-    """
-    if n      is None: n      = KEYBITS
-    if rounds is None: rounds = SDFR
-    k      = len(ring_keys)
-    n_rows = n // 2
-    t      = max(2, n // 16)
-
-    all_commits    = [[None] * rounds for _ in range(k)]
-    all_challenges = [[0]    * rounds for _ in range(k)]
-    all_responses  = [[None] * rounds for _ in range(k)]
-
-    # Step 1 — simulate non-signer members with pre-chosen challenges
-    for i in range(k):
-        if i == j:
-            continue
-        seed_i, syn_i = ring_keys[i]
-        H_rows_i = _stern_build_H(seed_i.uint, n, n_rows)
-        for r in range(rounds):
-            b = _stern_ring_trit()
-            all_challenges[i][r] = b
-            c0, c1, c2, resp = _stern_simulate_round(b, syn_i, H_rows_i, n, t)
-            all_commits[i][r]   = (c0, c1, c2)
-            all_responses[i][r] = resp
-
-    # Step 2 — commit phase for real signer j
-    seed_j, _ = ring_keys[j]
-    H_rows_j  = _stern_build_H(seed_j.uint, n, n_rows)
-    mask       = (1 << n) - 1
-    round_data_j = []
-    for r in range(rounds):
-        r_int   = int.from_bytes(os.urandom(n // 8), 'big') & mask
-        y_int   = (e_int ^ r_int) & mask
-        pi_seed = BitArray.random(n)
-        perm    = _stern_gen_perm(pi_seed, n)
-        Hr  = _stern_syndrome_H(H_rows_j, r_int)
-        sr  = _stern_apply_perm(perm, r_int, n)
-        sy  = _stern_apply_perm(perm, y_int, n)
-        all_commits[j][r] = (
-            _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1),
-            _stern_hash(n, BitArray(n, sr), ds=2),
-            _stern_hash(n, BitArray(n, sy), ds=3),
-        )
-        round_data_j.append((r_int, y_int, pi_seed, sr, sy))
-
-    # Step 3 — Fiat-Shamir: hash msg + all k×rounds×3 commits (member-major)
-    flat = [msg]
-    for i in range(k):
-        for r in range(rounds):
-            flat += list(all_commits[i][r])
-    ch_st = _stern_hash(n, *flat)
-
-    # Step 4 — assign real signer's per-round challenge via challenge splitting
-    for r in range(rounds):
-        ch_st   = nl_fscx_v1(ch_st, BitArray(n, r))
-        joint_b = (ch_st.uint & 0xFFFFFFFF) % 3
-        sim_sum = sum(all_challenges[i][r] for i in range(k) if i != j) % 3
-        all_challenges[j][r] = (joint_b - sim_sum) % 3
-
-    # Step 5 — complete real signer's responses
-    for r, (r_int, y_int, pi_seed, sr, sy) in enumerate(round_data_j):
-        b = all_challenges[j][r]
-        if   b == 0: all_responses[j][r] = (sr, sy)
-        elif b == 1: all_responses[j][r] = (pi_seed, r_int)
-        else:        all_responses[j][r] = (pi_seed, y_int)
-
-    return (all_commits, all_challenges, all_responses)
-
-
-def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
-                             n: int = None) -> bool:
-    """Verify an HPKS-Stern-F ring signature.
-
-    Accepts any sig produced by hpks_stern_ring_sign for any member of
-    ring_keys without revealing which member signed.
-    """
-    if n is None: n = KEYBITS
-    k      = len(ring_keys)
-    n_rows = n // 2
-    t      = max(2, n // 16)
-    all_commits, all_challenges, all_responses = sig
-    rounds = len(all_challenges[0])
-
-    # Re-derive joint Fiat-Shamir challenges
-    flat = [msg]
-    for i in range(k):
-        for r in range(rounds):
-            flat += list(all_commits[i][r])
-    ch_st = _stern_hash(n, *flat)
-
-    # Check challenge consistency: sum_i b_ir ≡ joint_b_r (mod 3) for all r
-    for r in range(rounds):
-        ch_st   = nl_fscx_v1(ch_st, BitArray(n, r))
-        joint_b = (ch_st.uint & 0xFFFFFFFF) % 3
-        if sum(all_challenges[i][r] for i in range(k)) % 3 != joint_b:
-            return False
-
-    # Verify each member's response
-    for i in range(k):
-        seed_i, syn_i = ring_keys[i]
-        H_rows_i = _stern_build_H(seed_i.uint, n, n_rows)
-        for r in range(rounds):
-            c0, c1, c2 = all_commits[i][r]
-            b    = all_challenges[i][r]
-            resp = all_responses[i][r]
-            if b == 0:
-                sr, sy = resp
-                if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
-                if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
-                if bin(sr ^ sy).count('1') != t:                 return False
-            elif b == 1:
-                pi_seed, r_int = resp
-                perm = _stern_gen_perm(pi_seed, n)
-                Hr   = _stern_syndrome_H(H_rows_i, r_int)
-                if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
-                sr   = _stern_apply_perm(perm, r_int, n)
-                if _stern_hash(n, BitArray(n, sr), ds=2) != c1:  return False
-            else:
-                pi_seed, y_int = resp
-                perm = _stern_gen_perm(pi_seed, n)
-                Hy   = _stern_syndrome_H(H_rows_i, y_int)
-                if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syn_i), ds=1) != c0: return False
-                sy   = _stern_apply_perm(perm, y_int, n)
-                if _stern_hash(n, BitArray(n, sy), ds=3) != c2:  return False
-    return True
-
-
-# ---------------------------------------------------------------------------
 # Stern-F long form: N > 256 (TODO #382 stage 2, v16.0.0)
 #
 # The 128-bit parameter set is N = 2304, k = N/2 = 1152, t = N/16 = 144
@@ -2880,6 +2672,8 @@ def _sternl_fs_state(msg, flat_commits) -> 'BitArray':
 
 
 def _sternl_check_round(b, commit, resp, H_rows, syndrome, n, t) -> bool:
+    if b not in (0, 1, 2):                       # TODO #421: as C, Go and Java
+        return False
     c0, c1, c2 = commit
     a, v = resp
     if not (0 <= a < (1 << n) and 0 <= v < (1 << n)):
@@ -2947,91 +2741,283 @@ def hpks_stern_l_verify(msg: 'BitArray', sig, seed_int: int, syndrome: int,
                for i, b in enumerate(challenges))
 
 
-def _sternl_simulate_round(b: int, syndrome: int, H_rows: list, n: int):
-    """The short form's HVZK simulator (_stern_simulate_round), draw for draw,
-    on the long-form primitives."""
-    t = n // 16
-    if b == 0:
-        sr = _sternl_rand(n)
-        sy = sr ^ _csprng_weight_t(n, t)
-        pi_dum = _sternl_rand(n)
-        return ((_sternl_hash(1, _sternl_b(pi_dum, n), _sternl_b(0, n)),      # unchecked
-                 _sternl_hash(2, _sternl_b(sr, n)), _sternl_hash(3, _sternl_b(sy, n))),
-                (sr, sy))
-    pi = _sternl_rand(n)
-    v  = _sternl_rand(n)
-    perm = _sternl_gen_perm(pi, n)
-    Hv   = _stern_syndrome_H(H_rows, v)
-    sv   = _stern_apply_perm(perm, v, n)
-    dum  = _sternl_rand(n)
-    if b == 1:
-        return ((_sternl_hash(1, _sternl_b(pi, n), _sternl_b(Hv, n)),
-                 _sternl_hash(2, _sternl_b(sv, n)),
-                 _sternl_hash(3, _sternl_b(dum, n))), (pi, v))           # c2 unchecked
-    return ((_sternl_hash(1, _sternl_b(pi, n), _sternl_b(Hv ^ syndrome, n)),
-             _sternl_hash(2, _sternl_b(dum, n)),                          # c1 unchecked
-             _sternl_hash(3, _sternl_b(sv, n))), (pi, v))
+# ---------------------------------------------------------------------------
+# HPKS-Ring: ONE Stern proof over a block-diagonal statement (TODO #415, v20.0.0)
+#
+# Replaces the OR-composition of k Stern proofs (TODO #78.I), which was
+# existentially forgeable with no member's key: it split each round's challenge
+# across the members mod 3, and in Stern a party without the witness answers
+# two of the three challenges, so two keyless members covered every residue.
+# Here there is ONE challenge per round, for one statement that only a member's
+# key satisfies; nothing is split.  SPEC.md section 11.2 is the normative text.
+#
+# Ring of k hpks-stern keys (seed_i, s_i), one width n (32..256, or the long
+# form's 512..2304), t = max(2, n/16), sorted by their encoding (duplicates
+# refused), so a signature does not depend on the order the ring is given in.
+#
+#   statement  H~ = diag([H_1 | s_1], ..., [H_k | s_k]),  H~ z = 0,
+#              z = (x_1..x_k ; c) with c a k-bit indicator:
+#              H_i x_i + c_i s_i = 0 for every i, and z in
+#              S = { exactly one c_p = 1, wt(x_p) = t, x_q = 0 for q != p }.
+#              The member at canonical index j proves with x_j = e_j, c = 1 << j.
+#   group      Pi = (tau in S_k, pi_1..pi_k in S_n):
+#              Pi(z) puts pi_i(x_i) at block tau(i), and c's bit i at tau(i).
+#              S is one orbit of that group, so Pi(z) is uniform on S whoever
+#              signed (anonymity), and anything in S is a member's key (soundness).
+#   round      r uniform (k blocks, then the indicator), y = r + z, pi_seed,
+#              salt1, salt2 (drawn in that order):
+#                c0 = H_1(pi_seed || H~ r)      (H~ r = H~ y, since H~ z = 0)
+#                c1 = H_2(salt1 || Pi(r))       c2 = H_3(salt2 || Pi(y))
+#              b = 0 opens salt1, salt2, Pi(r), Pi(y): Pi(r) + Pi(y) must lie in S;
+#              b = 1 opens pi_seed, salt1, r;   b = 2 opens pi_seed, salt2, y.
+#   transcript D = H_0(0x02 || n || k || rounds || msg || ring || every c0 c1 c2);
+#              the challenges are trits drawn from H_6(D || ctr) bytes, 255
+#              rejected; the signature is D, then per round the ONE unopened
+#              commitment and the opening.  The verifier rebuilds the two opened
+#              commitments of every round and recomputes D.
+#   hash       H_tag(x) = HFSCX-256-DS(0x32, tag || x), 256 bits at every width.
+#
+# Soundness: three valid openings of one commitment give r + y in S with
+# H~ (r + y) = 0 -- a member's key -- or a hash collision; so a forger answers
+# at most two of three challenges per round, (2/3)^219 < 2^-128 at the CLI's
+# 219 rounds.  The salts keep c1 and c2 hiding from an adversary who holds
+# every member's secret key (c0 is hidden by the unopened 256-bit pi_seed).
+# Every vector is a big-endian byte string: an n-bit block is n/8 bytes, a
+# syndrome n/16, the indicator ceil(k/8) (bits at or above k must be zero).
+# ---------------------------------------------------------------------------
+
+_RING_DS          = 0x32   # HFSCX-256-DS domain byte of the ring (TODO #415)
+_RING_VERSION     = 2      # the transcript header's first byte
+_RING_MAX_MEMBERS = 1024   # ring size bound, every port and every CLI
+_RING_T_CH        = 0      # hash tags: the transcript digest D
+_RING_T_C0        = 1      #   commitment c0
+_RING_T_C1        = 2      #   commitment c1
+_RING_T_C2        = 3      #   commitment c2
+_RING_T_TAU       = 4      #   the member-shuffle key
+_RING_T_PI        = 5      #   a block's permutation key
+_RING_T_XOF       = 6      #   the challenge expander
 
 
-def hpks_stern_l_ring_sign(msg: 'BitArray', e_int: int, j: int, ring_keys: list,
-                           n: int = STERN_LONG_N, rounds: int = None):
-    """Long-form ring signature; ring_keys = [(seed_int, syndrome), ...].  The
-    short form's member-major order and challenge splitting."""
-    if rounds is None: rounds = _STERN_F_PRODUCTION_ROUNDS
-    _sternl_msg(msg)
-    k = len(ring_keys)
-    commits = [[None] * rounds for _ in range(k)]
-    chals   = [[0] * rounds for _ in range(k)]
-    resps   = [[None] * rounds for _ in range(k)]
-    for i in range(k):
-        if i == j:
-            continue
-        seed_i, syn_i = ring_keys[i]
-        H_i = _sternl_build_H(seed_i, n)
-        for r in range(rounds):
-            b = _stern_ring_trit()
-            chals[i][r] = b
-            commits[i][r], resps[i][r] = _sternl_simulate_round(b, syn_i, H_i, n)
-    H_j = _sternl_build_H(ring_keys[j][0], n)
-    data = []
-    for r in range(rounds):
-        r_int = int.from_bytes(os.urandom(n // 8), 'big')
-        pi_seed = int.from_bytes(os.urandom(n // 8), 'big')
-        commits[j][r], d = _sternl_round_commit(H_j, e_int, r_int, pi_seed, n)
-        data.append(d)
-    st = _sternl_fs_state(msg, [c for i in range(k) for r in range(rounds)
-                                for c in commits[i][r]])
-    for r in range(rounds):
-        st = nl_fscx_v1(st, BitArray(_STERN_W, r))
-        joint = (st.uint & 0xFFFFFFFF) % 3
-        chals[j][r] = (joint - sum(chals[i][r] for i in range(k) if i != j)) % 3
-        resps[j][r] = _sternl_respond(chals[j][r], data[r])
-    return commits, chals, resps
+def _ring_h(tag: int, *items: bytes) -> bytes:
+    """H_tag = HFSCX-256-DS(0x32, tag || items): 32 bytes."""
+    return hfscx_256_ds(_RING_DS, bytes([tag]) + b''.join(items))
 
 
-def hpks_stern_l_ring_verify(msg: 'BitArray', sig, ring_keys: list,
-                             n: int = STERN_LONG_N) -> bool:
-    commits, chals, resps = sig
-    k = len(ring_keys)
-    if k == 0 or len(commits) != k:
-        return False
-    rounds = len(chals[0])
-    st = _sternl_fs_state(msg, [c for i in range(k) for r in range(rounds)
-                                for c in commits[i][r]])
-    for r in range(rounds):
-        st = nl_fscx_v1(st, BitArray(_STERN_W, r))
-        if sum(chals[i][r] for i in range(k)) % 3 != (st.uint & 0xFFFFFFFF) % 3:
+def _ring_check_n(n: int) -> None:
+    if n in (32, 64, 128, 256) or (n > KEYBITS and n % 256 == 0 and n <= STERN_LONG_N):
+        return
+    raise ValueError(f"HPKS-Ring: n = {n} is not a Stern-F width")
+
+
+def _ring_build_H(seed_int: int, n: int) -> list:
+    return _sternl_build_H(seed_int, n) if n > KEYBITS else _stern_build_H(seed_int, n, n // 2)
+
+
+def _ring_gen_perm(key: bytes, N: int) -> list:
+    """The Stern-F Fisher-Yates generator over N positions, keyed by 32 bytes."""
+    return _stern_gen_perm(BitArray(256, int.from_bytes(key, 'big')), N)
+
+
+class _Ring:
+    """A ring in canonical order: (seed, syndrome) sorted by their encoding."""
+
+    def __init__(self, ring_keys: list, n: int):
+        _ring_check_n(n)
+        k = len(ring_keys)
+        if not 1 <= k <= _RING_MAX_MEMBERS:
+            raise ValueError(f"HPKS-Ring: ring has {k} members (expected 1..{_RING_MAX_MEMBERS})")
+        mem = []
+        for sd, sy in ring_keys:
+            sd = sd.uint if hasattr(sd, "uint") else int(sd)
+            sy = int(sy)
+            if not (0 <= sd < (1 << n) and 0 <= sy < (1 << (n // 2))):
+                raise ValueError("HPKS-Ring: a ring member is not an n-bit Stern-F key")
+            mem.append((sd.to_bytes(n // 8, 'big') + sy.to_bytes(n // 16, 'big'), sd, sy))
+        order = sorted(range(k), key=lambda i: mem[i][0])
+        if any(mem[order[i]][0] == mem[order[i + 1]][0] for i in range(k - 1)):
+            raise ValueError("HPKS-Ring: the ring lists a member twice")
+        self.n, self.k, self.kb = n, k, (k + 7) // 8
+        self.position = {orig: pos for pos, orig in enumerate(order)}
+        self.enc = b''.join(mem[i][0] for i in order)
+        self.seeds = [mem[i][1] for i in order]
+        self.syns = [mem[i][2] for i in order]
+        self.H = [_ring_build_H(sd, n) for sd in self.seeds]
+
+    def venc(self, v) -> bytes:
+        blocks, ind = v
+        nb = self.n // 8
+        return b''.join(x.to_bytes(nb, 'big') for x in blocks) + ind.to_bytes(self.kb, 'big')
+
+    def vdec(self, buf: bytes):
+        nb = self.n // 8
+        blocks = [int.from_bytes(buf[i * nb:(i + 1) * nb], 'big') for i in range(self.k)]
+        ind = int.from_bytes(buf[self.k * nb:], 'big')
+        return (blocks, ind) if ind >> self.k == 0 else None
+
+    def vlen(self) -> int:
+        return self.k * (self.n // 8) + self.kb
+
+    def perms(self, pi_seed: bytes):
+        tau = _ring_gen_perm(_ring_h(_RING_T_TAU, pi_seed), self.k)
+        pis = [_ring_gen_perm(_ring_h(_RING_T_PI, pi_seed, i.to_bytes(2, 'big')), self.n)
+               for i in range(self.k)]
+        return tau, pis
+
+    def apply(self, P, v):
+        tau, pis = P
+        blocks, ind = v
+        out, oind = [0] * self.k, 0
+        for i in range(self.k):
+            out[tau[i]] = _stern_apply_perm(pis[i], blocks[i], self.n)
+            if (ind >> i) & 1:
+                oind |= 1 << tau[i]
+        return (out, oind)
+
+    def htilde(self, v) -> bytes:
+        blocks, ind = v
+        out = b''
+        for i in range(self.k):
+            s = _stern_syndrome_H(self.H[i], blocks[i])
+            if (ind >> i) & 1:
+                s ^= self.syns[i]
+            out += s.to_bytes(self.n // 16, 'big')
+        return out
+
+    def in_S(self, v) -> bool:
+        blocks, ind = v
+        if ind == 0 or ind & (ind - 1):
             return False
-    t = n // 16
-    for i in range(k):
-        seed_i, syn_i = ring_keys[i]
-        H_i = _sternl_build_H(seed_i, n)
-        for r in range(rounds):
-            if not _sternl_check_round(chals[i][r], commits[i][r], resps[i][r],
-                                       H_i, syn_i, n, t):
-                return False
-    return True
+        p = ind.bit_length() - 1
+        t = max(2, self.n // 16)
+        return all((bin(x).count('1') == t) if i == p else (x == 0)
+                   for i, x in enumerate(blocks))
 
+
+def _ring_msg(msg) -> bytes:
+    if isinstance(msg, BitArray):
+        if msg.size != 256:
+            raise ValueError("HPKS-Ring: the message is a 256-bit digest")
+        return msg.bytes
+    if not isinstance(msg, (bytes, bytearray)) or len(msg) != 32:
+        raise ValueError("HPKS-Ring: the message is a 256-bit digest")
+    return bytes(msg)
+
+
+def _ring_challenges(D: bytes, rounds: int) -> list:
+    out, ctr = [], 0
+    while len(out) < rounds:
+        for byte in _ring_h(_RING_T_XOF, D, ctr.to_bytes(4, 'big')):
+            if byte != 255:
+                out.append(byte % 3)
+                if len(out) == rounds:
+                    break
+        ctr += 1
+    return out
+
+
+def _ring_digest(ring: '_Ring', rounds: int, msg32: bytes, commits: list) -> bytes:
+    header = bytes([_RING_VERSION]) + ring.n.to_bytes(2, 'big') + ring.k.to_bytes(2, 'big') \
+        + rounds.to_bytes(2, 'big')
+    return _ring_h(_RING_T_CH, header, msg32, ring.enc, *[b''.join(c) for c in commits])
+
+
+def hpks_stern_ring_sig_len(D: bytes, k: int, n: int, rounds: int) -> int:
+    """The byte length of a ring signature with digest D (its challenges decide it)."""
+    vlen = k * (n // 8) + (k + 7) // 8
+    return 32 + sum(96 + (2 * vlen if b == 0 else vlen) for b in _ring_challenges(D, rounds))
+
+
+def hpks_stern_ring_sign(msg, e_int: int, j: int, ring_keys: list,
+                         n: int = None, rounds: int = None) -> bytes:
+    """Ring-sign the 256-bit digest msg as ring_keys[j] (secret e_int).
+
+    ring_keys = [(seed, syndrome), ...] -- seed an int or an n-bit BitArray,
+    syndrome the n/2-bit int stern_f_keygen / stern_l_keygen return.  Returns the
+    signature bytes: D, then per round the unopened commitment and the opening.
+    """
+    if n is None: n = KEYBITS
+    if rounds is None: rounds = _STERN_F_PRODUCTION_ROUNDS
+    if not 1 <= rounds <= 0xFFFF:
+        raise ValueError("HPKS-Ring: rounds out of range")
+    msg32 = _ring_msg(msg)
+    ring = _Ring(ring_keys, n)
+    if not 0 <= j < ring.k:
+        raise ValueError("HPKS-Ring: signer index out of range")
+    jj = ring.position[j]
+    if not (0 <= e_int < (1 << n) and bin(e_int).count('1') == max(2, n // 16)):
+        raise ValueError("HPKS-Ring: the secret is not a weight-t n-bit vector")
+    if _stern_syndrome_H(ring.H[jj], e_int) != ring.syns[jj]:
+        raise ValueError("HPKS-Ring: the secret key is not ring member j's")
+    zb = [0] * ring.k
+    zb[jj] = e_int
+    z = (zb, 1 << jj)
+    nb, kmask = n // 8, (1 << ring.k) - 1
+    commits, states = [], []
+    for _ in range(rounds):
+        rb = [_sternl_rand(n) for _ in range(ring.k)]
+        rc = int.from_bytes(os.urandom(ring.kb), 'big') & kmask
+        r = (rb, rc)
+        y = ([a ^ b for a, b in zip(rb, z[0])], rc ^ z[1])
+        pi_seed, s1, s2 = os.urandom(32), os.urandom(32), os.urandom(32)
+        if len(pi_seed) != 32 or len(s1) != 32 or len(s2) != 32:
+            raise BaError(BA_E_ENTROPY, 'hpks-ring')
+        P = ring.perms(pi_seed)
+        u, v = ring.apply(P, r), ring.apply(P, y)
+        commits.append((_ring_h(_RING_T_C0, pi_seed, ring.htilde(r)),
+                        _ring_h(_RING_T_C1, s1, ring.venc(u)),
+                        _ring_h(_RING_T_C2, s2, ring.venc(v))))
+        states.append((r, y, pi_seed, s1, s2, u, v))
+    D = _ring_digest(ring, rounds, msg32, commits)
+    out = bytearray(D)
+    for b, c, (r, y, pi_seed, s1, s2, u, v) in zip(_ring_challenges(D, rounds), commits, states):
+        if b == 0:
+            out += c[0] + s1 + s2 + ring.venc(u) + ring.venc(v)
+        elif b == 1:
+            out += c[2] + pi_seed + s1 + ring.venc(r)
+        else:
+            out += c[1] + pi_seed + s2 + ring.venc(y)
+    return bytes(out)
+
+
+def hpks_stern_ring_verify(msg, sig: bytes, ring_keys: list, n: int = None,
+                           rounds: int = None) -> bool:
+    """Verify a ring signature over ring_keys (any order).  rounds is the count
+    the signature was made with (the CLI's PEM carries it); False on any defect."""
+    if n is None: n = KEYBITS
+    if rounds is None: rounds = _STERN_F_PRODUCTION_ROUNDS
+    try:
+        msg32 = _ring_msg(msg)
+        ring = _Ring(ring_keys, n)
+    except ValueError:
+        return False
+    if not 1 <= rounds <= 0xFFFF or not isinstance(sig, (bytes, bytearray)) or len(sig) < 32:
+        return False
+    D = bytes(sig[:32])
+    if len(sig) != hpks_stern_ring_sig_len(D, ring.k, n, rounds):
+        return False
+    vl, pos, commits = ring.vlen(), 32, []
+    for b in _ring_challenges(D, rounds):
+        unopened = bytes(sig[pos:pos + 32])
+        a, c = bytes(sig[pos + 32:pos + 64]), bytes(sig[pos + 64:pos + 96])
+        pos += 96
+        if b == 0:
+            u, v = ring.vdec(sig[pos:pos + vl]), ring.vdec(sig[pos + vl:pos + 2 * vl])
+            pos += 2 * vl
+            if u is None or v is None:
+                return False
+            if not ring.in_S(([x ^ w for x, w in zip(u[0], v[0])], u[1] ^ v[1])):
+                return False
+            commits.append((unopened, _ring_h(_RING_T_C1, a, ring.venc(u)),
+                            _ring_h(_RING_T_C2, c, ring.venc(v))))
+        else:
+            w = ring.vdec(sig[pos:pos + vl])
+            pos += vl
+            if w is None:
+                return False
+            c0 = _ring_h(_RING_T_C0, a, ring.htilde(w))
+            cw = _ring_h(_RING_T_C1 if b == 1 else _RING_T_C2, c, ring.venc(ring.apply(ring.perms(a), w)))
+            commits.append((c0, cw, unopened) if b == 1 else (c0, unopened, cw))
+    return _ring_digest(ring, rounds, msg32, commits) == D
 
 def hpke_stern_l_encap_with_e(seed_int: int, n: int = STERN_LONG_N):
     """Long-form HPKE-Stern-F demo KEM: (K, ct, e') with K = H_4(seed, e')
@@ -6039,7 +6025,7 @@ def main():
     else:
         print("[FAIL] HPKE-Stern-F key agreement failed (n=256)")
 
-    print("\n--- HPKS-Stern-Ring [PQC — OR-composed Stern SD ring sig; ring-anonymous, EUF-CMA ≤ SD]")
+    print("\n--- HPKS-Stern-Ring [PQC — one Stern proof over the ring's block-diagonal statement; ring-anonymous]")
     _ring_k = 3
     _ring_rounds = SDFR
     print(f"    (n={KEYBITS}, N={KEYBITS}, t={SDFT}, rounds={_ring_rounds}, ring_size={_ring_k})")
@@ -6049,13 +6035,10 @@ def main():
     _ring_pub = [(s, syn) for s, _, syn in _ring_keys]
     _ring_j   = 1                      # signer is ring member 1
     _ring_e   = _ring_keys[_ring_j][1]  # secret key of member 1
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        _ring_sig = hpks_stern_ring_sign(plaintext, _ring_e, _ring_j, _ring_pub)
-    _ring_ok  = hpks_stern_ring_verify(plaintext, _ring_sig, _ring_pub)
+    _ring_sig = hpks_stern_ring_sign(plaintext, _ring_e, _ring_j, _ring_pub, KEYBITS, _ring_rounds)
+    _ring_ok  = hpks_stern_ring_verify(plaintext, _ring_sig, _ring_pub, KEYBITS, _ring_rounds)
     print(f"signed as: member {_ring_j} (identity concealed from verifier)")
-    print(f"sig: {_ring_k} members × {_ring_rounds} rounds = "
-          f"{_ring_k * _ring_rounds} round-triples")
+    print(f"sig: {len(_ring_sig)} bytes for {_ring_k} members × {_ring_rounds} rounds")
     if _ring_ok:
         print("+ HPKS-Stern-Ring signature verified")
     else:
@@ -6336,20 +6319,15 @@ def main():
     else:
         print("[FAIL] Ratchet: duplicate message keys!")
 
-    print("*** Ring signature (78.I) — Eve cannot forge without solving SD for any ring member")
-    # Eve constructs a fake ring sig with random responses; must fail challenge consistency.
-    _eve_ring_pub = _ring_pub    # same public ring from the ring sig demo above
-    _eve_all_c = [[(BitArray.random(KEYBITS), BitArray.random(KEYBITS),
-                    BitArray.random(KEYBITS)) for _ in range(_ring_rounds)]
-                  for _ in range(_ring_k)]
-    _eve_all_b = [[0] * _ring_rounds for _ in range(_ring_k)]
-    _eve_all_r = [[(BitArray.random(KEYBITS).uint, 0)] * _ring_rounds
-                  for _ in range(_ring_k)]
-    _eve_ring_sig = (_eve_all_c, _eve_all_b, _eve_all_r)
-    if hpks_stern_ring_verify(decoy, _eve_ring_sig, _eve_ring_pub):
+    print("*** Ring signature — Eve cannot forge without solving SD for any ring member")
+    # Eve re-presents the member's signature on another message, and random bytes
+    # of the right length; both must fail the transcript check.
+    _eve_rand = os.urandom(len(_ring_sig))
+    if (hpks_stern_ring_verify(decoy, _ring_sig, _ring_pub, KEYBITS, _ring_rounds)
+            or hpks_stern_ring_verify(plaintext, _eve_rand, _ring_pub, KEYBITS, _ring_rounds)):
         print("[FAIL] Eve forged ring signature (Eve wins!)")
     else:
-        print("- Eve cannot forge: challenge-sum mismatch  (SD + PRF protection)")
+        print("- Eve cannot forge: the transcript digest does not match  (SD + hash protection)")
 
     print("*** HPKS-XMSS-F — Eve cannot forge without inverting NL-FSCX v1 OWF")
     # Eve tries to forge a WOTS signature on a different message by randomising sig

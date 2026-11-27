@@ -1031,10 +1031,11 @@ REQUIRED_CLAIMS = [
      "#265/3: INTRODUCTION must record that the BGF QC-MDPC decoder ships"),
     (README, r"every `\[FAIL\]` fails the build",
      "#265/5: TODO #233 (v3.0.8) made any [FAIL] blocking, with no allow-list"),
-    (SECURITY, r"That sentence was false in the C and Go ports until v7\.0\.15",
-     "#297: HPKS-Ring's anonymity claim must keep the correction -- C and Go "
-     "hashed a CONSTANT dummy commitment for a simulated b = 0 round, which "
-     "identified the signer from the public signature"),
+    (SECURITY, r"a constant dummy commitment in C and Go \(TODO #297, v7\.0\.15\)",
+     "#297: HPKS-Ring's record must keep the correction -- C and Go hashed a "
+     "CONSTANT dummy commitment for a simulated b = 0 round, which identified "
+     "the signer from the public signature (the OR-composition TODO #415 "
+     "replaced; SECURITY.md's row keeps its history)"),
     (SECURITY, r"leaks decode success vs\. failure",
      "#330: SECURITY.md's C row must name the QC-MDPC BGF decoder as the one "
      "audited target with a MEASURED channel. It appeared in no dudect case, "

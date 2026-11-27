@@ -99,18 +99,20 @@ $CLI_PY  sign    --algo hpks-stern --key "$TMP/hpks_p.pem" --in "$TMP/msg.bin" -
 check_verify "hpks-stern: Python sign -> Java verify" \
     $CLI_JAVA verify --algo hpks-stern --pubkey "$TMP/hpks_p_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/sig_p.pem" --min-rounds 16
 
-# ── HPKE-Stern-F (demo Niederreiter KEM) — both directions ─────────────────
+# ── HPKE-Stern-F keys — both directions ───────────────────────────────────
+# enc/dec --algo hpke-stern were retired by TODO #413 (the ciphertext carried
+# the error vector, so anyone could decrypt it); the key is a Stern signing key.
 $CLI_JAVA genpkey --algo hpke-stern --out "$TMP/hpke_j.pem" 2>/dev/null
 $CLI_JAVA pkey    --in "$TMP/hpke_j.pem" --pubout --out "$TMP/hpke_j_pub.pem" 2>/dev/null
-$CLI_JAVA enc --algo hpke-stern --pubkey "$TMP/hpke_j_pub.pem" --in "$TMP/msg.bin" --out "$TMP/hpke_j2p.pem" 2>/dev/null
-$CLI_PY  dec --algo hpke-stern --key "$TMP/hpke_j.pem" --in "$TMP/hpke_j2p.pem" --out "$TMP/hpke_j2p_out.bin" 2>/dev/null
-check_roundtrip "hpke-stern: Java enc -> Python dec" "$TMP/msg.bin" "$TMP/hpke_j2p_out.bin"
+$CLI_PY   sign    --algo hpks-stern --key "$TMP/hpke_j.pem" --in "$TMP/msg.bin" --out "$TMP/hpke_sig_j.pem" --rounds 16 2>/dev/null
+check_verify "hpke-stern key: Java keygen, Python sign -> Java verify" \
+    $CLI_JAVA verify --algo hpks-stern --pubkey "$TMP/hpke_j_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/hpke_sig_j.pem" --min-rounds 16
 
 $CLI_PY  genpkey --algo hpke-stern --out "$TMP/hpke_p.pem" 2>/dev/null
 $CLI_PY  pkey    --in "$TMP/hpke_p.pem" --pubout --out "$TMP/hpke_p_pub.pem" 2>/dev/null
-$CLI_PY  enc --algo hpke-stern --pubkey "$TMP/hpke_p_pub.pem" --in "$TMP/msg.bin" --out "$TMP/hpke_p2j.pem" 2>/dev/null
-$CLI_JAVA dec --algo hpke-stern --key "$TMP/hpke_p.pem" --in "$TMP/hpke_p2j.pem" --out "$TMP/hpke_p2j_out.bin" 2>/dev/null
-check_roundtrip "hpke-stern: Python enc -> Java dec" "$TMP/msg.bin" "$TMP/hpke_p2j_out.bin"
+$CLI_JAVA sign   --algo hpks-stern --key "$TMP/hpke_p.pem" --in "$TMP/msg.bin" --out "$TMP/hpke_sig_p.pem" --rounds 16 2>/dev/null
+check_verify "hpke-stern key: Python keygen, Java sign -> Python verify" \
+    $CLI_PY verify --algo hpks-stern --pubkey "$TMP/hpke_p_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/hpke_sig_p.pem" --min-rounds 16
 
 # ── HPKE-Stern-KEM (real QC-MDPC/BGF) — both directions, DFR-retry aware ───
 kem_roundtrip "hpke-stern-kem: Java enc -> Python dec" \

@@ -37,9 +37,12 @@
 # Production use requires a QC-MDPC decoder (N=256, t=16).
 
 import argparse
+import errno
 import hmac as _hmac
 import sys
 import os
+import stat
+import textwrap
 
 # Add parent directory to path so relative imports work when run directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -77,14 +80,13 @@ from primitives import (
     hpks_sign, hpks_nl_sign,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
-    hpke_stern_f_encap_with_e, hpke_stern_f_decap,
     qcmdpc_keygen, qcmdpc_encap, qcmdpc_decap_bgf, qcmdpc_bgf_decode,
     _QCMDPC_R, _QCMDPC_D, _QCMDPC_T,
     _qcp_inv, _qcp_mul,
     rnl_sigma_sign, rnl_sigma_verify,
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
     zkp_nl_prove_pp, zkp_nl_verify_pp,
-    KEYBITS, GF_POLY, GF_GEN, ORD,
+    KEYBITS, GF_POLY, GF_GEN, ORD, gf_gen_order,
     RNLN, RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, R3_VALUE, I3_VALUE, SDFT, SDFNR, SDFR,
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS, _ZKP_NL_MAX_N,
@@ -148,8 +150,6 @@ _KEY_SITES = {
     ('dec', 'hpke-nl', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
     ('enc', 'hpke-nl3', '--pubkey'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PUBLIC KEY',)),
     ('dec', 'hpke-nl3', '--key'): ('hpke-nl3', ('HERRADURA HPKE-NL3 PRIVATE KEY',)),
-    ('enc', 'hpke-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
-    ('dec', 'hpke-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
     ('enc', 'hpke-stern-kem', '--pubkey'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PUBLIC KEY',)),
     ('dec', 'hpke-stern-kem', '--key'): ('hpke-stern-kem', ('HERRADURA HPKE-STERN-KEM PRIVATE KEY',)),
     ('sign', 'hpks', '--key'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PRIVATE KEY', 'HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY', 'HERRADURA HPKE PRIVATE KEY', 'HERRADURA HPKE-NL PRIVATE KEY',)),
@@ -170,6 +170,7 @@ _KEY_SITES = {
     ('verify', 'hpks-xmss', '--pubkey'): ('hpks-xmss', ('HERRADURA HPKS-XMSS PUBLIC KEY',)),
     ('sign', 'hpks-wots', '--key'): ('hpks-wots', ('HERRADURA HPKS-WOTS PRIVATE KEY',)),
     ('verify', 'hpks-wots', '--pubkey'): ('hpks-wots', ('HERRADURA HPKS-WOTS PUBLIC KEY',)),
+    ('verify', 'hpks-t', '--pubkey'): ('hpks, hpks-nl', ('HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY',)),
     ('threshold-commit', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
     ('threshold-respond', '', '--key'): ('hpks, hpks-nl', ('HERRADURA HPKS PRIVATE KEY', 'HERRADURA HPKS-NL PRIVATE KEY',)),
     ('oprf-eval', '', '--key'): ('oprf', ('HERRADURA OPRF PRIVATE KEY',)),
@@ -208,7 +209,7 @@ _DER_ITEMS = {
     'HERRADURA HPKS PUBLIC KEY': (2, 2),
     'HERRADURA HPKS-NL PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-NL PUBLIC KEY': (2, 2),
-    'HERRADURA HPKS-RING SIGNATURE': (4, 4),
+    'HERRADURA HPKS-RING-V2 SIGNATURE': (5, 5),
     'HERRADURA HPKS-STERN PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-STERN PUBLIC KEY': (3, 3),
     'HERRADURA HPKS-WOTS PRIVATE KEY': (2, 2),
@@ -772,24 +773,28 @@ def _der_field_check(label, v, enc):
             if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)) and not ((F[3] * 32) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3] * 32)
             return None
-    elif label == 'HERRADURA HPKS-RING SIGNATURE':
-        if 4 <= n <= 4:
-            if n > 0 and L[0] > (1):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
+    elif label == 'HERRADURA HPKS-RING-V2 SIGNATURE':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
             if n > 1 and L[1] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
             if n > 2 and L[2] > (2):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
-            if n > 3 and L[3] > (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
+            if n > 3 and L[3] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32)
+            if n > 4 and L[4] > (F[2] * (96 + 2 * (F[1] * (F[0]//8) + (F[1] + 7)//8))):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], F[2] * (96 + 2 * (F[1] * (F[0]//8) + (F[1] + 7)//8)))
             if n > 0 and enc[0][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
             if n > 1 and enc[1][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
             if n > 2 and enc[2][1] == 1:
                 return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
             return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
         if 2 <= n <= 2:
@@ -1061,7 +1066,7 @@ def _der_field_check(label, v, enc):
             if n > 2 and enc[2][0] != ((F[3] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[3] + 7)//8)) and not (((F[3] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[3] + 7)//8)
             return None
-        if 5 <= n <= 5 and (F[0] == 2):
+        if 5 <= n <= 5:
             if n > 0 and L[0] > (1):
                 return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
             if n > 3 and L[3] > (32):
@@ -1082,28 +1087,6 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], (F[4] + 7)//8)
             if n > 2 and enc[2][0] != ((F[4] + 7)//8) and not (enc[2][1] == 2 and enc[2][0] + 1 == ((F[4] + 7)//8)) and not (((F[4] + 7)//8) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], (F[4] + 7)//8)
-            return None
-        if 5 <= n <= 5:
-            if n > 4 and L[4] > (2):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], 2)
-            if n > 0 and L[0] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], F[4]//8)
-            if n > 1 and L[1] > (F[4]//8):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], F[4]//8)
-            if n > 2 and L[2] > (min(F[4]//8, 32)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], min(F[4]//8, 32))
-            if n > 3 and L[3] > (min(F[4]//8, 32)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], min(F[4]//8, 32))
-            if n > 4 and enc[4][1] == 1:
-                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
-            if n > 0 and enc[0][0] != (F[4]//8) and not (enc[0][1] == 2 and enc[0][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[0][0] == 1 and L[0] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 0, enc[0][0], F[4]//8)
-            if n > 1 and enc[1][0] != (F[4]//8) and not (enc[1][1] == 2 and enc[1][0] + 1 == (F[4]//8)) and not ((F[4]//8) == 0 and enc[1][0] == 1 and L[1] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], F[4]//8)
-            if n > 2 and enc[2][0] != (min(F[4]//8, 32)) and not (enc[2][1] == 2 and enc[2][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[2][0] == 1 and L[2] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], min(F[4]//8, 32))
-            if n > 3 and enc[3][0] != (min(F[4]//8, 32)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (min(F[4]//8, 32))) and not ((min(F[4]//8, 32)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], min(F[4]//8, 32))
             return None
         if 6 <= n <= 6:
             if n > 0 and L[0] > (1):
@@ -1292,6 +1275,31 @@ _PARAM_LEVEL_NOTES = {
     'oprf': 'the GF(2^n)* family is demo-only at every width (binary-field discrete logs fall to index calculus)',
 }
 
+# TODO #414: each enc/dec --algo's integrity (tag | none | aead-flag) and the
+# warning enc/dec print to stderr when there is no tag.
+_ENC_INTEGRITY = {
+    'hske': ('none',
+        '--algo hske has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping ciphertext bit j flips plaintext bits j and j +/- n/4 under every key); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)'),
+    'hske-nla1': ('aead-flag',
+        '--algo hske-nla1 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (without --aead, flipping ciphertext bit j flips plaintext bit j); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)'),
+    'hske-nla2': ('none',
+        '--algo hske-nla2 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)'),
+    'hske-nla3': ('none',
+        '--algo hske-nla3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); for integrity use hske-duplex, hske-duplex3, hske-nla1 --aead or encfile (TODO #414)'),
+    'hske-duplex': ('tag',
+        None),
+    'hske-duplex3': ('tag',
+        None),
+    'hpke': ('none',
+        '--algo hpke has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)'),
+    'hpke-nl': ('none',
+        '--algo hpke-nl has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)'),
+    'hpke-nl3': ('none',
+        '--algo hpke-nl3 has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (a flipped bit scrambles about half the block, and nothing detects it); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)'),
+    'hpke-stern-kem': ('none',
+        '--algo hpke-stern-kem has no integrity check: a modified ciphertext or the wrong key decrypts to wrong bytes with exit 0 (flipping bit j of E flips plaintext bits j and j +/- n/4 under every key; a corrupt syndrome decrypts to garbage by design, as implicit rejection requires (TODO #235)); no asymmetric mode has a tag: sign the ciphertext, or agree a key with kex and use an authenticated symmetric mode (TODO #414)'),
+}
+
 # END GENERATED key-label table
 
 
@@ -1318,7 +1326,9 @@ def _check_key_labels(cmd, algo, values):
     for (c, a, flag), (tags, labels) in _KEY_SITES.items():
         if c != cmd or a != (algo or '') or not values.get(flag):
             continue
-        paths = values[flag].split(',') if flag == '--ring' else [values[flag]]
+        # A key LIST: hpks-ring's --ring, and hpks-t's --pubkey (TODO #412).
+        is_list = flag == '--ring' or (flag == '--pubkey' and a == 'hpks-t')
+        paths = values[flag].split(',') if is_list else [values[flag]]
         for path in paths:
             label = _pem_file_label(path.strip())
             # TODO #397: an envelope is refused here, by name, in every key
@@ -1348,7 +1358,8 @@ _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — cli
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 _LABEL_HDRBG_STATE = 'HERRADURA HDRBG STATE'         # (state[32], blocks) — DRBG checkpoint (TODO #119)
-_LABEL_RING_SIG    = 'HERRADURA HPKS-RING SIGNATURE'  # (k, rounds, n, blob) — ring signature (TODO #121)
+_LABEL_RING_SIG    = 'HERRADURA HPKS-RING-V2 SIGNATURE'  # (n, k, rounds, D, blob) — ring signature (TODO #415)
+_LABEL_RING_SIG_V1 = 'HERRADURA HPKS-RING SIGNATURE'     # the forgeable OR-composition (TODO #121); refused
 _LABEL_HCRED_PRIV  = 'HERRADURA HCRED PRIVATE KEY'
 _LABEL_HCRED_PUB   = 'HERRADURA HCRED PUBLIC KEY'
 _LABEL_HCRED_CRED  = 'HERRADURA HCRED CREDENTIAL'
@@ -1401,9 +1412,38 @@ def _open_out(path, mode):
     Every file the CLI writes comes through here, public outputs included, so
     nothing it produces is world-readable under the default umask.  A file that
     already exists keeps its mode: O_CREAT's mode applies only on creation.
+
+    TODO #417: the last path component must not be a symbolic link.  Following
+    one truncated the link's target and left a private key in whatever mode
+    that target had (a world-readable file stayed world-readable).  O_NOFOLLOW
+    refuses it; a regular existing file is still overwritten.  For stdout use
+    '-' (/dev/stdout is itself a link).
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
-    return os.fdopen(os.open(path, flags, 0o600), mode)
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_BINARY', 0)
+             | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):   # EMLINK: FreeBSD's O_NOFOLLOW
+            sys.exit(f"{path}: is a symbolic link; refusing to write through it "
+                     "(use - for stdout)")
+        raise
+    return os.fdopen(fd, mode)
+
+
+def _write_idx_state(sp, value):
+    """Write a one-time-signature state sidecar, durably, or exit (TODO #417).
+
+    The leaf is consumed BEFORE its signature is produced, and any failure stops
+    the command before a signature exists; a failure after the burn only wastes
+    the leaf, which is the safe side."""
+    try:
+        with _open_out(sp, 'w') as f:
+            f.write(str(value) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        sys.exit(f"cannot write one-time-signature state file {sp}: {e}")
 
 
 def _write_file(path, data):
@@ -1610,7 +1650,7 @@ def _read_pem_ints(path):
 # are both of that kind) runs after the allocation it was meant to guard.
 # ---------------------------------------------------------------------------
 
-_RING_MAX_K     = 64      # herradura_cli.c RING_MAX_K
+_RING_MAX_K     = 1024    # herradura_cli.c RING_MAX_K == the suites' ring bound (TODO #415)
 _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 _STERN_MAX_N    = KEYBITS # the widest short-form Stern instance
@@ -2104,19 +2144,81 @@ def _xmss_state_path(key_path: str) -> str:
     return key_path + '.idx'
 
 
-def _xmss_read_idx(key_path: str, h: int) -> int:
-    sp = _xmss_state_path(key_path)
-    if os.path.exists(sp):
+def _ots_require_key_file(cmd: str, path, flag: str):
+    """TODO #420: a one-time-signature key must be a regular file, because its
+    state lives beside it in <key>.idx.  From stdin (`-`), a pipe or a device
+    there is no such place: C and Go used to keep it in ./-.idx, shared by every
+    key piped in from that directory, and Java kept none at all."""
+    bad = not path or path == '-'
+    if not bad:
         try:
-            return int(open(sp).read().strip())
-        except Exception:
+            bad = not stat.S_ISREG(os.stat(path).st_mode)
+        except OSError:
             pass
-    return 0
+    if bad:
+        sys.exit(f"{cmd}: a one-time-signature key must be a regular file given by {flag} "
+                 "(its state lives in <key>.idx); it cannot be read from or written to "
+                 "stdin, a pipe or a device")
+
+
+def _ots_state_read(key_path: str, maximum: int) -> int:
+    """The ONE reader of a one-time-signature state sidecar, for WOTS (max 1)
+    and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must exist, be
+    a regular file (not a link), and hold exactly one canonical decimal (`0`,
+    or digits with no leading zero, at most 10, an optional single trailing
+    newline) no larger than max.  Anything else used to read as 0 (unused), so
+    an empty file left by a crash let a WOTS key sign again."""
+    sp = _xmss_state_path(key_path)
+    why, v, b = None, 0, b''
+    # Open first, then judge what was OPENED: an lstat of the name followed by
+    # an open of the same name let the entry be swapped in between (the race
+    # CodeQL reported in the C CLI).  O_NOFOLLOW refuses a link at the open;
+    # O_NONBLOCK keeps a FIFO from hanging the open before fstat refuses it.
+    try:
+        fd = os.open(sp, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                     | getattr(os, 'O_NONBLOCK', 0))
+    except OSError as e:
+        why = ('missing' if e.errno == errno.ENOENT else
+               'not a regular file' if e.errno in (errno.ELOOP, errno.EMLINK) else
+               'unreadable')
+    else:
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                why = 'not a regular file'
+            else:
+                b = b''
+                while len(b) < 16:
+                    chunk = os.read(fd, 16 - len(b))
+                    if not chunk:
+                        break
+                    b += chunk
+        except OSError:
+            why = 'unreadable'
+        finally:
+            os.close(fd)
+    if why is None:
+        d = b[:-1] if b.endswith(b'\n') else b
+        ok = (len(b) < 16 and 1 <= len(d) <= 10
+              and all(0x30 <= c <= 0x39 for c in d)
+              and not (len(d) > 1 and d[0] == 0x30))
+        if not ok:
+            why = 'damaged (not one canonical decimal count)'
+        else:
+            v = int(d)
+            if v > maximum:
+                why = 'damaged (count out of range)'
+    if why:
+        sys.exit(f"sign: one-time-signature state file {sp} is {why}; refusing to sign "
+                 "(restore it, or generate a new key)")
+    return v
+
+
+def _xmss_read_idx(key_path: str, h: int) -> int:
+    return _ots_state_read(key_path, 1 << h)   # TODO #419
 
 
 def _xmss_write_idx(key_path: str, next_idx: int):
-    with _open_out(_xmss_state_path(key_path), 'w') as f:
-        f.write(str(next_idx) + '\n')
+    _write_idx_state(_xmss_state_path(key_path), next_idx)
 
 
 # ---------------------------------------------------------------------------
@@ -2194,18 +2296,11 @@ def _unpack_wots_sig(path: str):
 
 
 def _wots_is_used(key_path: str) -> bool:
-    sp = _xmss_state_path(key_path)   # reuse <key>.idx convention
-    if os.path.exists(sp):
-        try:
-            return int(open(sp).read().strip()) != 0
-        except Exception:
-            pass
-    return False
+    return _ots_state_read(key_path, 1) != 0   # TODO #419; reuses <key>.idx
 
 
 def _wots_mark_used(key_path: str):
-    with _open_out(_xmss_state_path(key_path), 'w') as f:
-        f.write('1\n')
+    _write_idx_state(_xmss_state_path(key_path), 1)
 
 
 def _load_zkp_nl_privkey(path):
@@ -2545,30 +2640,6 @@ def _decode_asym_ct(path):
     return R_int, E_int, nbits
 
 
-# ---------------------------------------------------------------------------
-# Ciphertext serialization (HPKE-Stern-F KEM)
-# ---------------------------------------------------------------------------
-
-def _encode_stern_ct(ct_syn, e_p, K_int, E_int, n):
-    """HPKE-Stern-F demo ciphertext: syndrome + plaintext error (demo) + HSKE payload."""
-    nbytes = n // 8
-    kbytes = min(n, 256) // 8      # K and the payload block: 256 bits above 256 (TODO #382)
-    der = der_seq(der_int(ct_syn, nbytes),
-                  der_int(e_p,    nbytes),   # demo: e' transmitted for brute-force decap
-                  der_int(K_int,  kbytes),
-                  der_int(E_int,  kbytes),
-                  der_int(n))
-    return pem_wrap(_LABEL_CT, der)
-
-
-def _decode_stern_ct(path):
-    label, ints = _read_pem_ints(path)
-    if label != _LABEL_CT:
-        raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
-    ct_syn, e_p, K_int, E_int, n = ints
-    return ct_syn, e_p, K_int, E_int, n
-
-
 _LABEL_KEM_PRIV = 'HERRADURA HPKE-STERN-KEM PRIVATE KEY'
 _LABEL_KEM_PUB  = 'HERRADURA HPKE-STERN-KEM PUBLIC KEY'
 _QCMDPC_RBYTES  = (_QCMDPC_R + 7) // 8  # 66
@@ -2757,98 +2828,64 @@ def _unpack_stern_sig(path):
 
 
 # ---------------------------------------------------------------------------
-# HPKS-Stern-Ring signature codec (TODO #121)
+# HPKS-Ring signature codec (TODO #415)
 #
-# Member-major, round-major flat blob; per (member, round) entry:
-#   c0 || c1 || c2 || b(1 byte) || resp_a || resp_b   (each n-bit value = n/8 B).
-# resp_a is a BitArray when b != 0 (pi_seed), else an integer (sr); resp_b is
-# always an integer.  PEM: SEQ(k, rounds, n, blob).
+# PEM 'HERRADURA HPKS-RING-V2 SIGNATURE': SEQ(n, k, rounds, D, blob).  D is the
+# 32-byte transcript digest; blob is the rest of the suite's signature (per round
+# the unopened commitment and the opening), minimal DER, its exact length fixed
+# by the challenges D derives.  SPEC.md §11.2.
 # ---------------------------------------------------------------------------
 
-def _pack_ring_sig(sig, n):
-    all_commits, all_challenges, all_responses = sig
-    k      = len(all_challenges)
-    rounds = len(all_challenges[0])
-    nbytes = n // 8
+_RING_V1_REFUSED = ("this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING SIGNATURE), "
+                    "which is forgeable without any member's key (TODO #415) and is no longer "
+                    "accepted; re-sign it with this release")
 
-    cbytes = min(n, 256) // 8      # commitments: 256 bits above N = 256 (TODO #382)
 
-    def _vb(v, nb=nbytes):
-        iv = v.uint if isinstance(v, BitArray) else int(v)
-        return iv.to_bytes(nb, 'big')
-
-    blob = bytearray()
-    for i in range(k):
-        for r in range(rounds):
-            c0, c1, c2 = all_commits[i][r]
-            ra, rb     = all_responses[i][r]
-            blob += _vb(c0, cbytes) + _vb(c1, cbytes) + _vb(c2, cbytes)
-            blob += bytes([all_challenges[i][r] & 0xFF])
-            blob += _vb(ra) + _vb(rb)
-
-    der = der_seq(der_int(k), der_int(rounds), der_int(n),
-                  der_int(int.from_bytes(blob, 'big'), len(blob)))
+def _pack_ring_sig(sig, n, k, rounds):
+    der = der_seq(der_int(n), der_int(k), der_int(rounds),
+                  der_int(int.from_bytes(sig[:32], 'big'), 32),
+                  der_int(int.from_bytes(sig[32:], 'big')))
     return pem_wrap(_LABEL_RING_SIG, der)
 
 
 def _unpack_ring_sig(path):
-    """Return (sig, k, rounds, n) — sig = (all_commits, all_challenges, all_responses)."""
-    label, ints = _read_pem_ints(path)
+    """Return (sig bytes, n, k, rounds)."""
+    label, der = _read_pem(path)
+    if label == _LABEL_RING_SIG_V1:
+        sys.exit(f"verify: {_RING_V1_REFUSED}")
     if label != _LABEL_RING_SIG:
-        raise ValueError(f"Expected HPKS-RING SIGNATURE PEM, got {label!r}")
-    # Bounded before use: k, rounds and n each multiply into the blob length
-    # below, and `verify`'s own k/n cross-checks only run after this returns.
-    k      = _bounded(ints[0], 2, _RING_MAX_K,     'ring member count', 'verify')
-    rounds = _bounded(ints[1], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
-    n      = _bounded_stern_n(ints[2], 'verify')
-    blob_int = ints[3]
-    nbytes = n // 8
-    cw     = min(n, 256)
-    cb     = cw // 8
-    entry  = 3 * cb + 2 * nbytes + 1
-    blen   = k * rounds * entry
-    if _int_nbytes(blob_int) > blen:
-        sys.exit(f"verify: HPKS-RING signature payload is "
-                 f"{_int_nbytes(blob_int)} bytes, but k={k} rounds={rounds} "
-                 f"n={n} describe {blen}")
-    blob   = _fit(blob_int, blen, 'blob', 'pem')
-
-    all_commits    = [[None] * rounds for _ in range(k)]
-    all_challenges = [[0]    * rounds for _ in range(k)]
-    all_responses  = [[None] * rounds for _ in range(k)]
-    off = 0
-    for i in range(k):
-        for r in range(rounds):
-            c0 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            c1 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            c2 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            b  = blob[off]; off += 1
-            ra = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
-            rb = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
-            all_commits[i][r]    = (c0, c1, c2)
-            all_challenges[i][r] = b
-            all_responses[i][r]  = ((ra if b == 0 or _stern_long(n) else BitArray(n, ra)), rb)
-    return (all_commits, all_challenges, all_responses), k, rounds, n
+        raise ValueError(f"Expected HPKS-RING-V2 SIGNATURE PEM, got {label!r}")
+    ints = _der_items(label, der)
+    n      = _bounded_stern_n(ints[0], 'verify')
+    k      = _bounded(ints[1], 1, _RING_MAX_K,     'ring member count', 'verify')
+    rounds = _bounded(ints[2], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
+    D = _fit(ints[3], 32, 'digest', 'verify')
+    blen = _suite_mod.hpks_stern_ring_sig_len(D, k, n, rounds) - 32
+    return D + _fit(ints[4], blen, 'signature body', 'verify'), n, k, rounds
 
 
 def _load_ring_pubkeys(ring_arg):
     """Parse a comma-separated list of hpks-stern public-key PEM paths.
 
-    Returns (ring_keys, n) where ring_keys[i] = (seed BitArray, syndrome int)."""
+    Returns (ring_keys, n) where ring_keys[i] = (seed int, syndrome int)."""
     paths = [p for p in ring_arg.split(',') if p]
-    if len(paths) < 2:
-        sys.exit("hpks-ring: --ring needs at least 2 member public keys")
+    if not paths:
+        sys.exit("hpks-ring: --ring needs at least one member public key")
+    if len(paths) > _RING_MAX_K:
+        sys.exit(f"hpks-ring: --ring lists {len(paths)} members, at most {_RING_MAX_K} supported")
     ring_keys, ring_n = [], None
     for p in paths:
         algo_i, ints_i = _decode_pubkey(p)
         if algo_i != 'hpks-stern':
-            sys.exit(f"hpks-ring: ring member {p!r} is {algo_i!r}, expected hpks-stern")
+            sys.exit(f"hpks-ring: ring member '{p}' is {algo_i}, expected hpks-stern")
         syn_i, seed_i, n_i = ints_i
         if ring_n is None:
             ring_n = n_i
         elif n_i != ring_n:
             sys.exit("hpks-ring: all ring members must share the same n")
-        ring_keys.append((_stern_seed(seed_i, n_i), syn_i))
+        if (seed_i, syn_i) in ring_keys:
+            sys.exit(f"hpks-ring: --ring lists the member '{p}' twice")
+        ring_keys.append((seed_i, syn_i))
     return ring_keys, ring_n
 
 
@@ -2894,6 +2931,24 @@ _SYM_256_ALGOS = ('hske', 'hske-nla2', 'hske-nla3')
 # given there would be dropped without a word -- the ciphertext of
 # `enc --algo hske --ad X` was byte-for-byte that of no --ad.
 _AD_ALGOS = ('hske-duplex', 'hske-duplex3', 'hske-nla1')
+
+
+def _warn_no_integrity(cmd, algo, authenticated=False):
+    """TODO #414: say on stderr that this mode cannot detect a modified
+    ciphertext or a wrong key, from the generated _ENC_INTEGRITY table."""
+    integrity, warning = _ENC_INTEGRITY.get(algo, ('tag', None))
+    if integrity == 'none' or (integrity == 'aead-flag' and not authenticated):
+        print(f"{cmd}: warning: {warning}", file=sys.stderr)
+
+
+def _no_integrity_epilog():
+    """The --help line naming the modes with no tag (TODO #414)."""
+    names = [a + (' (unless --aead)' if i == 'aead-flag' else '')
+             for a, (i, _w) in _ENC_INTEGRITY.items() if i != 'tag']
+    return textwrap.fill('NO INTEGRITY (TODO #414): ' + ', '.join(names) + '.  Under '
+                         'these a modified ciphertext or a wrong key decrypts to wrong '
+                         'bytes with exit 0, and enc/dec print a warning to stderr.',
+                         width=78, break_on_hyphens=False)
 
 
 def _aead_flags_ok(cmd, algo, ad, aead=False):
@@ -3056,6 +3111,7 @@ def cmd_genpkey(args):
         pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
     elif algo == 'hpks-xmss':
+        _ots_require_key_file('genpkey', args.out, '--out')   # TODO #420
         import secrets as _sec
         h_val = getattr(args, 'xmss_height', None)
         # `or 10` here until TODO #278, which made 0 FALSY and therefore silently
@@ -3074,17 +3130,14 @@ def cmd_genpkey(args):
         sk_seed, root, leaf_hashes = hpks_xmss_keygen(master_seed, h_val)
         pem_out = _encode_xmss_privkey(master_seed, h_val, 0, leaf_hashes)
         # Write state file alongside output if output is a named file
-        out_path = args.out
-        if out_path and out_path != '-':
-            _xmss_write_idx(out_path, 0)
+        _xmss_write_idx(args.out, 0)
 
     elif algo == 'hpks-wots':
+        _ots_require_key_file('genpkey', args.out, '--out')   # TODO #420
         import secrets as _sec
         master_seed = _sec.token_bytes(32)
         pem_out = _encode_wots_privkey(master_seed, 0)
-        out_path = args.out
-        if out_path and out_path != '-':
-            _xmss_write_idx(out_path, 0)   # 0 = unused (one-time key)
+        _xmss_write_idx(args.out, 0)   # 0 = unused (one-time key)
         print("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.",
               file=sys.stderr)
 
@@ -3460,6 +3513,7 @@ def cmd_enc(args):
     in_bytes = _read_file(getattr(args, 'in'))
     out_path = args.out
     _aead_flags_ok('enc', algo, args.ad, args.aead)
+    _warn_no_integrity('enc', algo, args.aead)
 
     # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3582,20 +3636,6 @@ def cmd_enc(args):
         E       = nl_fscx_revolve_v3(P, enc_key, _r3(nbits))
         _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
 
-    elif algo == 'hpke-stern':
-        print(_STERN_DEMO_WARNING, file=sys.stderr)
-        syn_int, seed_int, n = their_ints
-        w       = min(n, 256)          # the payload block (TODO #382: 256 bits above 256)
-        nbytes  = w // 8
-        _one_block_ok(algo, len(in_bytes), nbytes)
-        P       = BitArray(w, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        if _stern_long(n):
-            K, ct_syn, e_p = _suite_mod.hpke_stern_l_encap_with_e(seed_int, n)
-        else:
-            K, ct_syn, e_p = hpke_stern_f_encap_with_e(BitArray(n, seed_int), n)
-        E       = fscx_revolve(P, K, w // 4)
-        _write_file(out_path, _encode_stern_ct(ct_syn, e_p, K.uint, E.uint, n))
-
     elif algo == 'hpke-stern-kem':
         h_pub, r = _decode_kem_pubkey(pubkey_path)
         nbytes = KEYBITS // 8
@@ -3618,6 +3658,8 @@ def cmd_dec(args):
     algo     = args.algo
     out_path = args.out
     _aead_flags_ok('dec', algo, args.ad)
+    # hske-nla1's integrity is the ciphertext's (format tag 2): warned below.
+    _warn_no_integrity('dec', algo, authenticated=(algo == 'hske-nla1'))
 
     # ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) ──────────
     if algo in ('hske-duplex', 'hske-duplex3'):
@@ -3672,6 +3714,8 @@ def cmd_dec(args):
             # TODO #378: format tag 1 has no tag to bind associated data to.
             sys.exit("dec: --ad given, but this hske-nla1 ciphertext is not "
                      "an AEAD one (it has no tag to bind it to)")
+        if algo == 'hske-nla1':
+            _warn_no_integrity('dec', algo)
         if algo == 'hske':
             D = fscx_revolve(E, K, 3 * nbits // 4)
         elif algo == 'hske-nla1':
@@ -3741,24 +3785,6 @@ def cmd_dec(args):
         D       = nl_fscx_revolve_v3_inv(E, dec_key, _r3(nbits))
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
 
-    elif algo == 'hpke-stern':
-        print(_STERN_DEMO_WARNING, file=sys.stderr)
-        e_int, seed_int, n = our_ints
-        ct_syn, e_p, K_int, E_int, _n = _decode_stern_ct(getattr(args, 'in'))
-        # TODO #383 stage 2: another width decrypted to garbage with exit 0
-        if _n != n:
-            sys.exit(f"dec: ciphertext n is {_n}, private key n is {n}")
-        w       = min(n, 256)
-        if _stern_long(n):
-            K_dec = _suite_mod.hpke_stern_l_decap_known(e_p, seed_int, n)
-        else:
-            K_dec = hpke_stern_f_decap(ct_syn, e_p, BitArray(n, seed_int), n)
-        if K_dec is None:
-            sys.exit("HPKE-Stern-F decap failed (brute-force exhausted)")
-        E       = BitArray(w, E_int)
-        D       = fscx_revolve(E, K_dec, 3 * w // 4)
-        _write_file(out_path, D.uint.to_bytes(w // 8, 'big'))
-
     elif algo == 'hpke-stern-kem':
         key_path = args.key
         sup0, sup1, h0, h1 = _decode_kem_privkey(key_path)
@@ -3786,6 +3812,8 @@ def cmd_sign(args):
     if args.digest == 'hfscx-256':
         in_bytes = hfscx_256(in_bytes)   # pre-hash: sign the 32-byte digest
 
+    if algo in ('hpks-wots', 'hpks-xmss'):
+        _ots_require_key_file('sign', key_path, '--key')   # TODO #420
     our_algo, our_ints = _decode_privkey(key_path)
 
     if algo in ('hpks', 'hpks-nl'):
@@ -3826,29 +3854,18 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: --ring (comma-separated member public keys) required")
         e_int, seed_int, n = our_ints
         ring_keys, ring_n = _load_ring_pubkeys(args.ring)
-        # TODO #272.  _RING_MAX_K bounds the READER (TODO #240, adopting C's
-        # constant), and every CLI's reader enforces it -- but only C's writer
-        # did, so Python, Go and Java each signed rings this and every other
-        # verifier then refused: an unverifiable signature returned with exit 0.
-        if len(ring_keys) > _RING_MAX_K:
-            sys.exit(f"hpks-ring sign: ring has {len(ring_keys)} members, at most "
-                     f"{_RING_MAX_K} supported (a larger ring produces a signature "
-                     f"no CLI will verify)")
         if ring_n != n:
             sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
-        # Locate the signer's own index in the ring (matched by seed).
-        j = next((idx for idx, (sd, _sy) in enumerate(ring_keys)
-                  if (sd if isinstance(sd, int) else sd.uint) == seed_int), None)
+        # The signer's own public key, matched by seed AND syndrome.
+        own = (seed_int, _stern_syn(seed_int, e_int, n))
+        j = next((idx for idx, m in enumerate(ring_keys) if m == own), None)
         if j is None:
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
-        msg    = _stern_msg(in_bytes, n)
+        msg    = _stern_msg(in_bytes, 256)
         rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
-        if _stern_long(n):
-            sig = _suite_mod.hpks_stern_l_ring_sign(msg, e_int, j, ring_keys, n, rounds)
-        else:
-            sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
-        _write_file(args.out, _pack_ring_sig(sig, n))
+        sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        _write_file(args.out, _pack_ring_sig(sig, n, len(ring_keys), rounds))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
               file=sys.stderr)
 
@@ -3902,10 +3919,10 @@ def cmd_sign(args):
         num_leaves = 1 << h
         if leaf_idx >= num_leaves:
             sys.exit(f"sign: XMSS key exhausted ({num_leaves} leaves used). Generate a new key.")
+        _xmss_write_idx(key_path, leaf_idx + 1)   # TODO #417: consume the leaf first
         sig  = hpks_xmss_sign(in_bytes, master_seed, leaf_hashes, leaf_idx)
         pem_out = _pack_xmss_sig(sig, KEYBITS)
         _write_file(args.out, pem_out)
-        _xmss_write_idx(key_path, leaf_idx + 1)
         print(f"XMSS leaf {leaf_idx} used; {num_leaves - leaf_idx - 1} leaves remaining.",
               file=sys.stderr)
 
@@ -3916,9 +3933,9 @@ def cmd_sign(args):
             sys.exit("sign: this HPKS-WOTS key was already used — WOTS keys are "
                      "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
         master_seed, leaf_idx = _decode_wots_privkey(key_path)
+        _wots_mark_used(key_path)                 # TODO #417: burn the key first
         sig, _pk = hpks_wots_sign(in_bytes, master_seed, leaf_idx)
         _write_file(args.out, _pack_wots_sig(sig))
-        _wots_mark_used(key_path)
         print("HPKS-WOTS key burned (one-time use); do not sign again with it.",
               file=sys.stderr)
 
@@ -4093,6 +4110,30 @@ def cmd_verify(args):
     if algo == 'hpks-t':
         sig_text       = _read_pem_text(sig_path)
         C_agg_val, R_val, s_val, nbits = decode_hpkst_sig(sig_text)
+        # TODO #412: the signature carries its aggregate key, and checking it
+        # against that key alone proves only that SOME group signed.  The group
+        # to trust is --pubkey's: every member's public key, comma-separated (L
+        # is built sorted, so their order does not matter).  The signature must
+        # carry exactly the aggregate those keys give.
+        if not pubkey_path:
+            sys.exit("verify: hpks-t needs --pubkey: the signing group's public keys, "
+                     "comma-separated")
+        members = []
+        for path in pubkey_path.split(','):
+            path = path.strip()
+            _a, ints = _decode_pubkey(path)
+            pub_int, n_j = ints[0], ints[-1]
+            if n_j != nbits:
+                sys.exit(f"verify: hpks-t public keys are {nbits}-bit; {path} is {n_j}-bit")
+            if not gf_pub_is_valid(pub_int):
+                sys.exit("verify: public key is the GF(2^n)* identity/zero element (rejected: degenerate key)")
+            members.append(BitArray(nbits, pub_int))
+        expect, _coeffs = hpkst_aggregate_pubkeys(members)
+        if expect.uint != C_agg_val:
+            print("verify: the signature's aggregate key is not the one --pubkey gives",
+                  file=sys.stderr)
+            print("Verification FAILED")
+            sys.exit(1)
         msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
         C_agg = BitArray(nbits, C_agg_val)
         R     = BitArray(nbits, R_val)
@@ -4109,18 +4150,14 @@ def cmd_verify(args):
         if not getattr(args, 'ring', None):
             sys.exit("hpks-ring verify: --ring (comma-separated member public keys) required")
         ring_keys, n = _load_ring_pubkeys(args.ring)
-        sig, k, rounds, sig_n = _unpack_ring_sig(sig_path)
+        sig, sig_n, k, rounds = _unpack_ring_sig(sig_path)
         _require_rounds(rounds, _round_floor(args, 'verify'), 'hpks-ring signature', 'verify')
         if sig_n != n:
             sys.exit(f"hpks-ring verify: signature n={sig_n} != ring n={n}")
         if k != len(ring_keys):
             sys.exit(f"hpks-ring verify: signature ring size {k} != "
                      f"{len(ring_keys)} provided members")
-        msg = _stern_msg(in_bytes, n)
-        if _stern_long(n):
-            ok = _suite_mod.hpks_stern_l_ring_verify(msg, sig, ring_keys, n)
-        else:
-            ok = hpks_stern_ring_verify(msg, sig, ring_keys, n)
+        ok = hpks_stern_ring_verify(_stern_msg(in_bytes, 256), sig, ring_keys, n, rounds)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -4157,6 +4194,11 @@ def cmd_verify(args):
         # ordinary "Verification FAILED".
         if e_int != e_v.uint:
             sys.exit("verify: signature challenge e is not the recomputed one "
+                     "(rejected: non-canonical signature)")
+        # TODO #423: g^s depends on s mod ord(g), and g generates a proper
+        # subgroup at n = 32 and 128, so s + ord(g) is a second encoding.
+        if s_int >= gf_gen_order(nbits):
+            sys.exit("verify: signature scalar s is not below the order of g "
                      "(rejected: non-canonical signature)")
         print("Signature OK")
         sys.exit(0)
@@ -4829,6 +4871,18 @@ def cmd_cred_verify(args):
 # Argument parser
 # ---------------------------------------------------------------------------
 
+def _retired_hpke_stern(algo):
+    """argparse type for enc/dec --algo: refuse hpke-stern with the reason
+    (TODO #413, v20.0.0).  The demo ciphertext carried the error vector e', and
+    K = hash(seed, e') needs only the PUBLIC seed, so anyone holding the
+    ciphertext and the public key decrypted it."""
+    if algo == 'hpke-stern':
+        raise argparse.ArgumentTypeError(
+            "--algo hpke-stern was removed in v20.0.0 (TODO #413): its ciphertext "
+            "carried the error vector, so anyone could decrypt it; use --algo hpke-stern-kem")
+    return algo
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
@@ -4900,12 +4954,13 @@ def build_parser():
                          'private key (--our remains her HKEX-RNL private key).')
 
     # enc
-    en = sub.add_parser('enc', help='Encrypt')
+    en = sub.add_parser('enc', help='Encrypt', epilog=_no_integrity_epilog(),
+                        formatter_class=argparse.RawDescriptionHelpFormatter)
     en.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
                              'hske-duplex', 'hske-duplex3',
-                             'hpke', 'hpke-nl', 'hpke-nl3',
-                             'hpke-stern', 'hpke-stern-kem'])
+                             'hpke', 'hpke-nl', 'hpke-nl3', 'hpke-stern-kem'],
+                    type=_retired_hpke_stern)
     en.add_argument('--key',    default=None)
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
@@ -4917,12 +4972,13 @@ def build_parser():
                          'hske-duplex3, or hske-nla1 with --aead; refused elsewhere)')
 
     # dec
-    de = sub.add_parser('dec', help='Decrypt')
+    de = sub.add_parser('dec', help='Decrypt', epilog=_no_integrity_epilog(),
+                        formatter_class=argparse.RawDescriptionHelpFormatter)
     de.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
                              'hske-duplex', 'hske-duplex3',
-                             'hpke', 'hpke-nl', 'hpke-nl3',
-                             'hpke-stern', 'hpke-stern-kem'])
+                             'hpke', 'hpke-nl', 'hpke-nl3', 'hpke-stern-kem'],
+                    type=_retired_hpke_stern)
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
@@ -5238,6 +5294,8 @@ _DISPATCH = {
 def main():
     parser = build_parser()
     args   = parser.parse_args()
+    # TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
+    # verify refuse it before any file is read, until the redesign.
     # TODO #366: every key flag's label, against the generated table.
     _check_key_labels(args.cmd, getattr(args, 'algo', '') or '',
                       {'--' + k.replace('_', '-'): v for k, v in vars(args).items()

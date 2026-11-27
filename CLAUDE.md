@@ -14,7 +14,12 @@ HerraduraKEx is a cryptographic suite implementing four protocols — HKEX-GF (k
 ## Repository Structure
 
 ```
-Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite, one file per language
+Herradura cryptographic suite.{c,go,py}  — protocol suite, one file per language
+demos/                     — the 32-bit targets' demos, ONE PROGRAM PER ALGORITHM (TODO #425;
+                             demos/README.md lists them): arm/<name>.s and i386/<name>.asm
+                             include a shared core.s / core.asm; arduino/<name>/<name>.ino
+                             includes the Herradura32 library (arduino/libraries/).  A
+                             gate that reads a 32-bit suite reads core + programs
 herradura.h                — header-only C library (shared by CLI and external code)
 herradura/                 — root-level Go package (herradura.go, codec.go); used by the Go
                              FFI binding and fuzz tests
@@ -92,7 +97,8 @@ tools/                     — check_fast.sh (CI's cheap consistency checks in o
                              command), poison_build.sh (run-time BitArray width poisoning
                              over every C TU), check_runnable_coverage.py,
                              check_rate_format.py, check_docker_mirror.py,
-                             check_ci_install_bounds.py, check_ba_width_guard.c
+                             check_ci_install_bounds.py, check_action_pinning.py,
+                             check_ba_width_guard.c
 benchmarks/                — cost measurements (host-specific; figures do not belong in CI,
                              but CI checks they still build/run).  rnl_deployed_ring_cost.*
                              is the deployed HKEX-RNL ring (benchmark [40] uses retired rings)
@@ -204,7 +210,10 @@ build-collision hazard above.
 
 ### Assembly
 
-Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"` or `qemu-i386 "./Herradura cryptographic suite_i386"`.
+Use `build_arm.sh` / `build_asm_i386.sh`; `run_arm.sh suite` / `run_asm_i386.sh suite` run every
+demo (one per algorithm, `demos/arm/<name>_arm`, `demos/i386/<name>_i386`; name some to run
+only those), and each demo must exit 0 AND print the OK line.  A new demo is a new
+`demos/<target>/<name>` program; the build and run scripts pick it up by glob.
 
 > **i386 linker portability:** `x86_64-linux-gnu-ld -m elf_i386` fails on ARM64 hosts
 > (e.g. Raspberry Pi 5 / Ubuntu) with "unrecognized emulation mode: elf_i386" because the
@@ -224,13 +233,15 @@ themselves, and **any `[FAIL]` fails the build**.
   output (`#define printf hprintf` in C, a `print` shadow in Python, an `os.Stdout` scanning
   pipe in Go) and exits non-zero, closing with `*** OK: ... ***` or `*** FAILED: n ... ***`.
   There is no allow-list and nothing to register: a new test is gated by printing `[FAIL]`.
-- **ARM / NASM i386 (TODO #234, #350):** harness AND suite demo route output through
+- **ARM / NASM i386 (TODO #234, #350):** harness AND every demo route output through
   `bl hprintf` / `call print_str`.  `build_arm.sh` and `build_asm_i386.sh` fail the build on
-  a call site in either file that bypasses the wrapper without a `GATE-EXEMPT` marker.
+  a call site in the harness, the core or any demo that bypasses the wrapper without a
+  `GATE-EXEMPT` marker.
 - **Arduino:** the harness's verdicts go through one `verdict(bool)` helper (the marker is
-  split across two `Serial` calls, so output scanning cannot work), the suite's through
-  `check(ok, pass, fail)`.  The firmware never exits, so `run_arduino.sh` (both modes) fails
-  on a `*** FAILED:` line **or on the OK line never arriving**.  Put every string literal in
+  split across two `Serial` calls, so output scanning cannot work), each demo's through
+  `check(ok, pass, fail)` and `demo_finish()`.  The firmware never exits, so `run_arduino.sh`
+  (both modes) fails on a `*** FAILED:` line **or on the OK line never arriving**; it stops
+  each demo at its first verdict (TODO #425).  Put every string literal in
   flash with `F()`: `build_arduino.sh` fails a firmware leaving under 2 KB of SRAM for the
   stack, which is what hung the suite in HKEX-RNL until #350.
 - **Java:** `SelfTest` asserts; `Demo` is `[FAIL]`-gated like the C/Go/Python demos.
@@ -265,6 +276,16 @@ themselves, and **any `[FAIL]` fails the build**.
   verdict fingerprints and sampled-test rates.  That is intended — file the row it asks for
   rather than working around it.  Rates in `_SAMPLED_TEST_RATES` are EXPRESSIONS over
   constants read from source; do not hand-compute them.
+- **The Python harness re-implements the suite; hold every copy to what ships**
+  (`CryptosuiteTests/check_suite_parity.py`, TODO #416).  `CryptosuiteTests/Herradura_tests.py`
+  is standalone by design, so its `[FAIL]`-gated tests hold the COPY to its own
+  expectations — C/Go/Java call the shipped code, Python does not.  #409 is the cost: the
+  harness's ZKBoo copy carried the shipped bug and passed.  So a new harness function whose
+  NAME shadows a suite function must be classified in that checker (PARITY / RANDOMIZED /
+  HELPER), a deterministic copy is compared to the suite on shared inputs, and a verifier
+  is cross-verified BOTH WAYS with wrong-statement/tamper rejection asserted against the
+  SHIPPED verifier — never only against the copy.  A pure agreement check is not enough: a
+  bug both copies share passes it, which is exactly #409.
 - **If a gate flakes, fix that gate's threshold** (replicate per #299) — never add
   `continue-on-error` to make a red run pass.
 - When a TODO adds or removes a test number or CLI subcommand, re-check this section and
@@ -292,7 +313,9 @@ on purpose (defense in depth, TODO #336).  `.github/workflows/codeql.yml` is a s
 non-blocking CodeQL matrix (TODO #189).  Every step that installs packages (apt-get, npm,
 pip) carries `timeout-minutes: 20`, so a stalled mirror fails in minutes instead of the
 360-minute job default; `tools/check_ci_install_bounds.py` fails a new install step
-without one (TODO #353).
+without one (TODO #353).  Every remote `uses:` is pinned to a 40-hex commit SHA with its
+release in a `# vX.Y.Z` comment, one pin per action across both workflows;
+`tools/check_action_pinning.py` fails a tag pin (TODO #418).
 
 ### Commands
 
@@ -398,7 +421,8 @@ FSCX_REVOLVE + GF(2^n)* arithmetic
 ├── HKEX-GF  — C = g^a; C2 = g^b; sk = C2^a = C^b = g^{ab}
 ├── HSKE     — E = fscx_revolve(P, key, i); D = fscx_revolve(E, key, r) = P
 ├── HPKS     — Schnorr: R = g^k; e = fscx_revolve(R, msg, i);
-│              s = (k - a·e) mod (2^n-1); verify: g^s · C^e == R
+│              s = (k - a·e) mod ord(g); verify: s < ord(g), g^s · C^e == R
+│              (ord(g) = (2^n-1)/15 at n=32, /3 at n=128, 2^n-1 at 64/256; #423)
 └── HPKE     — El Gamal: enc_key = C^r = g^{ar};
                E = fscx_revolve(P, enc_key, i);
                dec_key = R^a = g^{ra};
@@ -433,8 +457,17 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  SEPARATE code path in every port (stern_l_* / SternL* /
 │                  SternL.java), vectors as N/8-byte strings, 256-bit commitments
 │                  and message; KAT/operation_replay.json's stern_l rows pin it
+├── HPKS-Ring    — ONE Stern proof over diag([H_i | s_i]) for k hpks-stern keys
+│                  (TODO #415; SPEC.md §11.2): witness (0..e_j..0 ; unit(j)) in
+│                  S = {one block of weight t, its indicator set}, hidden by a
+│                  block shuffle tau and per-block pi_i; one challenge per round,
+│                  salted c1/c2, D = H(hdr, msg, sorted ring, commits) over
+│                  HFSCX-256-DS(0x32, ...); both widths in one code path;
+│                  assembly/Arduino: the same proof at N=32, k=2, rounds=4 over
+│                  HFSCX-32 (TODO #424), one pinned vector in each [13]
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
-                   (`--algo hpke-stern`: demo, decap uses known e'; `--algo hpke-stern-kem`:
+                   (`hpke-stern`: suite demo, decap uses known e'; its CLI enc/dec were
+                   removed by TODO #413, the key tag remains a Stern key; `hpke-stern-kem`:
                    real BGF QC-MDPC decoder, qcmdpc_keygen/encap/decap_bgf in C/Go/Python)
 ```
 
@@ -446,7 +479,7 @@ Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Ar
 
 ### HerraduraCli — OpenSSL-style CLI
 
-Four parallel implementations (`herradura.py`, `herradura_cli.c`, `herradura_cli_go`, and Java's `herradurakex.HerraduraCli`) share the same PEM wire format and subcommand interface — `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile` and more (see `--help`; deliberate per-CLI flag differences are listed in `spec/`'s `cli_surface_gaps`).  The C, Go and Java `--help` synopses (subcommands, flags, `--algo` tags) are GENERATED by `spec/generate_spec.py` into `cli_flag_table.h`, `CliFlagTable.java` and a marked region of `herradura_cli.go` (TODO #339); hand-edit only the notes that follow them.  Which key labels each (subcommand, `--algo`, key flag) accepts is one curated table, `KEY_LABEL_SITES` in `spec/generate_spec.py`, emitted into `key_label_table.h`, `KeyLabelTable.java` and marked regions of `herradura_cli.go` and `herradura.py` (TODO #366); a new key slot needs a row there and a template in `CliTest/test_key_label_matrix.sh`.  Beside it, `PEM_DER_ITEMS` gives each DER-SEQUENCE label's item count, checked in every CLI's PEM loader (TODO #367); a new label needs a row there and a template in `CliTest/lib_der_fixtures.sh`.  `PEM_DER_FIELD_CAPS` gives each field's width (the width its writer pads it to), checked right after the count; a new layout needs a row there and a cell in `CliTest/test_canonical_encoding_matrix.sh`, which fails on a row no cell matches (TODO #372).  A cap written `=E` is a fixed-width field (exactly E bytes, as every writer pads it); any other field must be minimal DER, so measure a new writer before marking its fields; a row's optional value rules (coefficient bounds, bits below r, KEM supports) are generated into all four CLIs the same way (TODO #373).  Nothing may follow an artifact's last field — a DER SEQUENCE, a raw-body PEM, an `.hkx` tag — and an HPKS verifier refuses a stored e it did not recompute.  A value the other party supplies is screened before use: a GF(2^n)\* value by `gf_pub_is_valid`, an HKEX-RNL C by `rnl_validate_pub` (TODO #371); a new peer-value slot needs both the check and a case in `CliTest/test_peer_value_matrix.sh`.  PEM files produced by any implementation are byte-for-byte compatible with the others.
+Four parallel implementations (`herradura.py`, `herradura_cli.c`, `herradura_cli_go`, and Java's `herradurakex.HerraduraCli`) share the same PEM wire format and subcommand interface — `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile` and more (see `--help`; deliberate per-CLI flag differences are listed in `spec/`'s `cli_surface_gaps`).  The C, Go and Java `--help` synopses (subcommands, flags, `--algo` tags) are GENERATED by `spec/generate_spec.py` into `cli_flag_table.h`, `CliFlagTable.java` and a marked region of `herradura_cli.go` (TODO #339); hand-edit only the notes that follow them.  Which key labels each (subcommand, `--algo`, key flag) accepts is one curated table, `KEY_LABEL_SITES` in `spec/generate_spec.py`, emitted into `key_label_table.h`, `KeyLabelTable.java` and marked regions of `herradura_cli.go` and `herradura.py` (TODO #366); a new key slot needs a row there and a template in `CliTest/test_key_label_matrix.sh`.  Beside it, `PEM_DER_ITEMS` gives each DER-SEQUENCE label's item count, checked in every CLI's PEM loader (TODO #367); a new label needs a row there and a template in `CliTest/lib_der_fixtures.sh`.  `PEM_DER_FIELD_CAPS` gives each field's width (the width its writer pads it to), checked right after the count; a new layout needs a row there and a cell in `CliTest/test_canonical_encoding_matrix.sh`, which fails on a row no cell matches (TODO #372).  A cap written `=E` is a fixed-width field (exactly E bytes, as every writer pads it); any other field must be minimal DER, so measure a new writer before marking its fields; a row's optional value rules (coefficient bounds, bits below r, KEM supports) are generated into all four CLIs the same way (TODO #373).  Nothing may follow an artifact's last field — a DER SEQUENCE, a raw-body PEM, an `.hkx` tag — and an HPKS verifier refuses a stored e it did not recompute, and an s at or above ord(g) (`gf_gen_order`; #423).  A value the other party supplies is screened before use: a GF(2^n)\* value by `gf_pub_is_valid`, an HKEX-RNL C by `rnl_validate_pub` (TODO #371); a new peer-value slot needs both the check and a case in `CliTest/test_peer_value_matrix.sh`.  Every file a CLI writes goes through ONE writer per CLI — `hkx_fopen_out` (C), `writeOutFile` (Go, Java), `_open_out` (Python) — which creates it 0600 (#395) and refuses a symlink as the last path component (#417); never open an output any other way.  A WOTS/XMSS `sign` burns its leaf in `<key>.idx` (fsync'd, fatal on failure) BEFORE the signature exists; the `.idx` is read by ONE strict reader per CLI that fails CLOSED (missing, non-regular, non-canonical or out-of-range state refuses, never reads as unused; #419), and a one-time key must be a regular file — no `--key -`, no `genpkey` to stdout (#420).  `hpks-ring` is ONE Stern proof over the ring's block-diagonal statement (SPEC.md §11.2, #415); its signature is the library's bytes (`stern_ring_sign` / `HpksSternRingSign` / `hpks_stern_ring_sign` / `SternRing.sign`, one implementation for both widths), pinned whole by `KAT/operation_replay.json`, and the forgeable v1 label `HERRADURA HPKS-RING SIGNATURE` is refused by name.  PEM files produced by any implementation are byte-for-byte compatible with the others.
 
 - Python CLI (`herradura.py`) imports the suite via `primitives.py`, which uses `importlib` to load the space-named suite file.
 - C CLI (`herradura_cli.c`) `#include`s `../herradura.h` and `herradura_codec.h` for PEM/DER encode-decode.

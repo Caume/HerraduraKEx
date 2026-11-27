@@ -69,6 +69,7 @@ Run:  python3 SecurityProofsCode/hfscx_mmo_compression.py [--quick]
 """
 
 import importlib.util
+import glob
 import os
 import random
 import re
@@ -112,8 +113,20 @@ def _fn_body(text, head):
 
 
 def _src(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
-        return f.read()
+    """A file's text.  A 32-bit target (demos/arm, demos/i386, demos/arduino) is
+    read as its shared core followed by every one-algorithm program, in name
+    order: TODO #425 split each single-file suite that way, and the sites a
+    check counts sit in both halves."""
+    path = os.path.join(ROOT, rel)
+    if os.path.isdir(path):
+        core = {"demos/arm": "core.s", "demos/i386": "core.asm",
+                "demos/arduino": "libraries/Herradura32/src/Herradura32.h"}[rel]
+        progs = sorted(glob.glob(os.path.join(path, "*.s" if rel.endswith("arm") else "*.asm"))
+                       if not rel.endswith("arduino") else glob.glob(os.path.join(path, "*", "*.ino")))
+        files = [os.path.join(path, core)] + [p for p in progs if not p.endswith(core)]
+        return "\n".join(open(p, encoding="utf-8").read() for p in files)
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
 
 
 H = _load("_suite", "Herradura cryptographic suite.py")
@@ -260,12 +273,12 @@ def section_3():
           "herradura.h's hfscx_256 passes the block as A and the state as B, and feeds "
           "the block forward")
     ok32 = []
-    for f in ("Herradura cryptographic suite.ino",):
+    for f in ("demos/arduino",):
         s = _src(f)
         ok32.append("nl_fscx_revolve_v1(x, 0xA3C5E7B9UL, V1_MODE_STEPS) ^ x" in s and
                     "nl_fscx_revolve_v1(0xA3C5E799UL, s, V1_MODE_STEPS) ^ 0xA3C5E799UL" in s)
-    for f in ("Herradura cryptographic suite.s", "CryptosuiteTests/Herradura_tests.s",
-              "Herradura cryptographic suite.asm", "CryptosuiteTests/Herradura_tests.asm"):
+    for f in ("demos/arm", "CryptosuiteTests/Herradura_tests.s",
+              "demos/i386", "CryptosuiteTests/Herradura_tests.asm"):
         s = _src(f)
         ok32.append("(MMO, v11.0.0, TODO #351)" in s and "(DM block" not in s)
     check(all(ok32), "HFSCX-32 is MMO in the five 32-bit files (%d of 5)" % sum(ok32))

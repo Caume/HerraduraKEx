@@ -115,17 +115,32 @@ $CLI dec --algo hpke-nl --key "$TMP/alice_hpke_nl.pem" \
          --in "$TMP/hpke_nl_ct.pem" --out "$TMP/hpke_nl_plain.bin"
 check_roundtrip "hpke-nl enc/dec" "$TMP/msg32.bin" "$TMP/hpke_nl_plain.bin"
 
-# ---------------------------------------------------------------------------
-# HPKE-Stern-F KEM demo (n=32; block = 4 bytes)
-# ---------------------------------------------------------------------------
-
-$CLI genpkey --algo hpke-stern --bits 32 --out "$TMP/stern_hpke.pem"
-$CLI pkey    --in "$TMP/stern_hpke.pem" --pubout --out "$TMP/stern_hpke_pub.pem"
-$CLI enc --algo hpke-stern --pubkey "$TMP/stern_hpke_pub.pem" \
-         --in "$TMP/msg4.bin" --out "$TMP/hpke_stern_ct.pem"
-$CLI dec --algo hpke-stern --key "$TMP/stern_hpke.pem" \
-         --in "$TMP/hpke_stern_ct.pem" --out "$TMP/hpke_stern_plain.bin"
-check_roundtrip "hpke-stern enc/dec n=32" "$TMP/msg4.bin" "$TMP/hpke_stern_plain.bin"
+# ── HPKE-Stern-F: enc/dec --algo hpke-stern are refused (TODO #413) ──────────
+# Its ciphertext carried the error vector, so anyone holding it decrypted it.
+# The hpke enc/dec round-trips above are the accept-control; the key itself
+# still signs as a Stern key.
+$CLI genpkey --algo hpke-stern --bits 32 --out "$TMP/hpke_stern.pem"
+$CLI pkey    --in "$TMP/hpke_stern.pem" --pubout --out "$TMP/hpke_stern_pub.pem"
+for sub in enc dec; do
+    if [ $sub = enc ]; then kf=(--pubkey "$TMP/hpke_stern_pub.pem"); else kf=(--key "$TMP/hpke_stern.pem"); fi
+    rm -f "$TMP/hpke_stern_out"
+    if $CLI $sub --algo hpke-stern "${kf[@]}" --in "$TMP/msg4.bin" --out "$TMP/hpke_stern_out" \
+            2>"$TMP/hpke_stern_err"; then
+        echo "FAIL $sub --algo hpke-stern was accepted"; FAIL=$((FAIL+1))
+    elif [ -e "$TMP/hpke_stern_out" ] || ! grep -q 'hpke-stern-kem' "$TMP/hpke_stern_err"; then
+        echo "FAIL $sub --algo hpke-stern: refused without the pointer to hpke-stern-kem, or wrote output"
+        FAIL=$((FAIL+1))
+    else
+        echo "PASS $sub --algo hpke-stern refused"; PASS=$((PASS+1))
+    fi
+done
+$CLI sign --algo hpks-stern --rounds 2 --key "$TMP/hpke_stern.pem" --in "$TMP/msg4.bin" --out "$TMP/hpke_stern_sig.pem"
+if $CLI verify --algo hpks-stern --min-rounds 2 --pubkey "$TMP/hpke_stern_pub.pem" \
+        --in "$TMP/msg4.bin" --sig "$TMP/hpke_stern_sig.pem" >/dev/null 2>&1; then
+    echo "PASS an hpke-stern key still signs"; PASS=$((PASS+1))
+else
+    echo "FAIL an hpke-stern key no longer signs"; FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"

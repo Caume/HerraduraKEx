@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # HerraduraKEx — ARM Thumb-2 build script
-# Cross-compiles the suite and tests from ARM Thumb-2 assembly using
+# Cross-compiles the demos (demos/arm/<algorithm>.s, one program per algorithm
+# over the shared demos/arm/core.s; TODO #425) and the tests from ARM Thumb-2
+# assembly using
 # arm-linux-gnueabi-gcc.  Produces ELF binaries runnable under qemu-arm.
 #
 # Dependencies (build):
@@ -19,8 +21,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
 : "${VERSION:=unknown}"
-SUITE_SRC="Herradura cryptographic suite.s"
-SUITE_BIN="Herradura cryptographic suite_arm"
+DEMO_DIR="demos/arm"
+DEMO_SRCS=()
+for SRC in "${DEMO_DIR}"/*.s; do
+    [ "$(basename "${SRC}")" = "core.s" ] || DEMO_SRCS+=("${SRC}")
+done
+if (( ${#DEMO_SRCS[@]} == 0 )); then
+    echo "ERROR: no demo programs under ${DEMO_DIR}"; exit 1
+fi
 TESTS_SRC="CryptosuiteTests/Herradura_tests.s"
 TESTS_BIN="CryptosuiteTests/Herradura_tests_arm"
 
@@ -47,7 +55,7 @@ echo "=== HerraduraKEx v${VERSION} — ARM Thumb-2 build ==="
 # inside hprintf, so every printf call site has to route through it.  A bare
 # `bl printf` silently leaves its output ungated; the ones that legitimately
 # need one (the verdict lines, hprintf's own tail call) are marked GATE-EXEMPT.
-for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+for SRC in "${DEMO_DIR}/core.s" "${DEMO_SRCS[@]}" "${TESTS_SRC}"; do
     UNGATED=$(grep -n 'b\(l\)\?[[:space:]]\+printf\b' "${SRC}" | grep -v 'GATE-EXEMPT' || true)
     if [ -n "${UNGATED}" ]; then
         echo "ERROR: ungated printf call site(s) in ${SRC}:"
@@ -66,7 +74,7 @@ done
 # all 200 attempts, while HKEX-RNL -- both parties sharing the same multiply --
 # still agreed.  Use the S form, or mark the line FLAGS-OK if the flags an IT
 # reads really are an earlier instruction's.
-for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+for SRC in "${DEMO_DIR}/core.s" "${DEMO_SRCS[@]}" "${TESTS_SRC}"; do
     STALE=$(awk -v F="${SRC}" '
         prev ~ /^[[:space:]]+(add|sub|rsb|adc|sbc|and|orr|eor|bic|lsl|lsr|asr|ror|mul|mov|mvn|uxth|uxtb|ldr|str)[[:space:]]/ &&
         prev !~ /FLAGS-OK/ && $0 ~ /^[[:space:]]+it[te]*[[:space:]]+[a-z][a-z]/ {
@@ -81,12 +89,17 @@ for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
     fi
 done
 
-echo "  Compiling suite..."
-"${ARM_CC}" -O2 \
-    -L"${ARM_SYSROOT_LIB}" \
-    -B"${ARM_SYSROOT_LIB}" \
-    -o "${SUITE_BIN}" "${SUITE_SRC}"
-echo "    -> ${SUITE_BIN}"
+# Each demo .includes core.s, so the assembler is told where it is.
+echo "  Compiling ${#DEMO_SRCS[@]} demos..."
+for SRC in "${DEMO_SRCS[@]}"; do
+    BIN="${SRC%.s}_arm"
+    "${ARM_CC}" -O2 \
+        -L"${ARM_SYSROOT_LIB}" \
+        -B"${ARM_SYSROOT_LIB}" \
+        -Wa,-I,"${DEMO_DIR}" \
+        -o "${BIN}" "${SRC}"
+    echo "    -> ${BIN}"
+done
 
 echo "  Compiling tests..."
 "${ARM_CC}" -O2 \

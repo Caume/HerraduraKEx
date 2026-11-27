@@ -19,13 +19,15 @@ q $C pkey --in "$F/hpks-xmss.pem" --pubout --out "$F/hpks-xmss_pub.pem"
 q $C genpkey --algo hpks-stern --out "$F/m2.pem"; q $C pkey --in "$F/m2.pem" --pubout --out "$F/m2_pub.pem"
 q $C genpkey --algo hkex-rnl --out "$F/rnl2.pem"; q $C pkey --in "$F/rnl2.pem" --pubout --out "$F/rnl2_pub.pem"
 printf 'der item count test message, 32' > "$F/msg.bin"
-for a in hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem; do
+for a in hpke hpke-nl hpke-nl3 hpke-stern-kem; do
     q $C enc --algo $a --pubkey "$F/${a}_pub.pem" --in "$F/msg.bin" --out "$F/ct_$a.pem"
 done
 for a in hpks hpks-nl; do
     q $C sign --algo $a --key "$F/$a.pem" --in "$F/msg.bin" --out "$F/sig_$a.pem"
 done
 q $C sign --algo hpks-stern --rounds 2 --key "$F/hpks-stern.pem" --in "$F/msg.bin" --out "$F/sig_hpks-stern.pem"
+# An hpke-stern key is a Stern signing key since TODO #413 retired enc/dec --algo hpke-stern.
+q $C sign --algo hpks-stern --rounds 2 --key "$F/hpke-stern.pem" --in "$F/msg.bin" --out "$F/sig_hpke-stern.pem"
 cp "$F/hpks-wots.pem" "$F/w1.pem"; cp "$F/hpks-wots.pem.idx" "$F/w1.pem.idx" 2>/dev/null || true
 q $C sign --algo hpks-wots --key "$F/w1.pem" --in "$F/msg.bin" --out "$F/sig_hpks-wots.pem"
 cp "$F/hpks-xmss.pem" "$F/x1.pem"; cp "$F/hpks-xmss.pem.idx" "$F/x1.pem.idx" 2>/dev/null || true
@@ -41,6 +43,7 @@ q $C oprf-eval --key "$F/oprf.pem" --in "$F/oprf_state.pem" --out "$F/oprf_eval.
 q $C genpkey --algo hpks --out "$F/t2.pem"
 q $C threshold-commit --key "$F/hpks.pem" --commit-out "$F/c1.pem" --nonce-out "$F/n1.pem"
 q $C threshold-commit --key "$F/t2.pem" --commit-out "$F/c2.pem" --nonce-out "$F/n2.pem"
+q $C pkey --in "$F/t2.pem" --pubout --out "$F/t2_pub.pem"
 q $C threshold-aggregate --commit "$F/c1.pem" --commit "$F/c2.pem" --in "$F/msg.bin" --out "$F/agg.pem"
 q $C threshold-respond --key "$F/hpks.pem" --commit "$F/c1.pem" --commit "$F/c2.pem" \
     --aggregate "$F/agg.pem" --nonce "$F/n1.pem" --out "$F/p1.pem"
@@ -74,8 +77,8 @@ T["HERRADURA HKEX-RNL RESPONSE"]="rnl_resp.pem|kex --algo hkex-rnl --our {F}/hke
 T["HERRADURA HYBRID-RNL-STERN RESPONSE"]="hyb_resp.pem|kex --algo hybrid-rnl-stern --our {F}/hkex-rnl.pem --our-kem {F}/hpke-stern-kem.pem --their {X} --out {O}"
 T["HERRADURA HPKS-STERN PRIVATE KEY"]="hpks-stern.pem|sign --algo hpks-stern --rounds 2 --key {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HPKS-STERN PUBLIC KEY"]="hpks-stern_pub.pem|verify --algo hpks-stern --min-rounds 1 --pubkey {X} --in {F}/msg.bin --sig {F}/sig_hpks-stern.pem"
-T["HERRADURA HPKE-STERN PRIVATE KEY"]="hpke-stern.pem|dec --algo hpke-stern --key {X} --in {F}/ct_hpke-stern.pem --out {O}"
-T["HERRADURA HPKE-STERN PUBLIC KEY"]="hpke-stern_pub.pem|enc --algo hpke-stern --pubkey {X} --in {F}/msg.bin --out {O}"
+T["HERRADURA HPKE-STERN PRIVATE KEY"]="hpke-stern.pem|sign --algo hpks-stern --rounds 2 --key {X} --in {F}/msg.bin --out {O}"
+T["HERRADURA HPKE-STERN PUBLIC KEY"]="hpke-stern_pub.pem|verify --algo hpks-stern --min-rounds 1 --pubkey {X} --in {F}/msg.bin --sig {F}/sig_hpke-stern.pem"
 T["HERRADURA HPKE-STERN-KEM PRIVATE KEY"]="hpke-stern-kem.pem|dec --algo hpke-stern-kem --key {X} --in {F}/ct_hpke-stern-kem.pem --out {O}"
 T["HERRADURA HPKE-STERN-KEM PUBLIC KEY"]="hpke-stern-kem_pub.pem|enc --algo hpke-stern-kem --pubkey {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HPKS-WOTS PRIVATE KEY"]="hpks-wots.pem|sign --algo hpks-wots --key {X} --in {F}/msg.bin --out {O}"
@@ -84,7 +87,7 @@ T["HERRADURA HPKS-WOTS SIGNATURE"]="sig_hpks-wots.pem|verify --algo hpks-wots --
 T["HERRADURA HPKS-XMSS PRIVATE KEY"]="hpks-xmss.pem|sign --algo hpks-xmss --key {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HPKS-XMSS PUBLIC KEY"]="hpks-xmss_pub.pem|verify --algo hpks-xmss --pubkey {X} --in {F}/msg.bin --sig {F}/sig_hpks-xmss.pem"
 T["HERRADURA HPKS-XMSS SIGNATURE"]="sig_hpks-xmss.pem|verify --algo hpks-xmss --pubkey {F}/hpks-xmss_pub.pem --in {F}/msg.bin --sig {X}"
-T["HERRADURA HPKS-RING SIGNATURE"]="sig_ring.pem|verify --algo hpks-ring --min-rounds 1 --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --sig {X}"
+T["HERRADURA HPKS-RING-V2 SIGNATURE"]="sig_ring.pem|verify --algo hpks-ring --min-rounds 1 --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --sig {X}"
 T["HERRADURA OPRF PRIVATE KEY"]="oprf.pem|oprf-eval --key {X} --in {F}/oprf_state.pem --out {O}"
 T["HERRADURA OPRF CLIENT STATE"]="oprf_state.pem|oprf-eval --key {F}/oprf.pem --in {X} --out {O}"
 T["HERRADURA OPRF EVALUATION"]="oprf_eval.pem|oprf-unblind --state {F}/oprf_state.pem --eval {X}"
@@ -92,7 +95,7 @@ T["HERRADURA HPKST COMMITMENT"]="c1.pem|threshold-aggregate --commit {X} --commi
 T["HERRADURA HPKST NONCE"]="n1.pem|threshold-respond --key {F}/hpks.pem --commit {F}/c1.pem --commit {F}/c2.pem --aggregate {F}/agg.pem --nonce {X} --out {O}"
 T["HERRADURA HPKST AGGREGATE"]="agg.pem|threshold-respond --key {F}/hpks.pem --commit {F}/c1.pem --commit {F}/c2.pem --aggregate {X} --nonce {F}/n1.pem --out {O}"
 T["HERRADURA HPKST PARTIAL"]="p1.pem|threshold-combine --aggregate {F}/agg.pem --partial {X} --partial {F}/p2.pem --out {O}"
-T["HERRADURA HPKST SIGNATURE"]="tsig.pem|verify --algo hpks-t --in {F}/msg.bin --sig {X}"
+T["HERRADURA HPKST SIGNATURE"]="tsig.pem|verify --algo hpks-t --pubkey {F}/hpks_pub.pem,{F}/t2_pub.pem --in {F}/msg.bin --sig {X}"
 T["HERRADURA HCRED CREDENTIAL"]="cred.pem|cred-verify --min-rounds 1 --proof {F}/proof.pem --pubkey {F}/hcred_pub.pem --msg n --cred {X} --issuer {F}/hpks-stern_pub.pem"
 T["HERRADURA SESSION KEY"]="sk.pem|enc --algo hske --key {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HDRBG STATE"]="drbg.pem|rand --state {X} --bytes 8 --out {O}"

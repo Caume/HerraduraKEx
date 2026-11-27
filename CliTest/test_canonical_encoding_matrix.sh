@@ -114,7 +114,6 @@ CELLS+=("HERRADURA CIPHERTEXT|ct_hske.pem|dec --algo hske --key {F}/sk.pem --in 
 CELLS+=("HERRADURA CIPHERTEXT|ct_nla1.pem|dec --algo hske-nla1 --key {F}/sk.pem --in {X} --out {O}")
 CELLS+=("HERRADURA CIPHERTEXT|ct_aead.pem|dec --algo hske-nla1 --key {F}/sk.pem --in {X} --out {O}")
 CELLS+=("HERRADURA CIPHERTEXT|ct_duplex.pem|dec --algo hske-duplex --key {F}/sk.pem --in {X} --out {O}")
-CELLS+=("HERRADURA CIPHERTEXT|ct_hpke-stern.pem|dec --algo hpke-stern --key {F}/hpke-stern.pem --in {X} --out {O}")
 CELLS+=("HERRADURA CIPHERTEXT|ct_hpke-stern-kem.pem|dec --algo hpke-stern-kem --key {F}/hpke-stern-kem.pem --in {X} --out {O}")
 CELLS+=("HERRADURA SIGNATURE|sig_hpks-stern.pem|verify --algo hpks-stern --min-rounds 1 --pubkey {F}/hpks-stern_pub.pem --in {F}/msg.bin --sig {X}")
 CELLS+=("HERRADURA SIGNATURE|sig_hpks-nl.pem|verify --algo hpks-nl --pubkey {F}/hpks-nl_pub.pem --in {F}/msg.bin --sig {X}")
