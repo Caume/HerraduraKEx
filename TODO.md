@@ -10,30 +10,13 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #424: the assembly and Arduino suites still demo the retired HPKS-Ring
-
-TODO #415 replaced the OR-composed ring with one Stern proof over the ring's
-block-diagonal statement (SPEC.md §11.2) in C, Go, Python and Java.  The ARM Thumb-2,
-NASM i386 and Arduino suites (and the Arduino harness) still carry their own fixed-width
-32-bit demo of the OR-composition, which is forgeable with no member's key.  They have
-no CLI and produce no artifact, so nothing they make reaches a verifier; but each prints
-"signature verified" for a broken construction.
-
-To do: port the new ring at N = 32 (k = 2, its block shuffle is one bit), or remove
-the ring demo from all three and their harnesses, and update the build scripts' gate
-counts.  Not MAJOR: no wire format or CLI surface.
-
-Status: **OPEN**
-
----
-
 ### #425: split the assembly and Arduino suite demos into one program per algorithm
 
 The ARM Thumb-2 (`.s`, ~4.9k lines), NASM i386 (`.asm`, ~5.0k) and Arduino (`.ino`,
 ~1.6k) suites are each ONE program that runs about twenty demos in sequence, with the
 "Eve" attack checks gathered into a block in the middle.  That makes it hard to read one
 algorithm end to end, to see which output belongs to which demo, or to drop or port a
-single demo (#424 is that problem for the ring).
+single demo (#424 was that problem for the ring).
 
 To do: give each target a shared core (BitArray-free 32-bit FSCX, NL-FSCX v1/v2,
 HFSCX-32, GF(2^32) mul/pow, the PRNG, the `hprintf` / `print_str` / `check()` [FAIL]
@@ -76,9 +59,9 @@ Out of scope:
   single programs; numbered-test parity depends on them.
 - C, Go, Python and Java keep their one-file suites.
 
-Order with #424: do #424 first, on the current single files, since it is the defect.  If
-this lands first, #424 becomes "port the ring as its own program, or omit it".  Not
-MAJOR: no wire format or CLI surface.
+#424 is done, on the single files.  Its pinned ring vector in each harness's `[13]` is a
+cross-port check that the split must keep passing.  Not MAJOR: no wire format or CLI
+surface.
 
 Status: **OPEN**
 

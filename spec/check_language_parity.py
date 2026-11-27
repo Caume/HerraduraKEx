@@ -3168,8 +3168,12 @@ def check_argued_evidence(errors, ptables):
 # part that IS done: the inputs are read from source and the order recomputed
 # every run, so the published number moves when the harness does.  The standing warning in CLAUDE.md's Testing
 # section -- that a STERN rejection test written here would carry a (2/3)^4 =
-# 19.75% per-trial soundness error -- is unviolated and stays: [11]-[14] are
-# completeness checks, each requiring all 3 trials to pass.
+# 19.75% per-trial soundness error -- is unviolated and stays: [11], [12] and
+# [14] are completeness checks, each requiring all 3 trials to pass.  [13]
+# (TODO #424) refuses too, but none of its refusals rests on Stern soundness:
+# a changed word and another message fail the 32-bit digest, and its
+# wrong-secret cell is split EXACTLY -- refused iff a round drew b=2, n/a
+# without one -- so the (2/3)^4 never reaches a verdict.
 
 _REDUCED_HARNESSES = {
     "arm": {
@@ -3204,7 +3208,8 @@ _REDUCED_HARNESSES = {
     },
     "arduino": {
         "path": os.path.join(REPO, "CryptosuiteTests", "Herradura_tests.ino"),
-        "marker": re.compile(r'Serial\.println\("\[(\d+)\]'),
+        # F("...") too: a literal belongs in flash (CLAUDE.md), and [13] is one.
+        "marker": re.compile(r'Serial\.println\((?:F\()?"\[(\d+)\]'),
         # The println IS the title, so it is inside the slice already and
         # there is no symbol to resolve.
         "title": None,
@@ -3287,6 +3292,27 @@ _REDUCED_REJECTION_BASES = {
         "why": "the same two hardcoded keys again, doubly deterministic here "
                "-- the inputs are literals AND the harness draws nothing at "
                "all -- so this cell is exact under either reading"},
+    ("arm", 13): {"basis": "hash-binding", "bits": 32, "rate": None,
+        "why": "HPKS-Stern-Ring (TODO #424): after an accept-control (sign, "
+               "verify, verify with the ring reordered) one changed opening "
+               "word and another message must be refused; the verifier "
+               "rebuilds every commitment and compares the 32-bit digest D, so "
+               "either passes only on a collision of HFSCX-32.  The "
+               "wrong-secret cell is exact: a witness in S survives every b=0 "
+               "and b=1 round, so it must be refused iff a round drew b=2, and "
+               "is counted n/a, never scored, without one.  The pinned vector "
+               "is an equality, not a refusal"},
+    ("i386", 13): {"basis": "hash-binding", "bits": 32, "rate": None,
+        "why": "the ARM harness's [13] transcribed for NASM: the same "
+               "refusals, the same exact wrong-secret split, the same pinned "
+               "vector -- a separate row because it is a separate binary, "
+               "and the pinned vector is what holds the two to one "
+               "construction"},
+    ("arduino", 13): {"basis": "hash-binding", "bits": 32, "rate": None,
+        "why": "the same [13] in C, on a stream that is never reseeded, so "
+               "the three trials are one fixed vector.  Its pinned vector is "
+               "the one that caught this harness's Stern matrix lacking the "
+               "HFSCX-32 finalization the suite applies (TODO #88)"},
     ("arduino", 17): {"basis": "not-a-verdict", "bits": None, "rate": None,
         "why": "an OVER-MATCH, kept and classified rather than dropped, which "
                "is Part 5/7's rule.  [17] is a 4-leaf Merkle proof round-trip "

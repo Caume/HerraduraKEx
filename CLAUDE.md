@@ -452,7 +452,9 @@ Stern identification protocol (ZKP for syndrome decoding)
 │                  S = {one block of weight t, its indicator set}, hidden by a
 │                  block shuffle tau and per-block pi_i; one challenge per round,
 │                  salted c1/c2, D = H(hdr, msg, sorted ring, commits) over
-│                  HFSCX-256-DS(0x32, ...); both widths in one code path
+│                  HFSCX-256-DS(0x32, ...); both widths in one code path;
+│                  assembly/Arduino: the same proof at N=32, k=2, rounds=4 over
+│                  HFSCX-32 (TODO #424), one pinned vector in each [13]
 └── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
                    (`hpke-stern`: suite demo, decap uses known e'; its CLI enc/dec were
                    removed by TODO #413, the key tag remains a Stern key; `hpke-stern-kem`:

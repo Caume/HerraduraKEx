@@ -596,139 +596,160 @@ static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
 }
 
 /* ------------------------------------------------------------------ */
-/* HPKS-Stern-Ring: k=2 OR-composition ring sig (TODO #78.I, v1.9.16) */
-/* Member 0 always simulated (b=0); member 1 is real signer.          */
-/* joint[r] = b0[r]+b1[r] mod 3; since b0=0, b1[r]=joint[r].         */
+/* HPKS-Stern-Ring (TODO #424): ONE Stern proof over the ring, the    */
+/* construction of SPEC.md §11.2 at N=32 with the 32-bit primitives:  */
+/* H~ = diag([H_0|s_0], [H_1|s_1]) over the ring sorted by (seed,     */
+/* syndrome); the signer j proves z = (0..e_j..0 ; unit(j)) in        */
+/* ker H~ and in S (one block of weight t, its indicator set), hidden */
+/* by a block shuffle tau and per-block pi_b.  c0 = H1(ps, H~ r),     */
+/* c1 = H2(salt1, PI r), c2 = H3(salt2, PI y); D = H0(2, k, rounds,   */
+/* msg, ring, commitments); b from H6(D, ctr) bytes, 255 rejected.    */
+/* Per round the unopened commitment then 8 opening words:            */
+/*   b=0: c0, s1, s2, PI r (3), PI y (3)                              */
+/*   b=1: c2, ps, s1, r (3), 0,0,0     b=2: c1, ps, s2, y (3), 0,0,0  */
+/* Replaced the OR-composition, forgeable with no member's key.       */
+/* H_ds(w..) = HFSCX-32(0x32000000|ds, w..); not interoperable with   */
+/* the 256-bit ports.  DEMO ONLY: N=32 and 4 rounds have no security. */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
-    SternSig32 m0;           /* simulated member 0 (b=0 all rounds) */
-    SternSig32 m1;           /* real signer (member 1) */
-    uint32     joint[SDF_ROUNDS];
-} SternRingSig2_32;
+#define RING_K        2
+#define RING32_TAG    0x32000000UL
+#define RING_VERSION  2
+#define RING_RW       9                         /* words per round: unopened + 8 */
+#define RING_DW       (8 + 3 * SDF_ROUNDS)      /* digest input words */
+typedef struct { uint32 D; uint32 rw[SDF_ROUNDS][RING_RW]; } SternRing32;
 
-static void ring_fs_challenges2_32(uint32 *joint_out,
-                                    uint32 msg,
-                                    const uint32 *c0_0, const uint32 *c1_0, const uint32 *c2_0,
-                                    const uint32 *c0_1, const uint32 *c1_1, const uint32 *c2_1) {
-    uint32 h = hfscx32_absorb(HFSCX32_IV, STERN32_TAG);   /* ds = 0 */
-    h = hfscx32_absorb(h, msg);
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = hfscx32_absorb(h, c0_0[i]);
-        h = hfscx32_absorb(h, c1_0[i]);
-        h = hfscx32_absorb(h, c2_0[i]);
-    }
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = hfscx32_absorb(h, c0_1[i]);
-        h = hfscx32_absorb(h, c1_1[i]);
-        h = hfscx32_absorb(h, c2_1[i]);
-    }
-    h = hfscx32_final(h);
-    for (int i = 0; i < SDF_ROUNDS; i++) {
-        h = nl_fscx_v1(h, (uint32)i);
-        joint_out[i] = h % 3;
+static uint32 ring_seed[RING_K], ring_syn[RING_K];
+static uint8_t ring_perm[RING_K][SDF_N];
+static uint32 ring_tau;
+static uint32 ring_dbuf[RING_DW];
+
+static uint32 ring_hash_32(uint32 ds, const uint32 *w, int n) {
+    uint32 h = hfscx32_absorb(HFSCX32_IV, RING32_TAG | ds);
+    for (int i = 0; i < n; i++) h = hfscx32_absorb(h, w[i]);
+    return hfscx32_final(h);
+}
+/* Sort the two members by (seed, syndrome); -1 for a duplicate, else 1 if swapped. */
+static int ring_canon_32(uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    int sw = (sa > sb) || (sa == sb && ya > yb);
+    if (sa == sb && ya == yb) return -1;
+    ring_seed[0] = sw ? sb : sa; ring_syn[0] = sw ? yb : ya;
+    ring_seed[1] = sw ? sa : sb; ring_syn[1] = sw ? ya : yb;
+    return sw;
+}
+static void ring_perms_32(uint32 ps) {
+    uint32 w[2] = { ps, 0 };
+    ring_tau = ring_hash_32(4, w, 1) & 1u;
+    for (int b = 0; b < RING_K; b++) {
+        w[1] = (uint32)b;
+        stern_gen_perm_32(ring_perm[b], ring_hash_32(5, w, 2));
     }
 }
-
-static void hpks_stern_ring2_sign_32(SternRingSig2_32 *rsig,
-                                      uint32 msg,
-                                      uint32 e1, uint32 seed1) {
-    static uint8_t perm[SDF_N];
-    static uint32 r_tmp[SDF_ROUNDS], y_tmp[SDF_ROUNDS];
-    static uint32 pi_tmp[SDF_ROUNDS], sr_tmp[SDF_ROUNDS], sy_tmp[SDF_ROUNDS];
-    int i;
-
-    /* Simulate member 0: b=0 all rounds */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        /* sr0 uniform, sy0 = sr0 ^ (weight-t): matches the real signer's
-         * (sigma(r), sigma(r) ^ sigma(e)) now that r is uniform (TODO #298). */
-        uint32 sr0 = lcg_next();
-        uint32 sy0 = sr0 ^ stern_rand_error_32();
-        rsig->m0.c0[i] = stern_hash2_32(1, 0, 0);   /* dummy, unchecked for b=0 */
-        rsig->m0.c1[i] = stern_hash1_32(2, sr0);
-        rsig->m0.c2[i] = stern_hash1_32(3, sy0);
-        rsig->m0.b[i]     = 0;
-        rsig->m0.respA[i] = sr0;
-        rsig->m0.respB[i] = sy0;
-    }
-
-    /* Commit phase for member 1 (real signer) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 r  = lcg_next();            /* UNIFORM since v8.0.0, TODO #298 */
-        uint32 y  = e1 ^ r;
-        uint32 pi = lcg_next();
-        stern_gen_perm_32(perm, pi);
-        uint32 sr = stern_apply_perm_32(perm, r);
-        uint32 sy = stern_apply_perm_32(perm, y);
-        uint32 hr = stern_syndrome_32(seed1, r);
-        rsig->m1.c0[i] = stern_hash2_32(1, pi, hr);
-        rsig->m1.c1[i] = stern_hash1_32(2, sr);
-        rsig->m1.c2[i] = stern_hash1_32(3, sy);
-        r_tmp[i] = r; y_tmp[i] = y;
-        pi_tmp[i] = pi; sr_tmp[i] = sr; sy_tmp[i] = sy;
-    }
-
-    /* Joint Fiat-Shamir challenges */
-    ring_fs_challenges2_32(rsig->joint, msg,
-        rsig->m0.c0, rsig->m0.c1, rsig->m0.c2,
-        rsig->m1.c0, rsig->m1.c1, rsig->m1.c2);
-
-    /* Assign member 1 responses (b1=joint since b0=0) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 bv = rsig->joint[i];
-        rsig->m1.b[i] = bv;
-        if      (bv == 0) { rsig->m1.respA[i] = sr_tmp[i]; rsig->m1.respB[i] = sy_tmp[i]; }
-        else if (bv == 1) { rsig->m1.respA[i] = pi_tmp[i]; rsig->m1.respB[i] = r_tmp[i];  }
-        else              { rsig->m1.respA[i] = pi_tmp[i]; rsig->m1.respB[i] = y_tmp[i];  }
+static void ring_apply_32(const uint32 *v, uint32 *out) {
+    out[2] = 0;
+    for (uint32 b = 0; b < RING_K; b++) {
+        out[b ^ ring_tau] = stern_apply_perm_32(ring_perm[b], v[b]);
+        out[2] |= ((v[2] >> b) & 1u) << (b ^ ring_tau);
     }
 }
-
-static int hpks_stern_ring2_verify_32(const SternRingSig2_32 *rsig,
-                                       uint32 msg,
-                                       uint32 seed0, uint32 synd0,
-                                       uint32 seed1, uint32 synd1) {
-    static uint8_t perm[SDF_N];
-    uint32 joint[SDF_ROUNDS];
-    int i;
-
-    ring_fs_challenges2_32(joint, msg,
-        rsig->m0.c0, rsig->m0.c1, rsig->m0.c2,
-        rsig->m1.c0, rsig->m1.c1, rsig->m1.c2);
-
-    /* Check challenge sums: b0+b1 mod 3 == joint */
-    for (i = 0; i < SDF_ROUNDS; i++)
-        if ((rsig->m0.b[i] + rsig->m1.b[i]) % 3 != joint[i]) return 0;
-
-    /* Verify member 0 (b=0 all rounds) */
-    for (i = 0; i < SDF_ROUNDS; i++) {
-        if (rsig->m0.b[i] != 0) return 0;
-        uint32 ra = rsig->m0.respA[i], rb = rsig->m0.respB[i];
-        if (stern_hash1_32(2, ra) != rsig->m0.c1[i]) return 0;
-        if (stern_hash1_32(3, rb) != rsig->m0.c2[i]) return 0;
-        if (!stern_wt_is_t_32(ra ^ rb)) return 0;
+static uint32 ring_htilde_32(const uint32 *v) {
+    uint32 out = 0;
+    for (uint32 b = 0; b < RING_K; b++) {
+        uint32 m = (uint32)(-(int32_t)((v[2] >> b) & 1u));
+        out |= (stern_syndrome_32(ring_seed[b], v[b]) ^ (ring_syn[b] & m)) << (16 * b);
     }
-
-    /* Verify member 1 (standard Stern per-round) */
+    return out;
+}
+static int ring_in_S_32(const uint32 *v) {
+    if (v[2] == 1) return stern_wt_is_t_32(v[0]) && v[1] == 0;
+    if (v[2] == 2) return stern_wt_is_t_32(v[1]) && v[0] == 0;
+    return 0;
+}
+static void ring_challenges_32(uint32 D, uint32 *b) {
+    uint32 w[2] = { D, 0 };
+    int n = 0;
+    while (n < SDF_ROUNDS) {
+        uint32 h = ring_hash_32(6, w, 2);
+        for (int i = 0; i < 4 && n < SDF_ROUNDS; i++, h >>= 8)
+            if ((h & 0xFFu) != 0xFFu) b[n++] = (h & 0xFFu) % 3u;
+        w[1]++;
+    }
+}
+static uint32 ring_digest_32(uint32 msg) {
+    ring_dbuf[0] = RING_VERSION; ring_dbuf[1] = RING_K; ring_dbuf[2] = SDF_ROUNDS;
+    ring_dbuf[3] = msg;
+    ring_dbuf[4] = ring_seed[0]; ring_dbuf[5] = ring_syn[0];
+    ring_dbuf[6] = ring_seed[1]; ring_dbuf[7] = ring_syn[1];
+    return ring_hash_32(0, ring_dbuf, RING_DW);
+}
+static int hpks_stern_ring_sign_32(SternRing32 *sig, uint32 msg, uint32 e, int j,
+                                   uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    static uint32 r[SDF_ROUNDS][3], y[SDF_ROUNDS][3], pr[SDF_ROUNDS][3], py[SDF_ROUNDS][3];
+    static uint32 ps[SDF_ROUNDS], s1[SDF_ROUNDS], s2[SDF_ROUNDS];
+    uint32 z[3], b[SDF_ROUNDS], h[2], w[4];
+    int sw = ring_canon_32(sa, ya, sb, yb), i, q;
+    if (sw < 0) return 0;
+    j ^= sw;
+    z[j] = e; z[1 - j] = 0; z[2] = 1u << j;
     for (i = 0; i < SDF_ROUNDS; i++) {
-        uint32 bv = rsig->m1.b[i], ra = rsig->m1.respA[i], rb = rsig->m1.respB[i];
-        if (bv == 0) {
-            if (stern_hash1_32(2, ra) != rsig->m1.c1[i]) return 0;
-            if (stern_hash1_32(3, rb) != rsig->m1.c2[i]) return 0;
-            if (!stern_wt_is_t_32(ra ^ rb)) return 0;
-        } else if (bv == 1) {
-            uint32 hr = stern_syndrome_32(seed1, rb);
-            if (stern_hash2_32(1, ra, hr) != rsig->m1.c0[i]) return 0;
-            stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(2, stern_apply_perm_32(perm, rb)) != rsig->m1.c1[i]) return 0;
+        r[i][0] = lcg_next(); r[i][1] = lcg_next(); r[i][2] = lcg_next() & 3u;
+        ps[i] = lcg_next(); s1[i] = lcg_next(); s2[i] = lcg_next();
+        for (q = 0; q < 3; q++) y[i][q] = z[q] ^ r[i][q];
+        ring_perms_32(ps[i]);
+        ring_apply_32(r[i], pr[i]); ring_apply_32(y[i], py[i]);
+        h[0] = ps[i]; h[1] = ring_htilde_32(r[i]);
+        ring_dbuf[8 + 3 * i] = ring_hash_32(1, h, 2);
+        w[0] = s1[i]; for (q = 0; q < 3; q++) w[1 + q] = pr[i][q];
+        ring_dbuf[9 + 3 * i] = ring_hash_32(2, w, 4);
+        w[0] = s2[i]; for (q = 0; q < 3; q++) w[1 + q] = py[i][q];
+        ring_dbuf[10 + 3 * i] = ring_hash_32(3, w, 4);
+    }
+    sig->D = ring_digest_32(msg);
+    ring_challenges_32(sig->D, b);
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        uint32 *o = sig->rw[i];
+        memset(o, 0, sizeof sig->rw[i]);
+        if (b[i] == 0) {
+            o[0] = ring_dbuf[8 + 3 * i]; o[1] = s1[i]; o[2] = s2[i];
+            for (q = 0; q < 3; q++) { o[3 + q] = pr[i][q]; o[6 + q] = py[i][q]; }
         } else {
-            uint32 hy = stern_syndrome_32(seed1, rb);
-            if (stern_hash2_32(1, ra, hy ^ synd1) != rsig->m1.c0[i]) return 0;
-            stern_gen_perm_32(perm, ra);
-            if (stern_hash1_32(3, stern_apply_perm_32(perm, rb)) != rsig->m1.c2[i]) return 0;
+            o[0] = ring_dbuf[(b[i] == 1 ? 10 : 9) + 3 * i]; o[1] = ps[i];
+            o[2] = b[i] == 1 ? s1[i] : s2[i];
+            for (q = 0; q < 3; q++) o[3 + q] = b[i] == 1 ? r[i][q] : y[i][q];
         }
     }
-    (void)seed0; (void)synd0;  /* member 0 public keys not needed (b=0 all) */
     return 1;
+}
+static int hpks_stern_ring_verify_32(const SternRing32 *sig, uint32 msg,
+                                     uint32 sa, uint32 ya, uint32 sb, uint32 yb) {
+    uint32 b[SDF_ROUNDS], h[2], w[4], p[3], v[3];
+    int i, q;
+    if (ring_canon_32(sa, ya, sb, yb) < 0) return 0;
+    ring_challenges_32(sig->D, b);
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        const uint32 *o = sig->rw[i];
+        uint32 *c = &ring_dbuf[8 + 3 * i];
+        if (b[i] == 0) {
+            if ((o[5] | o[8]) >> 2) return 0;
+            for (q = 0; q < 3; q++) v[q] = o[3 + q] ^ o[6 + q];
+            if (!ring_in_S_32(v)) return 0;
+            c[0] = o[0];
+            w[0] = o[1]; for (q = 0; q < 3; q++) w[1 + q] = o[3 + q];
+            c[1] = ring_hash_32(2, w, 4);
+            w[0] = o[2]; for (q = 0; q < 3; q++) w[1 + q] = o[6 + q];
+            c[2] = ring_hash_32(3, w, 4);
+        } else {
+            if ((o[6] | o[7] | o[8]) || (o[5] >> 2)) return 0;
+            ring_perms_32(o[1]);
+            ring_apply_32(&o[3], p);
+            h[0] = o[1]; h[1] = ring_htilde_32(&o[3]);
+            c[0] = ring_hash_32(1, h, 2);
+            w[0] = o[2]; for (q = 0; q < 3; q++) w[1 + q] = p[q];
+            if (b[i] == 1) { c[1] = ring_hash_32(2, w, 4); c[2] = o[0]; }
+            else           { c[2] = ring_hash_32(3, w, 4); c[1] = o[0]; }
+        }
+    }
+    return ring_digest_32(msg) == sig->D;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1355,39 +1376,36 @@ void loop() {
     Serial.println();
 
     /* ---------------------------------------------------------------- */
-    /* HPKS-Stern-Ring [PQC -- k=2 ring sig, signer=member1, N=32]     */
+    /* HPKS-Stern-Ring [PQC -- one Stern proof over the ring, N=32]     */
+    /* Alice signs as one of two members; the signature does not say    */
+    /* which (TODO #424, SPEC.md §11.2).                                */
     /* ---------------------------------------------------------------- */
-    Serial.println(F("--- HPKS-Stern-Ring [PQC -- OR-composition, k=2, N=32, rounds=4]"));
+    Serial.println(F("--- HPKS-Stern-Ring [PQC -- one Stern proof over a k=2 ring, N=32, rounds=4]"));
     {
-        SternRingSig2_32 rsig;
-        uint32 ring0_seed = lcg_next();
-        uint32 ring0_e    = stern_rand_error_32();
-        uint32 ring0_synd = stern_syndrome_32(ring0_seed, ring0_e);
-        hpks_stern_ring2_sign_32(&rsig, PLAIN, sf_e, sf_seed);
-        int ok = hpks_stern_ring2_verify_32(&rsig, PLAIN,
-            ring0_seed, ring0_synd, sf_seed, sf_synd);
+        static SternRing32 rsig;
+        uint32 m_seed = lcg_next();
+        uint32 m_synd = stern_syndrome_32(m_seed, stern_rand_error_32());
+        int ok = hpks_stern_ring_sign_32(&rsig, PLAIN, sf_e, 1, m_seed, m_synd, sf_seed, sf_synd)
+              && hpks_stern_ring_verify_32(&rsig, PLAIN, m_seed, m_synd, sf_seed, sf_synd);
         check(ok,
-          F("+ HPKS-Stern-Ring verified (k=2, signer=member1)"),
-          F("[FAIL] HPKS-Stern-Ring FAILED"));
-    }
+          F("+ HPKS-Stern-Ring signature verified (k=2; it does not name the signer)"),
+          F("[FAIL] HPKS-Stern-Ring verification FAILED"));
+        ok = hpks_stern_ring_verify_32(&rsig, PLAIN, sf_seed, sf_synd, m_seed, m_synd);
+        check(ok,
+          F("+ HPKS-Stern-Ring verified with the ring in the other order"),
+          F("[FAIL] HPKS-Stern-Ring refused the reordered ring"));
 
-    Serial.println(F("*** HPKS-Stern-Ring -- Eve forge (random ring sig fails challenge-sum check)"));
-    {
-        SternRingSig2_32 eve_rsig;
-        for (int i = 0; i < SDF_ROUNDS; i++) {
-            eve_rsig.m0.c0[i] = lcg_next(); eve_rsig.m0.c1[i] = lcg_next();
-            eve_rsig.m0.c2[i] = lcg_next(); eve_rsig.m0.b[i]  = lcg_next() % 3;
-            eve_rsig.m0.respA[i] = lcg_next(); eve_rsig.m0.respB[i] = lcg_next();
-            eve_rsig.m1.c0[i] = lcg_next(); eve_rsig.m1.c1[i] = lcg_next();
-            eve_rsig.m1.c2[i] = lcg_next(); eve_rsig.m1.b[i]  = lcg_next() % 3;
-            eve_rsig.m1.respA[i] = lcg_next(); eve_rsig.m1.respB[i] = lcg_next();
-        }
-        uint32 dummy_seed = lcg_next();
-        int ok = hpks_stern_ring2_verify_32(&eve_rsig, PLAIN,
-            dummy_seed, 0, dummy_seed, 0);
+        Serial.println(F("*** HPKS-Stern-Ring -- Eve changes one opening word / the message"));
+        rsig.rw[1][3] ^= 1u;
+        ok = hpks_stern_ring_verify_32(&rsig, PLAIN, m_seed, m_synd, sf_seed, sf_synd);
+        rsig.rw[1][3] ^= 1u;
         check(!(ok),
-          F("- Eve cannot forge ring sig: challenge-sum mismatch"),
-          F("[FAIL] Eve forged ring sig (failure)!"));
+          F("- Eve's altered signature refused (the digest no longer matches)"),
+          F("[FAIL] Eve's altered ring signature verified!"));
+        ok = hpks_stern_ring_verify_32(&rsig, PLAIN ^ 1u, m_seed, m_synd, sf_seed, sf_synd);
+        check(!(ok),
+          F("- Eve's other message refused"),
+          F("[FAIL] ring signature verified another message!"));
     }
     Serial.println();
 

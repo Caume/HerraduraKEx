@@ -773,6 +773,19 @@ salts keep `c1` and `c2` hiding even from someone who holds every member's key
 (`c0` is hidden by the unopened 256-bit `π-seed`). `KAT/operation_replay.json`
 pins whole signatures at N = 256 and N = 2304 in all four ports.
 
+**32-bit demo (assembly, Arduino; TODO #424).** The ARM Thumb-2, NASM i386
+and Arduino suites run the same construction at N = 32, t = 2, k = 2 and 4
+rounds, with that port's 32-bit primitives in place of the 256-bit ones:
+`H_ds(w…) = HFSCX-32(0x32000000 | ds, w…)` over 32-bit words, a 32-bit
+`π-seed`, salts and D, `τ = H_4(π-seed) & 1`, `π_b` from
+`H_5(π-seed, b)`, the challenges from the bytes of `H_6(D, ctr)` with 255
+rejected, and D over `(2, k, rounds, msg, seed_0, s_0, seed_1, s_1)` and
+the commitments. Each round is the unopened commitment and 8 words, the
+unused ones zero. It has no security at these parameters and is not
+interoperable with the 256-bit ports; the three harnesses' `[13]` pin one
+signature (D = `0x4fb8b39f`) from a fixed PRNG state, which holds the three to
+one construction.
+
 This SPEC.md's §9 NL/PQC coverage and this pointer satisfy TODO #193's
 scope (HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC/Stern variants); a
 follow-up TODO MAY expand §11 into full Stern-F/Niederreiter algorithm

@@ -608,8 +608,8 @@ SECURITY = {
                              "member's key. The OR-composition it replaces (signatures labelled HERRADURA "
                              "HPKS-RING SIGNATURE) was forgeable with no member's key and is refused by "
                              "every CLI. Demo-only like hpks-stern: N = 256 is a ~24-38-bit instance; the "
-                             "128-bit instance is the long form, N = 2304. Assembly/Arduino still carry the "
-                             "old 32-bit demo (TODO #424).",
+                             "128-bit instance is the long form, N = 2304. Assembly/Arduino run the same "
+                             "construction as a 32-bit demo, N = 32, k = 2, 4 rounds (TODO #424).",
                        source=["SPEC.md section 11.2", "TODO_DONE.md #415", "CliTest/test_ring.sh"]),
     "hpks-t":    dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",

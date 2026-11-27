@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-26
 
-**One release for fourteen development steps (TODO #410–#423, and #415's redesign of
+**One release for fifteen development steps (TODO #410–#424, and #415's redesign of
 HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
 section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
 (§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
@@ -474,7 +474,42 @@ with its opening; the verifier rebuilds the rest.
 - **Census.**  `spec/` gains the ring's PRIMITIVES, PARAMETERS and rejection-basis rows,
   and drops the retired ones.
 
-The assembly and Arduino suites keep the retired 32-bit demo (TODO #424).
+The assembly and Arduino suites kept the retired 32-bit demo until #424, below.
+
+### #424: the assembly and Arduino ring demos are the new construction
+
+The ARM Thumb-2, NASM i386 and Arduino suites and harnesses ran their own 32-bit
+OR-composition, which printed "signature verified" for a construction anyone can forge.
+It was worse than the 256-bit one: member 0 was always simulated with `b = 0` and the
+signer was always member 1, so the challenges named the signer.  They now run #415's
+construction at N = 32, t = 2, k = 2 and 4 rounds, with each port's 32-bit primitives
+(HFSCX-32 under tag `0x32000000 | ds`).  SPEC.md §11.2 gives the 32-bit parameters.  No
+wire format or CLI is involved: these targets have no CLI.
+- **Reference.**  A host-C copy of the Arduino code was checked before porting:
+  - 3000 signatures verified, in either ring order;
+  - all 111,000 single-bit tamperings refused, and every other message;
+  - every wrong-secret signature with a `b = 2` round refused;
+  - the `b = 0` block position about 50/50 for either signer.
+- **Suites.**  Each demo signs as one of two members, verifies, verifies with the ring
+  reordered, and refuses a changed opening word and another message.
+- **Harnesses.**  `[13]` runs 3 trials in ARM, i386 and Arduino.  Each trial is an
+  accept-control (verify in either order), the two refusals, and a signature made with a
+  wrong secret.  That last cell is exact: it is refused iff a round drew `b = 2`, and it
+  is counted n/a without one.  Each harness then pins one signature, from
+  `prng_state = 0x52494E47`, by its D and the XOR of its words.  The pin holds the three
+  ports to one construction.  Controls shown to fire, on scratch copies:
+  - an accept-everything verifier and a refuse-everything verifier, in ARM, i386 and
+    Arduino;
+  - a wrong pinned constant, in ARM and i386.
+- **Harness defect.**  The pin found that the Arduino harness's `stern_matrix_row_32`
+  lacked the HFSCX-32 finalization of TODO #88, which the Arduino suite and both
+  assembly harnesses apply.  Its Stern tests `[11]`–`[13]` had checked a different
+  parity-check matrix than the one that ships.  It is fixed.
+- **Census.**  `spec/check_language_parity.py`'s Arduino test marker accepts `F("…")`
+  literals.  `[13]` in the three reduced harnesses carries a `hash-binding` basis at
+  32 bits.
+- **SRAM.**  The Arduino suite leaves 3250 bytes for the stack (was 3342), and the
+  harness 3106 (was 3658); the guard is 2048.
 
 ## [19.0.0] - 2026-11-24
 

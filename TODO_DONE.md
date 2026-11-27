@@ -27959,3 +27959,35 @@ Item (b), HPKS key substitution, stays recorded as accepted in SECURITY.md, and 
 needed no action.  The assembly and Arduino demos are TODO #424.
 
 Status: **DONE v20.0.0** — HPKS-Ring is one Stern proof over the ring's block-diagonal statement; v1 ring signatures refused by name; MAJOR (MIGRATING §61).
+
+---
+
+### #424: the assembly and Arduino suites still demo the retired HPKS-Ring
+
+TODO #415 replaced the OR-composed ring with one Stern proof over the ring's
+block-diagonal statement (SPEC.md §11.2) in C, Go, Python and Java.  The ARM Thumb-2,
+NASM i386 and Arduino suites (and the Arduino harness) still carry their own fixed-width
+32-bit demo of the OR-composition, which is forgeable with no member's key.  They have
+no CLI and produce no artifact, so nothing they make reaches a verifier; but each prints
+"signature verified" for a broken construction.
+
+To do: port the new ring at N = 32 (k = 2, its block shuffle is one bit), or remove
+the ring demo from all three and their harnesses, and update the build scripts' gate
+counts.  Not MAJOR: no wire format or CLI surface.
+
+Done by porting (keeping `[13]` in the three harnesses).  The old demo was worse than
+the 256-bit one: member 0 was always simulated with b = 0 and the signer was always
+member 1, so the challenges named the signer.  The ARM, i386 and Arduino suites and
+harnesses now run #415's construction at N = 32, t = 2, k = 2 and 4 rounds over HFSCX-32
+(SPEC.md §11.2).  The port went in this order:
+- a host-C reference built from the Arduino code;
+- the Arduino suite and harness;
+- ARM Thumb-2;
+- NASM i386.
+Each harness's `[13]` runs an accept-control, two refusals and an exact wrong-secret
+cell, and pins one signature from a fixed PRNG state.  The pin holds the three ports to
+one construction.  Accept-all, refuse-all and wrong-constant controls fire.  The pin
+also found that the Arduino harness's Stern matrix lacked TODO #88's HFSCX-32
+finalization; that is fixed.  Not MAJOR: no CLI or artifact.
+
+Status: **DONE v20.0.0** — the assembly and Arduino ring demos are one Stern proof over a k=2 ring at N=32, pinned to one vector in all three harnesses.
