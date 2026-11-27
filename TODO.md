@@ -27,6 +27,63 @@ Status: **OPEN**
 
 ---
 
+### #425: split the assembly and Arduino suite demos into one program per algorithm
+
+The ARM Thumb-2 (`.s`, ~4.9k lines), NASM i386 (`.asm`, ~5.0k) and Arduino (`.ino`,
+~1.6k) suites are each ONE program that runs about twenty demos in sequence, with the
+"Eve" attack checks gathered into a block in the middle.  That makes it hard to read one
+algorithm end to end, to see which output belongs to which demo, or to drop or port a
+single demo (#424 is that problem for the ring).
+
+To do: give each target a shared core (BitArray-free 32-bit FSCX, NL-FSCX v1/v2,
+HFSCX-32, GF(2^32) mul/pow, the PRNG, the `hprintf` / `print_str` / `check()` [FAIL]
+gate) and one small non-interactive program per algorithm.  Each program runs one whole
+operation on fixed sample data and prints its inputs, intermediates and verdict:
+- key exchange (HKEX-GF, HKEX-RNL): both parties' keys and the shared secret;
+- encryption (HSKE, HSKE-NL-A1/A2, HPKE, HPKE-NL, HPKE-Stern-F, FPE, tweakable,
+  masked HSKE, ratchet): plaintext, ciphertext, decryption, round-trip check;
+- signatures and proofs (HPKS, HPKS-NL, HPKS-Stern-F, ZKP-RNL, ZKP-NL, OPRF,
+  accumulator): sign/prove, verify, then the same verifier rejecting a tampered message
+  or signature, which keeps each program's accept control and the rejection next to
+  each other.
+"Fixed sample data" means fixed message, plaintext and key seeds.  The randomness a
+scheme needs (nonces, Stern masks) still comes from the PRNG; a `--seed`-style fixed seed
+would make the output byte-stable, but that is optional.
+
+Sharing the core:
+- **ARM, i386:** a core object linked into each program, so no copy of the code.
+- **Arduino:** arduino-cli needs one directory per sketch, with the `.ino` named after
+  the directory, and a relative `#include` outside the sketch folder does not survive the
+  sketch copy.  Use a local library (`--libraries`) for the core.  Smaller firmwares also
+  relieve the SRAM headroom check in `build_arduino.sh`.
+
+What has to move with it:
+- `build_{arm,asm_i386,arduino}.sh`: build N programs; the GATE-EXEMPT ungated-call
+  guard covers every source.
+- `run_{arm,asm_i386,arduino}.sh suite`: run them all and fail on any `*** FAILED:` or
+  a missing OK line.
+- ci.yml's `arm-i386` and `arduino` steps, `docker-entrypoint.sh`, and
+  `tools/check_docker_mirror.py` / `check_runnable_coverage.py` if they name the binaries.
+- The SecurityProofsCode gates that read the suite sources by path:
+  `v1_remaining_sites.py`, `v2_v3_b_setter.py` (`EXPECTED_32` counts per file),
+  `hfscx_mmo_compression.py`.  Re-point them at the new files and keep their counts
+  equal to the old totals, shown to fire on a planted site.
+- CLAUDE.md (Repository Structure, Assembly), README and TUTORIAL references to the suite
+  demo.
+
+Out of scope:
+- The test harnesses `CryptosuiteTests/Herradura_tests.{s,asm,ino}` ([1]–[18]) stay
+  single programs; numbered-test parity depends on them.
+- C, Go, Python and Java keep their one-file suites.
+
+Order with #424: do #424 first, on the current single files, since it is the defect.  If
+this lands first, #424 becomes "port the ring as its own program, or omit it".  Not
+MAJOR: no wire format or CLI surface.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
