@@ -50,6 +50,15 @@ non-signer slot from the signer's slot at a given confidence, and (3) recommends
 fix already used elsewhere in this codebase for TODO #2 (rejection sampling, or simply
 matching Go's wide-value-then-%3 reduction, whose bias is negligible at ~2^-32).
 
+SINCE TODO #415 (v20.0.0) the ring has no simulated members: it is ONE Stern proof
+over the ring's block-diagonal statement, and the OR-composition this item analysed is
+gone (it was also forgeable).  The trit the redesign draws is the TRANSCRIPT's own
+challenge, expanded from the digest D by HFSCX-256-DS bytes -- and a bare byte % 3
+there would skew the challenge distribution the same 86/85/85 way, now against
+soundness rather than anonymity.  Every port rejects the byte 255 there too, so §4
+anchors on that expander (Python _ring_challenges, herradura.h ring_challenges, Go
+ringChallenges, Java SternRing.challenges) instead of the retired sampler.
+
 Usage: python3 SecurityProofsCode/stern_ring_challenge_bias.py
 """
 import os
@@ -149,16 +158,23 @@ def section4_fix_shipped():
     # rejection that must appear inside it.  A port that loses the helper and a
     # port that keeps the helper but drops the rejection are different failures,
     # and this reports which.  Arduino is absent on purpose -- it draws no trit.
+    # TODO #415: the ring's trits now come from the transcript-challenge
+    # expander, not from a simulated member's sampler; the rejection is anchored
+    # there, in all four ports.
+    print("  TODO #415 retired the simulated members along with the OR-composition;")
+    print("  the trits the ring draws now are its transcript challenges, expanded")
+    print("  from the digest D, and the same 255-rejection is checked there.")
+    print()
     targets = [
         ("Python suite", "Herradura cryptographic suite.py",
-         r"def _stern_ring_trit\b", r"if v != 255", r"\ndef "),
+         r"def _ring_challenges\b", r"if byte != 255", r"\ndef "),
         ("herradura.h", "herradura.h",
-         r"stern_ring_trit\s*\(FILE", r"if \(v != 255\)", r"\n\}"),
+         r"static void ring_challenges\s*\(", r"if \(blk\[i\] != 255\)", r"\n\}"),
         ("Go suite", os.path.join("herradura", "herradura.go"),
-         r"func sternRingTrit\b", r"if b\[0\] != 255", r"\n\}"),
+         r"func ringChallenges\b", r"if b != 255", r"\n\}"),
         ("Java suite", os.path.join("bindings", "java", "herradurakex",
                                     "SternRing.java"),
-         r"int ringTrit\s*\(", r"if \(v != 255\)", r"\n    \}"),
+         r"static int\[\] challenges\s*\(", r"if \(v != 255\)", r"\n    \}"),
     ]
     ok = True
     for label, rel, defpat, rejpat, endpat in targets:

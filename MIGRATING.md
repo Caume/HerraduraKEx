@@ -2728,6 +2728,9 @@ subcommands accepted, the 2.0.0 surface (the reading section 38 applied).
 
 ## 58. An HPKS-Ring challenge byte must be 0, 1 or 2 (v20.0.0)
 
+> **Superseded within v20.0.0 by section 61.** The challenge byte bound applied to the
+> OR-composition, whose signatures the release no longer accepts at all.
+
 **Who is affected:** only someone holding an HPKS-Ring signature whose per-round challenge
 byte is outside {0, 1, 2}. No signer in this repository writes one: every port's
 `sign --algo hpks-ring` emits trits. A signature of that shape was made or altered by
@@ -2753,6 +2756,10 @@ closes the encoding gap.
 the reading section 50 applied to non-canonical base64.
 
 ## 59. `sign` and `verify --algo hpks-ring` are refused (v20.0.0)
+
+> **Superseded within v20.0.0 by section 61.** The refusal described here was an
+> interim step on `devtest`; the release ships the redesigned ring instead, and what it
+> refuses is the old signature format.  Read section 61 for the migration.
 
 **Who is affected:** anyone who signs or verifies HPKS-Ring signatures with any of the
 four CLIs, or calls them through the MCP server.
@@ -2805,3 +2812,51 @@ signature's `s` mod `ord(g)`: `(2^32 − 1)/15 = 0x11111111` and
 
 **Why this is MAJOR.** It refuses signature files that existing builds verified (the
 section 50 reading).
+
+## 61. HPKS-Ring is one Stern proof over the ring; v1 ring signatures are refused (v20.0.0)
+
+**Who is affected:** anyone holding `hpks-ring` signatures made before v20.0.0, anyone who
+scripts `sign` / `verify --algo hpks-ring`, and code calling the ring functions of the
+suites directly.  `hpks-stern` keys are unaffected: the same keys form the new rings.
+
+**What changed (TODO #415).** The ring signature was an OR-composition of k Stern proofs,
+and it was existentially forgeable with no member's secret key (SECURITY.md).  It is
+replaced by ONE Stern proof over the ring's block-diagonal statement (SPEC.md §11.2), so
+every artifact and API changes:
+
+- **Signature PEM.**  `HERRADURA HPKS-RING-V2 SIGNATURE`, `SEQ(n, k, rounds, D, body)`,
+  where the old label was `HERRADURA HPKS-RING SIGNATURE`, `SEQ(k, rounds, n, blob)`.
+  Every CLI names the old label and refuses it:
+
+  ```
+  verify: this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING SIGNATURE), which is forgeable without any member's key (TODO #415) and is no longer accepted; re-sign it with this release
+  ```
+
+- **The ring.**  1 to 1024 members (it was 2 to 64), in any order: the signature binds
+  the ring sorted, so `--ring` may list the members differently at `verify`.  A ring
+  that lists a member twice is refused.  The signer is found by seed AND syndrome (it
+  was the seed alone).
+- **The message.**  The 32-octet pre-hash at every width.  Below n = 256 the old ring
+  signed only the first n bits.
+- **Size.**  About half the old size for the same ring: ~57 KiB for 4 members at
+  N = 256 and 219 rounds, where it was ~138 KiB.  It still grows linearly with the ring.
+- **Library API.**
+  - The signature is now a byte string: C `stern_ring_sign` returns a malloc'd buffer,
+    Go `HpksSternRingSign` a `[]byte`, Python `hpks_stern_ring_sign` `bytes`, Java
+    `SternRing.sign` a `byte[]`.
+  - Verify takes the round count.
+  - Members are `(seed, syndrome)` octet strings (Go `RingMember`, Java `RingKey(seed,
+    syndrome, n)`).
+  - The message is 32 octets.
+  - One implementation covers both widths.  The long-form ring functions are gone:
+    `stern_l_ring_*`, `HpksSternLRing*`, `SternL.ringSign` / `ringVerify` and
+    `hpks_stern_l_ring_*`.
+  - So are the OR-composition's simulator and trit helpers.
+
+**What to do.**  Re-sign with this release.  Treat every v1 ring signature ever written
+as unverified: anyone could have produced it.  Code calling the library moves to the
+signatures above.
+
+**Why this is MAJOR.**  It changes what `--algo hpks-ring` produces and accepts, and it
+makes every existing ring signature file unreadable (CLAUDE.md's version policy).
+

@@ -97,7 +97,7 @@ signwith hpks-stern hpks-stern --rounds 2
 signwith nl-zkboo hpks-zkp-nl --rounds 2; signwith nl-zkbpp hpks-zkp-nl --rounds 2
 $C genpkey --algo hpks-stern --out "$F/m2.pem" 2>/dev/null
 $C pkey --in "$F/m2.pem" --pubout --out "$F/m2_pub.pem"
-# hpks-ring: no rows while sign/verify refuse it (TODO #422).
+signwith hpks-ring hpks-stern --rounds 2 --ring "$F/hpks-stern_pub.pem,$F/m2_pub.pem"
 $C genpkey --algo hkex-rnl --out "$F/rnl2.pem"
 $C pkey --in "$F/rnl2.pem" --pubout --out "$F/rnl2_pub.pem"
 $C kex --algo hybrid-rnl-stern --our "$F/rnl2.pem" --their "$F/hkex-rnl_pub.pem" \
@@ -135,6 +135,8 @@ for a in hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-xmss hpks-wots
     T["sign|$a|--key"]="$h|sign --algo $a ${r[*]:-} --key {X} --in {F}/msg.bin --out {O}"
     T["verify|$a|--pubkey"]="$h|verify --algo $a ${m[*]:-} --pubkey {X} --in {F}/msg.bin --sig {F}/sig_$a.pem"
 done
+T["sign|hpks-ring|--key"]="hpks-stern|sign --algo hpks-ring --rounds 2 --key {X} --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --out {O}"
+T["verify|hpks-ring|--ring"]="hpks-stern|verify --algo hpks-ring --min-rounds 2 --ring {X},{F}/m2_pub.pem --in {F}/msg.bin --sig {F}/sig_hpks-ring.pem"
 T["verify|hpks-t|--pubkey"]="hpks|verify --algo hpks-t --pubkey {X} --in {F}/msg.bin --sig {F}/tsig.pem"
 T["threshold-commit||--key"]="hpks|threshold-commit --key {X} --commit-out {O} --nonce-out {O}.nonce"
 T["threshold-respond||--key"]="hpks|threshold-respond --key {X} --commits {F}/commit.pem --aggregate {F}/agg.pem --nonce {F}/nonce.pem --out {O}"

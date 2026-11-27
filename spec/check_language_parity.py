@@ -428,12 +428,6 @@ _SAMPLED_TESTS = {
         "of 8, so the round count is the whole distance between 2.3e-7 and "
         "1.5e-5.  No crash mode: past the challenge check it meets stale "
         "responses and returns False"),
-    ("shared", 20): ("exact", None,
-        "Stern ring COMPLETENESS ONLY, at rounds=4 in Python and "
-        "sdfTestRounds=4 in Go -- the count CLAUDE.md's Testing section warns "
-        "about.  Exact because it asserts no rejection: adding one here would "
-        "carry a (2/3)^4 = 19.75% soundness error, which is that warning as a "
-        "live constraint rather than as history"),
     ("shared", 45): ("negligible", "derived",
         "THE LARGEST CONTRIBUTOR, and it is already the fixed version.  A "
         "corrupted syndrome is caught only on a b = 2 round -- the ONLY branch "
@@ -503,21 +497,6 @@ _SAMPLED_TESTS = {
         "Java's Stern-F corrupt-syndrome rejection, signed at Stern.SDFR = 32. "
         "Its own comment derives why a smaller count would flake: only a b = 2 "
         "round references the syndrome, so 8 rounds skip it ~3.9% of the time"),
-    ("java", 26): ("negligible", "derived",
-        "Java's Stern ring forgery rejection at demoRounds = 32, and the row "
-        "TODO #298 SILENTLY MADE 4.6 MILLION TIMES SAFER while three places "
-        "went on quoting the old number.  TODO #260 caught it flaking at 8 "
-        "rounds and wrote (2/3)^8 = 3.9% in SelfTest.java's comment, which was "
-        "right AT THE TIME: only the b = 2 branch read the syndrome, so a "
-        "witness matching no member's syndrome survived a challenge string "
-        "with no b = 2 round.  Then #298 added wt(respA ^ respB) = t to the "
-        "b = 0 branch, and a uniform 256-bit badE has weight ~128 against "
-        "t = 16, so TWO of three branches now catch it and only b = 1 misses: "
-        "(1/3)^rounds.  The mechanism gained a detector and every INPUT to the "
-        "rate stayed put, which is why #319's machinery could not see it and "
-        "#318's fingerprint did not move -- the formula was the wrong function "
-        "of the right constants, one release after the fix that made it wrong.  "
-        "MEASURED at rounds = 1/2/3: see _RATE_MECHANISMS['ring-forgery']"),
     ("java", 14): ("negligible", 1e-50,
         "HPKE-Stern-KEM, the only row whose subject has a DESIGNED failure "
         "rate: QC-MDPC decoding has a real DFR and TODO #235's implicit "
@@ -742,22 +721,6 @@ _SAMPLED_TEST_RATES = {
         "the other half of the split: it signs at the SUITE's Stern.SDFR "
         "rather than at a harness literal, so this rate moves with a "
         "PARAMETERS row where Go's and Python's do not.  One trial"),
-    ("java", 26): (
-        "(1/3) ** rounds",
-        {"rounds": {"java": ("local", r"int demoRounds\s*=\s*(\d+)")}},
-        "Java's ring forgery rejection, and TODO #321 is where it STOPPED "
-        "being a literal.  A witness matching no member's syndrome is caught by "
-        "TWO of the verifier's three branches -- b = 0 binds "
-        "wt(respA ^ respB) = t (TODO #298's fix) and b = 2 checks "
-        "H(pi_seed, Hy ^ syndrome) -- so only b = 1 reads neither and the rate "
-        "is (1/3)^rounds, not the (2/3)^rounds SelfTest.java's comment and both "
-        "spec/ tables carried.  The old number was RIGHT WHEN WRITTEN: TODO "
-        "#260 saw a real flake at 8 rounds, which (2/3)^8 = 3.9% explains and "
-        "(1/3)^8 = 1.5e-4 does not, and #298 shipped the second detector a "
-        "year of items later.  So this is #319's object -- a rate that moved "
-        "and took nothing with it -- with a VERIFIER BRANCH in the moving role "
-        "instead of a constant, which is a case #319's machinery cannot see "
-        "either: every input stayed put.  See _RATE_MECHANISMS['ring-forgery']"),
     # TODO #322: the ZKP-NL message-tamper term, in the two ports whose
     # declaration a slice can reach.  See _RATE_MECHANISMS for the measurement.
     ("java", 19): (
@@ -1195,47 +1158,6 @@ _RATE_MECHANISMS = {
                     "the exponential without needing the witness at all -- and "
                     "the witness then settles it exactly",
     },
-    "ring-forgery": {
-        "rows": [("java", 26)],
-        "term": "(1/3) ** rounds",
-        "var":  "rounds",
-        "detects":  "any round whose challenge for the FORGING member is "
-                    "b != 1, because two of the three branches catch a witness "
-                    "matching no member's syndrome: b = 0 binds "
-                    "wt(respA ^ respB) = t and b = 2 checks "
-                    "H(pi_seed, Hy ^ syndrome)",
-        "excludes": "'no b = 2 round', the PRE-#298 mechanism -- when b = 0 "
-                    "bound nothing, which is what SelfTest.java's comment and "
-                    "both spec/ tables still said.  It predicts (2/3)^rounds, "
-                    "4.6 MILLION times larger at the shipped 32, and it was "
-                    "right once: TODO #260 saw a real flake at 8 rounds, which "
-                    "(2/3)^8 = 3.9% explains and (1/3)^8 = 1.5e-4 does not",
-        "ladder": {1: (300, 101, 0.333333),
-                   2: (300,  43, 0.111111),
-                   3: (300,  12, 0.037037)},
-        "witness":  "900/900 trials had accept == (every round's challenge for "
-                    "the forging member is b = 1), exactly; the pre-#298 "
-                    "predicate matched 619/900, so the old mechanism is not "
-                    "merely superseded, it is refuted against the code as it "
-                    "now stands",
-        "note":     "MEASURED at rounds = 1/2/3 over 900 trials, with an honest "
-                    "ring signature verified on every trial as an accept "
-                    "control (900/900).  Acceptance 101/43/12 against "
-                    "100.0/33.3/11.1 predicted by (1/3)^rounds, where the "
-                    "superseded (2/3)^rounds predicts 200/133/89 -- so the "
-                    "FREQUENCY separates these two, unusually for this table, "
-                    "and the witness then settles it exactly.  Run at the "
-                    "Python harness's ring width n = 32 with Java's k = 4 "
-                    "rather than at Java's n = 256: the mechanism is a "
-                    "statement about which verifier BRANCH reads what, and "
-                    "hpks_stern_ring_verify_local and SternRing.verify are the "
-                    "same three branches line for line, while one n = 256 trial "
-                    "costs 6.7 s against 0.5 s -- 1.7 hours for the ladder "
-                    "instead of 13 minutes.  That cross-port step is the same "
-                    "one 'corrupted-syndrome' takes for Java's [12], and it is "
-                    "the same limit: a property all four ports got wrong would "
-                    "be invisible here",
-    },
 }
 
 # The other direction, and it ships EMPTY -- see (4) above.  An entry here is a
@@ -1406,18 +1328,6 @@ _EXACT_BASES = {
                     "DEPLOYED Stern instance (SDF_T = 16 at n = 256) makes "
                     "ambiguity vanishingly rarer, so the test runs the ADVERSE "
                     "case and the separation makes the verdict exact at both",
-        "evidence": None,
-    },
-    ("shared", 20): {
-        "basis": "no-assertion",
-        "deployed": "ring COMPLETENESS at rounds = 4, against a shipped "
-                    "SDF_ROUNDS = 32 and a production 219.  A completeness "
-                    "assertion has no soundness error at ANY round count, so a "
-                    "reduced count is adverse to nothing here -- which is the "
-                    "one direction in which CLAUDE.md's rounds = 4 warning does "
-                    "not apply, and the row exists to say so.  Adding a "
-                    "rejection case at 4 would carry (2/3)^4 = 19.75%, which is "
-                    "that warning as a live constraint",
         "evidence": None,
     },
     ("python", 17): {
@@ -1723,6 +1633,21 @@ _REJECTION_PATTERN = re.compile(
     r'mismatch|must_fail|split', re.I)
 
 _REJECTION_BASES = {
+    # ── HPKS-Ring (TODO #415) ──
+    ("shared", 20): {"basis": "hash-binding", "bits": 256,
+        "why": "the transcript digest D hashes the message, the canonical ring "
+               "and every commitment, and the verifier rebuilds two commitments "
+               "a round from the opened values, so the signature on another "
+               "message or with one byte changed is accepted only if HFSCX-256 "
+               "collides.  The wrong-secret refusal is the signer's syndrome "
+               "check (H e = s), an equation, and the reversed-ring accept is "
+               "the same canonical statement.  No forgery is attempted, so "
+               "Stern's (2/3)^rounds appears nowhere"},
+    ("java", 26): {"basis": "hash-binding", "bits": 256,
+        "why": "Java's numbering of the shared [20] cells (TODO #415), on the "
+               "same basis: another message and one changed byte are refused "
+               "unless HFSCX-256 collides, and the wrong secret by the "
+               "signer's syndrome check"},
     # ── RATED: a fresh coin decides whether the bad input is detectable ──
     ("java", 36): {"basis": "sampled-accept-control", "bits": None,
         "why": "Java's [36] is the shared [54] row in that port's own "
@@ -2318,7 +2243,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 13): "158d13ae58", ("c", 14): "42037b4080",
     ("c", 15): "158d13ae58", ("c", 16): "158d13ae58",
     ("c", 17): "8965f8a720", ("c", 18): "c4ffefcf1b",
-    ("c", 19): "feaf67a743", ("c", 20): "5b3de48d1f",
+    ("c", 19): "feaf67a743", ("c", 20): "774ae0bbc8",
     ("c", 21): "de94a6f57c", ("c", 22): "e38188098b",
     ("c", 23): "6e34b5a147", ("c", 24): "6e34b5a147",
     ("c", 25): "49b930b7b4", ("c", 26): "5f0407f2d7",
@@ -2335,7 +2260,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 47): "3bed54b9b9", ("c", 48): "41b6f1ab99",
     ("c", 49): "60f6315c3a", ("c", 50): "9aa82856a7",
     ("c", 51): "1de8b648fe", ("c", 52): "71897dda69",
-    ("c", 53): "d9072fd977",
+    ("c", 53): "92157824af",
     # TODO #332: the one benchmark row with a verdict, so NOT "none".
     ("c", 54): "c7edfe295a",
     # go
@@ -2348,7 +2273,7 @@ _VERDICT_FINGERPRINTS = {
     ("go", 13): "10a9b5fc23", ("go", 14): "4eddb7c1ac",
     ("go", 15): "10a9b5fc23", ("go", 16): "10a9b5fc23",
     ("go", 17): "10a9b5fc23", ("go", 18): "a72dd44d29",
-    ("go", 19): "72cc1ae9d3", ("go", 20): "864a8b1ada",
+    ("go", 19): "72cc1ae9d3", ("go", 20): "c05f9b92fd",
     ("go", 21): "b8cf3ad177", ("go", 22): "c8665d6d66",
     ("go", 23): "10a9b5fc23", ("go", 24): "10a9b5fc23",
     ("go", 25): "2ce2ccb1e5", ("go", 26): "5902fad95c",
@@ -2377,7 +2302,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 13): "db6ea492b7", ("python", 14): "d0396ab8e6",
     ("python", 15): "db6ea492b7", ("python", 16): "db6ea492b7",
     ("python", 17): "c5f298f1d9", ("python", 18): "8be0a29714",
-    ("python", 19): "63a190de9f", ("python", 20): "617e679eb0",
+    ("python", 19): "63a190de9f", ("python", 20): "aed0cdf73e",
     ("python", 21): "19da1c270a", ("python", 22): "d7c00b291a",
     ("python", 23): "db6ea492b7", ("python", 24): "db6ea492b7",
     ("python", 25): "e3a6e8b264", ("python", 26): "d7997e3a5d",
@@ -2394,7 +2319,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 47): "a9d13b319a", ("python", 48): "9ee4fb2c2e",
     ("python", 49): "a9d13b319a", ("python", 50): "4f6ccba4ce",
     ("python", 51): "9ee4fb2c2e", ("python", 52): "dfe56e60f6",
-    ("python", 53): "01a1a93925",
+    ("python", 53): "ef00553191",
     ("python", 54): "255edfc9c2",   # TODO #332
     # java
     ("java", 1): "41d245afc5", ("java", 2): "2755b3f41c",
@@ -4646,31 +4571,63 @@ PRIMITIVES = {
         "go": r"^func sternFsChallenges\(",
         "java": r"Stern.java::private static int\[\] deriveChallenges\(",
     },
-    "stern-ring-trit": {
-        # TODO #297.  A one-line sampler that had THREE implementations across
-        # the four ports while it was written inline in each -- which is the
-        # case this manifest exists for, and could not see while the thing had
-        # no name.  Extracted in all four at once for that reason.
-        "c": r"static int stern_ring_trit\(",
-        "go": r"^func sternRingTrit\(",
-        "python": r"^def _stern_ring_trit\(",
-        "java": r"SternRing.java::static int ringTrit\(",
+    # ── HPKS-Ring (TODO #415): one Stern proof over the ring's block-diagonal
+    # statement.  KAT/operation_replay.json's two whole-signature rows pin every
+    # byte these produce, at N = 256 and N = 2304, in all four ports.
+    "hpks-ring-hash": {
+        "c": r"static void ring_h\(",
+        "go": r"^func ringH\(",
+        "python": r"^def _ring_h\(",
+        "java": r"SternRing.java::static byte\[\] h\(int tag",
     },
-    "stern-simulate-round": {
-        # C names it stern_ring_simulate; the entry carries that name. No
-        # absence
-        "c": r"static void stern_ring_simulate\(",
-        "go": r"^func sternSimulateRound\(",
-        "python": r"^def _stern_simulate_round\(",
-        "java": r"SternRing.java::private static Object\[\] simulateRound\(",
+    "hpks-ring-canonical": {
+        # the ring sorted by seed || syndrome, duplicates refused, H built
+        "c": r"static int stern_ring_init\(",
+        "go": r"^func newSternRing\(",
+        "python": r"^class _Ring\b",
+        "java": r"SternRing.java::Ring\(List<RingKey> ring, int n\)",
     },
-    "stern-ring-challenges": {
-        "acknowledged":
-            "as stern-fs-challenges, for the ring variant: Python inlines the "
-            "joint challenge derivation in hpks_stern_ring_sign",
-        "c": r"static void stern_ring_challenges\(",
-        "go": r"^func sternRingChallenges\(",
-        "java": r"SternRing.java::private static int\[\] jointChallenges\(",
+    "hpks-ring-perms": {
+        "c": r"static void ring_perms\(",
+        "go": r"^func \(R \*sternRing\) perms\(",
+        "python": r"    def perms\(self, pi_seed",
+        "java": r"SternRing.java::int\[\]\[\] perms\(byte\[\] piSeed\)",
+    },
+    "hpks-ring-apply": {
+        "c": r"static void ring_apply\(",
+        "go": r"^func \(R \*sternRing\) apply\(",
+        "python": r"    def apply\(self, P, v\)",
+        "java": r"SternRing.java::byte\[\] apply\(int\[\]\[\] P",
+    },
+    "hpks-ring-htilde": {
+        "c": r"static void ring_htilde\(",
+        "go": r"^func \(R \*sternRing\) htilde\(",
+        "python": r"    def htilde\(self, v\)",
+        "java": r"SternRing.java::byte\[\] htilde\(byte\[\] v\)",
+    },
+    "hpks-ring-in-s": {
+        "c": r"static int ring_in_S\(",
+        "go": r"^func \(R \*sternRing\) inS\(",
+        "python": r"    def in_S\(self, v\)",
+        "java": r"SternRing.java::boolean inS\(byte\[\] u",
+    },
+    "hpks-ring-challenges": {
+        "c": r"static void ring_challenges\(",
+        "go": r"^func ringChallenges\(",
+        "python": r"^def _ring_challenges\(",
+        "java": r"SternRing.java::static int\[\] challenges\(",
+    },
+    "hpks-ring-digest": {
+        "c": r"static void ring_digest\(",
+        "go": r"^func \(R \*sternRing\) digest\(",
+        "python": r"^def _ring_digest\(",
+        "java": r"SternRing.java::byte\[\] digest\(int rounds",
+    },
+    "hpks-ring-sig-len": {
+        "c": r"static size_t stern_ring_sig_len\(",
+        "go": r"^func HpksSternRingSigLen\(",
+        "python": r"^def hpks_stern_ring_sig_len\(",
+        "java": r"SternRing.java::public static int sigLen\(",
     },
     # ── Stern-F long form, N > 256 (TODO #382 stage 2) ────────────────────
     # The 128-bit set's own primitives.  KAT/operation_replay.json's three
@@ -4745,25 +4702,11 @@ PRIMITIVES = {
         "go": r"^func sternLNextChallenge\(",
         "java": r"SternL.java::private static int\[\] chain\(",
     },
-    "stern-l-ring-state": {
-        "acknowledged":
-            "C and Python hand their fs-state helper the member-major "
-            "commitments directly (the ring signature already holds them in "
-            "that order); Go and Java gather them from per-member structures",
-        "go": r"^func sternLRingState\(",
-        "java": r"SternL.java::private static BitArray ringState\(",
-    },
     "stern-l-check-round": {
         "c": r"static int stern_l_check_round\(",
         "go": r"^func sternLCheckRound\(",
         "python": r"^def _sternl_check_round\(",
         "java": r"SternL.java::static boolean checkRound\(",
-    },
-    "stern-l-simulate": {
-        "c": r"static void stern_l_simulate\(",
-        "go": r"^func sternLSimulateRound\(",
-        "python": r"^def _sternl_simulate_round\(",
-        "java": r"SternL.java::private static BigInteger\[\] simulate\(",
     },
     "csprng-weight-t": {
         # C and Go name the weight-t error sampler
@@ -5641,12 +5584,6 @@ PRIMITIVES = {
             "three expand inline",
         "java": r"ZkpNl.java::private static byte\[\] ppTape\(",
     },
-    "stern-ring-fs-seed": {
-        "acknowledged":
-            "Java factors the ring signature's Fiat-Shamir seed out of stern- "
-            "ring-challenges; the other three derive it inline",
-        "java": r"SternRing.java::private static BigInteger fiatShamirSeed\(",
-    },
     "qcmdpc-planes": {
         "acknowledged":
             "the BGF counter PLANE COUNT, max(4, bit_length(d)) (TODO #330).  "
@@ -5945,6 +5882,13 @@ DECL_PATTERNS = {
 # it instead of quietly covering the next thing that matches.
 CENSUS_EXEMPT = {
     "c": [
+        (r"^(ring_(xmalloc|n_ok|ind_bit|ind_canonical|syn|apply_perm)|stern_perm_from_key|stern_syndr_be)$",
+         "HPKS-Ring's byte-level helpers in herradura.h (TODO #415): allocation, "
+         "the width check, indicator-bit access, H_i x, one block's permutation, "
+         "the 32-byte-keyed generator and the little-endian syndr[] conversion. "
+         "Python, Go and Java write them as methods of their ring class or "
+         "inline, and KAT/operation_replay.json's two whole-signature rows pin "
+         "every byte they produce in all four ports"),
         (r"^(gf_mul_poly_ba|gf_poly_for)$",
          "the GF(2^n) multiply with its polynomial already looked up, and the "
          "lookup-or-fail wrapper around ba_gf_poly (TODO #383).  gf_pow_ba "
@@ -6023,6 +5967,11 @@ CENSUS_EXEMPT = {
                    "fixed-width stem is what the manifest names"),
     ],
     "go": [
+        (r"^(HpksSternRingChallenges|ringNOk)$",
+         "HPKS-Ring (TODO #415): the exported wrapper around ringChallenges "
+         "that the Go harness's [53] walks a signature with, and the width "
+         "check.  Neither is a protocol step; KAT/operation_replay.json's "
+         "whole-signature rows pin the challenges in all four ports"),
         (r"^zkpNlBE$",
          "v as nb big-endian bytes for the ZKBoo transcript (TODO #409). C "
          "writes the loop inline, Python has int.to_bytes and Java "
@@ -6077,6 +6026,12 @@ CENSUS_EXEMPT = {
          "rnl_twiddle_ family builds"),
     ],
     "python": [
+        (r"^_ring_(build_H|check_n|gen_perm|msg)$",
+         "HPKS-Ring's helpers (TODO #415): the matrix for either form, the "
+         "width check, the 32-byte-keyed generator call and the 256-bit "
+         "message check.  The other ports inline them or carry them under "
+         "their own exempt rules; KAT/operation_replay.json's two "
+         "whole-signature rows pin every byte they produce"),
         (r"^hpke_stern_f_encap_with_e$",
          "hpke-stern-f-encap returning e' beside (K, ct) -- the demo KEM's encap "
          "with the error vector its known-e' decap needs.  hpke_stern_f_encap is "
@@ -6101,6 +6056,12 @@ CENSUS_EXEMPT = {
          "and what a `poly` parameter cannot enforce"),
     ],
     "java": [
+        (r"^(applyPerm|nOk|perm|t)$",
+         "HPKS-Ring's helpers inside SternRing (TODO #415): one block's bit "
+         "permutation, the width check, the 32-byte-keyed generator call and "
+         "t = max(2, n/16).  C has them under the ring_ exempt rule, Python "
+         "and Go inline or as methods; KAT/operation_replay.json's two "
+         "whole-signature rows pin every byte they produce"),
         (r"^rSteps$",
          "3n/4, HSKE's decrypt round count at width n, beside iSteps' n/4 -- a "
          "parameter rule, not a protocol step (the r = 3n/4 in CLAUDE.md).  The "
@@ -6658,6 +6619,28 @@ PARAMETERS = {
                               "_HPKS_NL_DS_CHALLENGE", "HerraduraNl.HPKS_NL_DS_CHALLENGE"],
                              "wire", "domain separator for the HPKS-NL / HPKS-T "
                              "Schnorr challenge (TODO #348)"),
+    # ── HPKS-Ring (TODO #415) ──
+    "hpks-ring-ds": (["RING_DS", "ringDS", "_RING_DS", "SternRing.DS"], "wire",
+                     "HFSCX-256-DS domain byte of the ring's hash; a tag byte follows it"),
+    "hpks-ring-version": (["RING_VERSION", "ringVersion", "_RING_VERSION", "SternRing.VERSION"],
+                          "wire", "the ring transcript header's first byte"),
+    "hpks-ring-max-members": (["RING_MAX_MEMBERS", "RingMaxMembers", "_RING_MAX_MEMBERS",
+                               "SternRing.MAX_MEMBERS"], "wire",
+                              "the ring size bound every library and CLI enforces"),
+    "hpks-ring-t-ch": (["RING_T_CH", "ringTCh", "_RING_T_CH", "SternRing.T_CH"], "wire",
+                       "ring hash tag: the transcript digest D"),
+    "hpks-ring-t-c0": (["RING_T_C0", "ringTC0", "_RING_T_C0", "SternRing.T_C0"], "wire",
+                       "ring hash tag: commitment c0"),
+    "hpks-ring-t-c1": (["RING_T_C1", "ringTC1", "_RING_T_C1", "SternRing.T_C1"], "wire",
+                       "ring hash tag: commitment c1"),
+    "hpks-ring-t-c2": (["RING_T_C2", "ringTC2", "_RING_T_C2", "SternRing.T_C2"], "wire",
+                       "ring hash tag: commitment c2"),
+    "hpks-ring-t-tau": (["RING_T_TAU", "ringTTau", "_RING_T_TAU", "SternRing.T_TAU"], "wire",
+                        "ring hash tag: the member-shuffle key"),
+    "hpks-ring-t-pi": (["RING_T_PI", "ringTPi", "_RING_T_PI", "SternRing.T_PI"], "wire",
+                       "ring hash tag: a block's permutation key"),
+    "hpks-ring-t-xof": (["RING_T_XOF", "ringTXof", "_RING_T_XOF", "SternRing.T_XOF"], "wire",
+                        "ring hash tag: the challenge expander"),
     "stern-ds-hash": (["STERN_DS_HASH", "sternDsHash", "_STERN_DS_HASH",
                        "HerraduraNl.STERN_DS_HASH"], "wire",
                       "domain separator for the Stern-F chain hash; the ds byte "
@@ -6698,7 +6681,7 @@ PARAMETERS = {
 # re-declaration that drifted is exactly the defect this table exists to find.
 PARAM_JAVA_ALIASES = {
     "keybits": ["Duplex.N", "FpeTwk.N", "Hdrbg.N", "HerraduraNl.N", "Hfscx256.N",
-                "Ratchet.N", "Stern.N", "SternRing.N", "Wots.N"],
+                "Ratchet.N", "Stern.N", "Wots.N"],
     # Hfscx256.NL_V1_SHIFT was here until TODO #314 pass 6 DELETED it: the
     # NL-FSCX v1 round's rotation is n/4 at the OPERAND's width, not a static
     # copy of N/4, and a re-declaration that can only be right at one width is
@@ -7206,11 +7189,10 @@ OPERATION_REPLAY_PINNED = {
         "c": "rnl_sigma_sign", "go": "RnlSigmaSign",
         "python": "rnl_sigma_sign", "java": "HerraduraNl.java::rnlSigmaSign",
     },
-    # The row that found something.  Two divergences lived here: the challenge
-    # trit had three schemes across four ports, and the b = 0 dummy commitment
-    # was a CONSTANT in C and Go, which identified the real signer from the
-    # public signature -- a ring signature with no anonymity that verified
-    # perfectly, so every round-trip and interop test passed it.
+    # HPKS-Ring at N = 256 (TODO #415).  This row once pinned the OR-composition,
+    # where it found two divergences (TODO #297: three challenge-trit schemes,
+    # and a constant b = 0 dummy commitment in C and Go that named the signer);
+    # the redesign pins the whole signature byte for byte instead.
     "hpks_stern_ring_sign": {
         "c": "stern_ring_sign", "go": "HpksSternRingSign",
         "python": "hpks_stern_ring_sign", "java": "SternRing.java::sign",
@@ -7236,9 +7218,11 @@ OPERATION_REPLAY_PINNED = {
         "c": "hpks_stern_l_sign", "go": "HpksSternLSign",
         "python": "hpks_stern_l_sign", "java": "SternL.java::sign",
     },
-    "hpks_stern_l_ring_sign": {
-        "c": "stern_l_ring_sign", "go": "HpksSternLRingSign",
-        "python": "hpks_stern_l_ring_sign", "java": "SternL.java::ringSign",
+    # TODO #415: the ring at N = 2304 -- the same four functions as the N = 256
+    # row, because the redesigned ring is one implementation for both forms.
+    "hpks_stern_ring_sign_l": {
+        "c": "stern_ring_sign", "go": "HpksSternRingSign",
+        "python": "hpks_stern_ring_sign", "java": "SternRing.java::sign",
     },
     # --- TODO #307: the four rows #305's coverage census left OWED ---------
     #
@@ -7351,33 +7335,20 @@ REPLAY_COVERAGE = {
     # ring-signing row (the simulator draws through all of them; keygen and
     # signing draw for themselves and are pinned rows).
     "stern_l_rand": {
-        "status": "transitive", "via": "hpks_stern_l_ring_sign",
-        "c": "stern_l_read", "go": "sternLRand", "python": "_sternl_rand",
-        "java": None,   # Java draws `new BigInteger(n, rng)` inline
+        "status": "transitive", "via": "hpks_stern_ring_sign_l",
+        "c": None,      # C's ring reads urnd inline (fread)
+        "go": None,     # Go's ring reads rand.Read inline
+        "python": "_sternl_rand",
+        "java": None,   # Java draws rng.nextBytes inline
     },
     "stern_l_rand_error": {
-        "status": "transitive", "via": "hpks_stern_l_ring_sign",
-        "c": None, "go": "SternLRandError", "python": None, "java": None,
-    },
-    "stern_l_simulate": {
-        "status": "transitive", "via": "hpks_stern_l_ring_sign",
-        "c": None, "go": None, "python": None, "java": "SternL.java::simulate",
+        "status": "transitive", "via": "stern_l_keygen",
+        "c": "stern_l_read", "go": "SternLRandError", "python": None, "java": None,
     },
     "rand_bitarray": {
         "status": "transitive", "via": "stern_f_keygen",
         "c": "ba_rand", "go": "NewRandBitArray", "python": "random",
         "java": None,   # Java inlines rng.nextBytes; it has no such helper
-    },
-    "stern_ring_trit": {
-        "status": "transitive", "via": "hpks_stern_ring_sign",
-        "c": "stern_ring_trit", "go": "sternRingTrit",
-        "python": "_stern_ring_trit", "java": "SternRing.java::ringTrit",
-    },
-    "stern_ring_simulate": {
-        "status": "transitive", "via": "hpks_stern_ring_sign",
-        "c": "stern_ring_simulate", "go": "sternSimulateRound",
-        "python": "_stern_simulate_round",
-        "java": "SternRing.java::simulateRound",
     },
     "java_bitarray_random": {
         # TODO #314 pass 5.  Java's BitArray.random is where eleven inline
@@ -7588,25 +7559,24 @@ RANDOMNESS_CENSUS = {
         "hpkst_sign", "hske_decrypt_masked", "hske_encrypt_masked", "oprf_blind",
         "oprf_keygen", "rnl_cbd_poly_dim", "rnl_rand_poly_dim",
         "hpks_stern_l_sign", "rnl_sigma_sign", "stern_f_keygen", "stern_l_keygen",
-        "stern_l_read", "stern_l_ring_sign", "stern_rand_error",
-        "stern_ring_sign", "stern_ring_simulate", "stern_ring_trit", "zkp_nl_keygen",
+        "stern_l_read", "stern_rand_error",
+        "stern_ring_sign", "zkp_nl_keygen",
         "zkp_nl_pp_prove", "zkp_nl_prove",
-    ],   # 29
+    ],   # 26
     "go": [
         "HcredProve", "HcredProveKkw", "HpakeLoginDemo", "HpakeRegister",
         "HpkeEncrypt", "HpksNlSign", "HpksSign",
         "HpksSternFSign", "HpksSternRingSign", "HpkstSign",
         "HskeDecryptMasked", "HskeEncryptMasked", "NewRandBitArray", "OprfBlind",
         "OprfKeygen", "QcMdpcEncap", "QcMdpcKeygen", "RnlCBDPoly", "RnlRandPoly",
-        "HpksSternLRingSign", "HpksSternLSign", "RnlSigmaSign", "SternFKeygen",
+        "HpksSternLSign", "RnlSigmaSign", "SternFKeygen",
         "SternLKeygen", "SternLRandError", "SternRandError",
-        "ZkpNlKeygen", "ZkpNlProve", "ZkpNlProvepp", "sternLRand", "sternRingTrit",
-        "sternSimulateRound",
-    ],   # 32
+        "ZkpNlKeygen", "ZkpNlProve", "ZkpNlProvepp",
+    ],   # 28
     "python": [
         "_csprng_weight_t", "_dplex_encrypt", "_hcred_mpc_round", "_rnl_cbd_poly",
-        "_rnl_rand_poly", "_stern_ring_trit", "_stern_simulate_round",
-        "_sternl_rand", "hcred_prove_kkw", "hpks_stern_l_ring_sign", "hpks_stern_l_sign",
+        "_rnl_rand_poly",
+        "_sternl_rand", "hcred_prove_kkw", "hpks_stern_l_sign",
         "stern_l_keygen",
         "hpake_login_demo", "hpake_register", "hpke_encrypt", "hpks_nl_sign",
         "hpks_sign", "hpks_stern_f_sign",
@@ -7615,7 +7585,7 @@ RANDOMNESS_CENSUS = {
         "oprf_keygen", "qcmdpc_encap", "qcmdpc_keygen", "random",
         "rnl_sigma_sign", "stern_f_keygen", "zkp_nl_keygen", "zkp_nl_prove",
         "zkp_nl_prove_pp",
-    ],   # 34
+    ],   # 31
     "java": [
         "BitArray.java::random",
         "Duplex.java::encrypt", "Hcred.java::mpcRound", "Hcred.java::proveKkw",
@@ -7629,11 +7599,11 @@ RANDOMNESS_CENSUS = {
         "Oprf.java::blind", "Oprf.java::keygen",
         "Stern.java::csprngWeightT", "Stern.java::hpksSternFSign",
         "Stern.java::qcmdpcEncap", "Stern.java::qcmdpcKeygen",
-        "Stern.java::sternFKeygen", "SternL.java::keygen", "SternL.java::ringSign",
-        "SternL.java::sign", "SternL.java::simulate", "SternRing.java::ringTrit",
-        "SternRing.java::sign", "SternRing.java::simulateRound", "ZkpNl.java::prove",
+        "Stern.java::sternFKeygen", "SternL.java::keygen",
+        "SternL.java::sign",
+        "SternRing.java::sign", "ZkpNl.java::prove",
         "ZkpNl.java::provePp", "ZkpNl.java::randomBig",
-    ],   # 36
+    ],   # 32
 }
 
 # Per-language raw-entropy spellings.  A new way to reach the CSPRNG must be

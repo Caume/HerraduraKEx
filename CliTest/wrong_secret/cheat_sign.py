@@ -40,9 +40,23 @@ elif 'HCRED' in label:                     # HCRED: drop the prover's witness ch
     S._hcred_witness = counted(S._hcred_witness)
 else:
     sys.exit(f'cheat_sign.py: no patch for {label!r}')
-# Two Stern paths need no patch: the long form's signer takes no syndrome at
-# all, and a ring signer's statement is the ring's public keys, not its own.
-NO_PATCH = 'STERN' in label and (n1 > 256 or 'hpks-ring' in sys.argv)
+# The ring (TODO #415): the CLI finds the signer by seed AND syndrome, and the
+# suite's signer refuses a secret that is not the member's key, so both are
+# patched -- the syndrome to the TRUE key's (short form above; the long form
+# here), and the signer's two refusals to no-ops.  The signature then carries a
+# wrong witness for a member's statement, which every verifier must refuse.
+if 'STERN' in label and 'hpks-ring' in sys.argv:
+    orig_l = S.stern_l_syndrome
+    S.stern_l_syndrome = counted(lambda seed, e, n=S.STERN_LONG_N: orig_l(seed1, e1, n))
+    src = inspect.getsource(S.hpks_stern_ring_sign)
+    R1 = 'raise ValueError("HPKS-Ring: the secret is not a weight-t n-bit vector")'
+    R2 = 'raise ValueError("HPKS-Ring: the secret key is not ring member j\'s")'
+    if R1 not in src or R2 not in src:   # a silent no-op patch would test nothing
+        sys.exit('cheat_sign.py: hpks_stern_ring_sign no longer has its two checks; re-point this patch')
+    exec(compile(src.replace(R1, 'pass').replace(R2, 'pass'), 'lenient', 'exec'), S.__dict__)
+    S.hpks_stern_ring_sign = H.hpks_stern_ring_sign = counted(S.hpks_stern_ring_sign)
+# The long-form single signer takes no syndrome at all, so it needs no patch.
+NO_PATCH = 'STERN' in label and n1 > 256 and 'hpks-ring' not in sys.argv
 try:
     H.main()
 finally:

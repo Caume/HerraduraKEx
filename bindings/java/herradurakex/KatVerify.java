@@ -915,94 +915,6 @@ public final class KatVerify {
                     System.out.println("PASS op " + name + " views");
                 }
 
-            } else if ("hpks_stern_ring_sign".equals(name)) {
-                // Two divergences lived in this operation and neither was
-                // visible to any other check: the challenge trit had three
-                // schemes across the four ports, and the b = 0 dummy
-                // commitment was a CONSTANT in C and Go, which identified the
-                // real signer from the public signature.  See ringTrit and
-                // simulateRound in SternRing.java.
-                int n = ((Number) params.get("n")).intValue();
-                int k = ((Number) params.get("k")).intValue();
-                int rounds = ((Number) params.get("rounds")).intValue();
-                int j = ((Number) params.get("j")).intValue();
-                List<Object> seeds = (List<Object>) stmt.get("seeds");
-                List<Object> syns = (List<Object>) stmt.get("syndromes");
-                List<SternRing.RingKey> ring = new ArrayList<SternRing.RingKey>();
-                for (int i = 0; i < k; i++) {
-                    ring.add(new SternRing.RingKey(
-                            new BigInteger((String) seeds.get(i), 16),
-                            new BigInteger((String) syns.get(i), 16)));
-                }
-                BigInteger msg = new BigInteger((String) stmt.get("msg"), 16);
-                BigInteger e = new BigInteger((String) stmt.get("e"), 16);
-                SternRing.RingSignature sig = SternRing.sign(msg, e, j, ring, rounds, rng);
-                List<Object> coms = (List<Object>) expect.get("commits");
-                List<Object> chs = (List<Object>) expect.get("challenges");
-                List<Object> resps = (List<Object>) expect.get("responses");
-                String w = "%0" + (n / 4) + "x";
-                int bi = -1, br = -1;
-                for (int i = 0; i < k && bi < 0; i++) {
-                    List<Object> mc = (List<Object>) coms.get(i);
-                    for (int rr2 = 0; rr2 < rounds; rr2++) {
-                        List<Object> c = (List<Object>) mc.get(rr2);
-                        if (!String.format(w, sig.c0[i][rr2]).equals(c.get(0))
-                                || !String.format(w, sig.c1[i][rr2]).equals(c.get(1))
-                                || !String.format(w, sig.c2[i][rr2]).equals(c.get(2))) {
-                            bi = i; br = rr2; break;
-                        }
-                    }
-                }
-                if (bi >= 0) {
-                    System.out.println("FAIL op " + name + ": commitments differ at member "
-                            + bi + " round " + br);
-                    fails++;
-                } else {
-                    System.out.println("PASS op " + name + " commitments");
-                }
-                bi = -1; br = -1;
-                for (int i = 0; i < k && bi < 0; i++) {
-                    List<Object> mb = (List<Object>) chs.get(i);
-                    for (int rr2 = 0; rr2 < rounds; rr2++) {
-                        if (sig.challenges[i][rr2] != ((Number) mb.get(rr2)).intValue()) {
-                            bi = i; br = rr2; break;
-                        }
-                    }
-                }
-                if (bi >= 0) {
-                    System.out.println("FAIL op " + name + ": challenge at member " + bi
-                            + " round " + br + " is " + sig.challenges[bi][br]);
-                    fails++;
-                } else {
-                    System.out.println("PASS op " + name + " challenges");
-                }
-                bi = -1; br = -1;
-                for (int i = 0; i < k && bi < 0; i++) {
-                    List<Object> mr = (List<Object>) resps.get(i);
-                    for (int rr2 = 0; rr2 < rounds; rr2++) {
-                        List<Object> p = (List<Object>) mr.get(rr2);
-                        if (!String.format(w, sig.resp0[i][rr2]).equals(p.get(0))
-                                || !String.format(w, sig.resp1[i][rr2]).equals(p.get(1))) {
-                            bi = i; br = rr2; break;
-                        }
-                    }
-                }
-                if (bi >= 0) {
-                    System.out.println("FAIL op " + name + ": response differs at member "
-                            + bi + " round " + br + " (b=" + sig.challenges[bi][br] + ")");
-                    fails++;
-                } else {
-                    System.out.println("PASS op " + name + " responses");
-                }
-                // Must still VERIFY: the fix changed a dummy commitment no
-                // verifier checks, and a vector alone would not say so.
-                if (!SternRing.verify(msg, sig, ring)) {
-                    System.out.println("FAIL op " + name + " verifies");
-                    fails++;
-                } else {
-                    System.out.println("PASS op " + name + " verifies");
-                }
-
             } else if ("stern_l_keygen".equals(name)) {
                 // TODO #382 stage 2: the long form at N = 2304; every value,
                 // the syndrome included, is an N-bit hex string.
@@ -1040,7 +952,10 @@ public final class KatVerify {
                 fails += replayCheck("op " + name + " challenges", ge.toString(), we.toString());
                 fails += replayCheck("op " + name + " responses", gr.toString(), wr.toString());
 
-            } else if ("hpks_stern_l_ring_sign".equals(name)) {
+            } else if ("hpks_stern_ring_sign".equals(name) || "hpks_stern_ring_sign_l".equals(name)) {
+                // HPKS-Ring (TODO #415), at N = 256 and N = 2304: the whole
+                // signature byte for byte (the stream count is checked below);
+                // the pinned signature must verify here too.
                 int n = ((Number) params.get("n")).intValue();
                 int k = ((Number) params.get("k")).intValue();
                 int rounds = ((Number) params.get("rounds")).intValue();
@@ -1050,35 +965,20 @@ public final class KatVerify {
                 List<SternRing.RingKey> ring = new ArrayList<SternRing.RingKey>();
                 for (int i = 0; i < k; i++)
                     ring.add(new SternRing.RingKey(new BigInteger((String) seeds.get(i), 16),
-                            new BigInteger((String) syns.get(i), 16)));
-                SternRing.RingSignature sig = SternL.ringSign(
-                        new BigInteger((String) stmt.get("msg"), 16),
-                        new BigInteger((String) stmt.get("e"), 16), j, ring, rounds, n, rng);
-                String w = "%0" + (n / 4) + "x";
-                StringBuilder gc = new StringBuilder(), wc = new StringBuilder();
-                StringBuilder ge = new StringBuilder(), we = new StringBuilder();
-                StringBuilder gr = new StringBuilder(), wr = new StringBuilder();
-                for (int i = 0; i < k; i++) {
-                    for (int rr2 = 0; rr2 < rounds; rr2++) {
-                        gc.append(String.format("%064x%064x%064x",
-                                sig.c0[i][rr2], sig.c1[i][rr2], sig.c2[i][rr2]));
-                        for (Object c : (List<Object>) ((List<Object>) ((List<Object>)
-                                expect.get("commits")).get(i)).get(rr2))
-                            wc.append((String) c);
-                        ge.append(sig.challenges[i][rr2]);
-                        we.append(((Number) ((List<Object>) ((List<Object>)
-                                expect.get("challenges")).get(i)).get(rr2)).intValue());
-                        gr.append(String.format(w, sig.resp0[i][rr2]))
-                          .append(String.format(w, sig.resp1[i][rr2]));
-                        for (Object x : (List<Object>) ((List<Object>) ((List<Object>)
-                                expect.get("responses")).get(i)).get(rr2))
-                            wr.append((String) x);
-                    }
+                            new BigInteger((String) syns.get(i), 16), n));
+                byte[] msg = unhexBytes((String) stmt.get("msg"));
+                byte[] sig = SternRing.sign(msg, new BigInteger((String) stmt.get("e"), 16), j, ring, n,
+                        rounds, rng);
+                String want = (String) expect.get("sig");
+                StringBuilder got = new StringBuilder();
+                for (byte x : sig) got.append(String.format("%02x", x & 0xff));
+                fails += replayCheck("op " + name + " signature", got.toString(), want);
+                if (SternRing.verify(msg, unhexBytes(want), ring, n, rounds)) {
+                    System.out.println("PASS op " + name + " verifies");
+                } else {
+                    System.out.println("FAIL op " + name + ": the pinned signature does not verify");
+                    fails++;
                 }
-                fails += replayCheck("op " + name + " commitments", gc.toString(), wc.toString());
-                fails += replayCheck("op " + name + " challenges", ge.toString(), we.toString());
-                fails += replayCheck("op " + name + " responses", gr.toString(), wr.toString());
-
             } else if ("rnl_sigma_sign".equals(name)) {
                 int n = ((Number) params.get("n")).intValue();
                 HerraduraNl.SigmaProof pf = HerraduraNl.rnlSigmaSign(

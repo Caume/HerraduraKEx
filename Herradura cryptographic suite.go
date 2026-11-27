@@ -318,22 +318,21 @@ func main() {
 		fmt.Println("[FAIL] HPKE-Stern-F key agreement failed")
 	}
 
-	// ── HPKS-Stern-Ring (78.I) ───────────────────────────────────────────────
-	fmt.Printf("\n--- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG — OR-composed Stern, N=%d, k=3]\n", n)
-	{
-		const ringK = 3
-		rKeys := make([]RingKeypair, ringK)
-		rE    := make([]*BitArray, ringK)
-		for i := 0; i < ringK; i++ {
-			rKeys[i].Seed, rE[i], rKeys[i].Syndrome = SternFKeygen(n)
-		}
-		// Sign as member 1 (index 1 in the ring)
-		rsig := HpksSternRingSign(plaintext, rE[1], 1, rKeys, SdfRounds)
-		if HpksSternRingVerify(plaintext, rsig, rKeys) {
-			fmt.Printf("+ HPKS-Stern-Ring signature verified (k=%d, signer=1)\n", ringK)
-		} else {
-			fmt.Printf("[FAIL] HPKS-Stern-Ring verification failed (k=%d)\n", ringK)
-		}
+	// ── HPKS-Stern-Ring (TODO #415) ──────────────────────────────────────────
+	fmt.Printf("\n--- HPKS-Stern-Ring [CODE-BASED RING SIG — one Stern proof over the ring's block-diagonal statement, N=%d, k=3]\n", n)
+	ringMembers := make([]RingMember, 3)
+	ringE := make([]*BitArray, 3)
+	for i := range ringMembers {
+		var seed *BitArray
+		var syn *big.Int
+		seed, ringE[i], syn = SternFKeygen(n)
+		ringMembers[i] = RingMember{Seed: seed.Bytes(), Syndrome: SternSyndromeBE(syn, n)}
+	}
+	ringSig, ringErr := HpksSternRingSign(plaintext.Bytes(), ringE[1].Bytes(), 1, ringMembers, n, SdfRounds)
+	if ringErr == nil && HpksSternRingVerify(plaintext.Bytes(), ringSig, ringMembers, n, SdfRounds) {
+		fmt.Printf("+ HPKS-Stern-Ring signature verified (k=3, signer=1, %d bytes)\n", len(ringSig))
+	} else {
+		fmt.Println("[FAIL] HPKS-Stern-Ring verification failed (k=3)")
 	}
 
 	// ── HFSCX-256-DM ─────────────────────────────────────────────────────────
@@ -636,31 +635,17 @@ func main() {
 		fmt.Println("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)")
 	}
 
-	fmt.Println("*** HPKS-Stern-Ring (78.I) — Eve cannot forge ring signature without valid secret key")
+	fmt.Println("*** HPKS-Stern-Ring — Eve cannot forge ring signature without valid secret key")
 	{
-		const ringK = 3
-		eveRKeys := make([]RingKeypair, ringK)
-		eveRE    := make([]*BitArray, ringK)
-		for i := 0; i < ringK; i++ {
-			eveRKeys[i].Seed, eveRE[i], eveRKeys[i].Syndrome = SternFKeygen(n)
-		}
-		// Eve builds a random ring sig without knowing any secret key
-		eveRSig := &SternRingSig{K: ringK, Rounds: SdfRounds, Members: make([]SternSig, ringK)}
-		for i := 0; i < ringK; i++ {
-			eveRSig.Members[i].Rounds = make([]SternRound, SdfRounds)
-			for r := 0; r < SdfRounds; r++ {
-				eveRSig.Members[i].Rounds[r].C0    = NewRandBitArray(n)
-				eveRSig.Members[i].Rounds[r].C1    = NewRandBitArray(n)
-				eveRSig.Members[i].Rounds[r].C2    = NewRandBitArray(n)
-				eveRSig.Members[i].Rounds[r].B     = 0
-				eveRSig.Members[i].Rounds[r].RespA = NewRandBitArray(n)
-				eveRSig.Members[i].Rounds[r].RespB = NewRandBitArray(n)
-			}
-		}
-		if HpksSternRingVerify(decoy, eveRSig, eveRKeys) {
+		// Eve re-presents the member's signature on another message, and random
+		// bytes of the right length; both must fail the transcript check.
+		eveRand := make([]byte, len(ringSig))
+		rand.Read(eveRand)
+		if HpksSternRingVerify(decoy.Bytes(), ringSig, ringMembers, n, SdfRounds) ||
+			HpksSternRingVerify(plaintext.Bytes(), eveRand, ringMembers, n, SdfRounds) {
 			fmt.Println("[FAIL] Eve forged HPKS-Stern-Ring (Eve wins)!")
 		} else {
-			fmt.Println("- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)")
+			fmt.Println("- Eve cannot forge ring sig: the transcript digest does not match  (SD + hash protection)")
 		}
 	}
 

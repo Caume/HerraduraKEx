@@ -302,20 +302,25 @@ public final class Demo {
                                    : "- session key disagrees (a nonzero-DFR BGF decode event -- not a bug)");
         }
 
-        out("\n--- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG — OR-composed Stern, N=" + n + ", k=3]");
+        out("\n--- HPKS-Stern-Ring [CODE-BASED RING SIG — one Stern proof over the ring's block-diagonal statement, N=" + n + ", k=3]");
         {
             int ringK = 3, ringRounds = Stern.SDFR;
             List<SternRing.RingKey> ringKeys = new ArrayList<>();
             List<BigInteger> ringE = new ArrayList<>();
             for (int i = 0; i < ringK; i++) {
                 Stern.SternKeypair kp = Stern.sternFKeygen(rng);
-                ringKeys.add(new SternRing.RingKey(kp.seed, kp.syndrome));
+                ringKeys.add(new SternRing.RingKey(kp.seed, kp.syndrome, n));
                 ringE.add(kp.e);
             }
-            SternRing.RingSignature rsig = SternRing.sign(plaintext, ringE.get(1), 1, ringKeys, ringRounds, rng);
-            boolean ok = SternRing.verify(plaintext, rsig, ringKeys);
-            out(ok ? "+ HPKS-Stern-Ring signature verified (k=" + ringK + ", signer=1)"
+            byte[] rmsg = Hfscx256.toFixedBytes(plaintext, 32);
+            byte[] rsig = SternRing.sign(rmsg, ringE.get(1), 1, ringKeys, n, ringRounds, rng);
+            boolean ok = SternRing.verify(rmsg, rsig, ringKeys, n, ringRounds);
+            out(ok ? "+ HPKS-Stern-Ring signature verified (k=" + ringK + ", signer=1, " + rsig.length + " bytes)"
                     : "[FAIL] HPKS-Stern-Ring verification failed (k=" + ringK + ")");
+            byte[] other = Hfscx256.toFixedBytes(plaintext.xor(BigInteger.ONE), 32);
+            out(!SternRing.verify(other, rsig, ringKeys, n, ringRounds)
+                    ? "- Eve cannot reuse the ring signature for another message  (SD + hash protection)"
+                    : "[FAIL] Eve passed the ring signature off for another message");
         }
 
         // ── Hash / proofs / credentials ──────────────────────────────────

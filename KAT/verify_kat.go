@@ -835,97 +835,6 @@ func verifyOperationReplay(v map[string]interface{}) int {
 				fmt.Println("PASS op " + name + " views")
 			}
 
-		case "hpks_stern_ring_sign":
-			// Two divergences lived in this operation and neither was visible
-			// to any other check: the challenge trit had three schemes across
-			// the four ports, and the b = 0 dummy commitment was a CONSTANT in
-			// C and Go, which identified the real signer from the public
-			// signature.  See sternSimulateRound.
-			n := num(params, "n")
-			k, rounds := num(params, "k"), num(params, "rounds")
-			j := num(params, "j")
-			seeds := strList(stmt["seeds"])
-			syns := strList(stmt["syndromes"])
-			ring := make([]RingKeypair, k)
-			for i := 0; i < k; i++ {
-				sy, _ := new(big.Int).SetString(syns[i].(string), 16)
-				ring[i] = RingKeypair{
-					Seed:     NewFromBytes(mustHex(seeds[i].(string)), 0, n),
-					Syndrome: sy,
-				}
-			}
-			msg := NewFromBytes(mustHex(str(stmt, "msg")), 0, n)
-			e := NewFromBytes(mustHex(str(stmt, "e")), 0, n)
-			sig := HpksSternRingSign(msg, e, j, ring, rounds)
-			coms, chs, resps := strList(expect["commits"]), strList(expect["challenges"]),
-				strList(expect["responses"])
-			bi, br := -1, -1
-			for i := 0; i < k && bi < 0; i++ {
-				mc := strList(coms[i])
-				for r := 0; r < rounds; r++ {
-					c := strList(mc[r])
-					rd := sig.Members[i].Rounds[r]
-					if baHex(rd.C0, n) != c[0].(string) || baHex(rd.C1, n) != c[1].(string) ||
-						baHex(rd.C2, n) != c[2].(string) {
-						bi, br = i, r
-						break
-					}
-				}
-			}
-			if bi >= 0 {
-				fmt.Printf("FAIL op %s: commitments differ at member %d round %d\n",
-					name, bi, br)
-				fails++
-			} else {
-				fmt.Println("PASS op " + name + " commitments")
-			}
-			bi, br = -1, -1
-			for i := 0; i < k && bi < 0; i++ {
-				mb := strList(chs[i])
-				for r := 0; r < rounds; r++ {
-					if sig.Members[i].Rounds[r].B != int(mb[r].(float64)) {
-						bi, br = i, r
-						break
-					}
-				}
-			}
-			if bi >= 0 {
-				fmt.Printf("FAIL op %s: challenge at member %d round %d is %d, vector says %v\n",
-					name, bi, br, sig.Members[bi].Rounds[br].B, strList(chs[bi])[br])
-				fails++
-			} else {
-				fmt.Println("PASS op " + name + " challenges")
-			}
-			bi, br = -1, -1
-			for i := 0; i < k && bi < 0; i++ {
-				mr := strList(resps[i])
-				for r := 0; r < rounds; r++ {
-					p := strList(mr[r])
-					rd := sig.Members[i].Rounds[r]
-					if baHex(rd.RespA, n) != p[0].(string) || baHex(rd.RespB, n) != p[1].(string) {
-						bi, br = i, r
-						break
-					}
-				}
-			}
-			if bi >= 0 {
-				fmt.Printf("FAIL op %s: response differs at member %d round %d (b=%d)\n",
-					name, bi, br, sig.Members[bi].Rounds[br].B)
-				fails++
-			} else {
-				fmt.Println("PASS op " + name + " responses")
-			}
-			// The signature must still VERIFY: the fix changed a dummy
-			// commitment no verifier checks, and a vector alone would not say so.
-			if !HpksSternRingVerify(msg, sig, ring) {
-				fmt.Println("FAIL op " + name + " verifies")
-				fails++
-			} else {
-				fmt.Println("PASS op " + name + " verifies")
-			}
-
-		// TODO #382 stage 2: the long form's three rows (N = 2304).  Every
-		// value is an N/8-byte string, the syndrome included.
 		case "stern_l_keygen":
 			seed, e, syn := SternLKeygen(num(params, "n"))
 			check("op "+name+" seed", hex.EncodeToString(seed), str(expect, "seed"))
@@ -953,34 +862,31 @@ func verifyOperationReplay(v map[string]interface{}) int {
 			check("op "+name+" challenges", ge.String(), we.String())
 			check("op "+name+" responses", gr.String(), wr.String())
 
-		case "hpks_stern_l_ring_sign":
-			k, rounds, j := num(params, "k"), num(params, "rounds"), num(params, "j")
+		case "hpks_stern_ring_sign", "hpks_stern_ring_sign_l":
+			// HPKS-Ring (TODO #415), at N = 256 and N = 2304: the whole
+			// signature byte for byte; the generic `consumed` check below holds
+			// the stream.  The pinned signature must verify here too.
+			n, k, rounds, j := num(params, "n"), num(params, "k"), num(params, "rounds"), num(params, "j")
 			seeds, syns := strList(stmt["seeds"]), strList(stmt["syndromes"])
-			ring := make([]SternLRingKey, k)
+			ring := make([]RingMember, k)
 			for i := range ring {
-				ring[i] = SternLRingKey{Seed: mustHex(seeds[i].(string)), Syndrome: mustHex(syns[i].(string))}
+				ring[i] = RingMember{Seed: mustHex(seeds[i].(string)), Syndrome: mustHex(syns[i].(string))}
 			}
-			sig := HpksSternLRingSign(NewFromBytes(mustHex(str(stmt, "msg")), 0, 256),
-				mustHex(str(stmt, "e")), j, ring, rounds)
-			var gc, ge, gr, wc, we, wr strings.Builder
-			for i := 0; i < k; i++ {
-				for r := 0; r < rounds; r++ {
-					rd := sig.Members[i].Rounds[r]
-					gc.WriteString(rd.C0.Hex() + rd.C1.Hex() + rd.C2.Hex())
-					ge.WriteString(fmt.Sprint(rd.B))
-					gr.WriteString(hex.EncodeToString(rd.RespA) + hex.EncodeToString(rd.RespB))
-					for _, c := range strList(strList(strList(expect["commits"])[i])[r]) {
-						wc.WriteString(c.(string))
-					}
-					we.WriteString(fmt.Sprint(int(strList(strList(expect["challenges"])[i])[r].(float64))))
-					for _, x := range strList(strList(strList(expect["responses"])[i])[r]) {
-						wr.WriteString(x.(string))
-					}
-				}
+			msg := mustHex(str(stmt, "msg"))
+			sig, err := HpksSternRingSign(msg, mustHex(str(stmt, "e")), j, ring, n, rounds)
+			if err != nil {
+				fmt.Printf("FAIL op %s: %v\n", name, err)
+				fails++
+				break
 			}
-			check("op "+name+" commitments", gc.String(), wc.String())
-			check("op "+name+" challenges", ge.String(), we.String())
-			check("op "+name+" responses", gr.String(), wr.String())
+			want := str(expect, "sig")
+			check("op "+name+" signature", hex.EncodeToString(sig), want)
+			if HpksSternRingVerify(msg, mustHex(want), ring, n, rounds) {
+				fmt.Println("PASS op " + name + " verifies")
+			} else {
+				fmt.Printf("FAIL op %s: the pinned signature does not verify\n", name)
+				fails++
+			}
 
 		case "rnl_sigma_sign":
 			n := num(params, "n")

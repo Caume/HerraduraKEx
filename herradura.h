@@ -3255,8 +3255,7 @@ static void stern_fs_challenges(int *chals, int rounds,
  * different SDF_ROUNDS cannot read each other's signatures.  SDF_ROUNDS remains
  * the *signing* default; nothing about the wire format changes.
  *
- * Allocate with stern_sig_alloc() and release with stern_sig_free().  Mirrors
- * the SternRingSig/stern_ring_alloc pair below. */
+ * Allocate with stern_sig_alloc() and release with stern_sig_free(). */
 typedef struct {
     int       rounds;
     BitArray *c0, *c1, *c2;
@@ -3429,412 +3428,6 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             stern_apply_perm(&sy2, perm, &sig->resp_b[i], n);
             stern_hash(&tmp, &sy2, 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
-        }
-    }
-    return 1;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 78.I — Code-Based Ring Signature via HPKS-Stern-F OR-composition (TODO #78.I)
- *
- * Prove knowledge of one HPKS-Stern-F secret key in a ring of k public keys
- * without revealing which one.  OR-composes k Stern identification instances
- * using HVZK simulation for non-signer members and Fiat-Shamir with challenge
- * splitting (sum_i b_ir ≡ joint_b_r (mod 3) per round r).
- *
- * Proof size: O(k × SDF_ROUNDS) rounds of (c0, c1, c2, b, respA, respB).
- * Security: EUF-CMA under SD(N,t) per ring member.
- *
- * stern_ring_alloc / stern_ring_free  — allocate / free a SternRingSig.
- * stern_ring_sign                     — sign as member j of the ring.
- * stern_ring_verify                   — verify without learning who signed.
- * ───────────────────────────────────────────────────────────────────────────── */
-
-typedef struct {
-    int       k;       /* ring size */
-    int       rounds;  /* rounds per member */
-    /* flat [k * rounds] arrays; index for member i round r: i * rounds + r */
-    BitArray *c0, *c1, *c2;
-    int      *b;
-    BitArray *resp_a, *resp_b;
-} SternRingSig;
-
-/* sz is computed in size_t, not int: k and rounds reach this function from a
- * PEM reader, and `k * rounds` in int is signed overflow — undefined behaviour
- * — before the product ever reaches malloc (TODO #239).  Callers must still
- * range-check their inputs; this only removes the UB behind them. */
-static void stern_ring_alloc(SternRingSig *sig, int k, int rounds)
-{
-    size_t sz = (size_t)k * (size_t)rounds;
-    sig->k      = k;
-    sig->rounds = rounds;
-    sig->c0     = (BitArray *)malloc(sz * sizeof(BitArray));
-    sig->c1     = (BitArray *)malloc(sz * sizeof(BitArray));
-    sig->c2     = (BitArray *)malloc(sz * sizeof(BitArray));
-    sig->b      = (int *)     malloc(sz * sizeof(int));
-    sig->resp_a = (BitArray *)malloc(sz * sizeof(BitArray));
-    sig->resp_b = (BitArray *)malloc(sz * sizeof(BitArray));
-    if (!sig->c0 || !sig->c1 || !sig->c2 || !sig->b ||
-        !sig->resp_a || !sig->resp_b) {
-        fprintf(stderr, "stern_ring_alloc: out of memory\n"); exit(1);
-    }
-    /* TODO #314: heap BitArrays are born at the default width too -- malloc
-       leaves nbits indeterminate, which is the one state this type must make
-       unreadable. */
-    ba_init_array(sig->c0, (int)sz);
-    ba_init_array(sig->c1, (int)sz);
-    ba_init_array(sig->c2, (int)sz);
-    ba_init_array(sig->resp_a, (int)sz);
-    ba_init_array(sig->resp_b, (int)sz);
-}
-
-static void stern_ring_free(SternRingSig *sig)
-{
-    free(sig->c0); free(sig->c1); free(sig->c2);
-    free(sig->b);  free(sig->resp_a); free(sig->resp_b);
-}
-
-/* Derive k rounds of joint challenges from msg + all k*rounds*(c0,c1,c2). */
-static void stern_ring_challenges(int *joint_out, int rounds, int k,
-                                    const BitArray *msg,
-                                    const BitArray *c0,
-                                    const BitArray *c1,
-                                    const BitArray *c2)
-{
-    BitArray ch_st = BA_INIT, idx_ba = BA_INIT;
-    uint32_t v;
-    int i, r;
-
-    /* ch_st = stern_hash(msg || member 0 round 0 (c0,c1,c2) || ...), ds = 0.
-     * Until v11.x the same items went through the v1 chain (TODO #348). */
-    {
-        BitArray *flat = (BitArray *)malloc((size_t)(1 + 3 * k * rounds) * sizeof(BitArray));
-        if (!flat) { fprintf(stderr, "stern_ring_challenges: oom\n"); exit(1); }
-        flat[0] = *msg;
-        for (i = 0; i < k; i++)
-            for (r = 0; r < rounds; r++) {
-                int idx = i * rounds + r, at = 1 + 3 * idx;
-                flat[at] = c0[idx]; flat[at + 1] = c1[idx]; flat[at + 2] = c2[idx];
-            }
-        stern_hash(&ch_st, flat, 1 + 3 * k * rounds, 0);
-        free(flat);
-    }
-    /* derive one joint challenge per round */
-    for (r = 0; r < rounds; r++) {
-        int nb = ba_nbytes(msg);               /* at msg's width (TODO #383) */
-        ba_zero_w(&idx_ba, msg->nbits);
-        /* the whole round index, big-endian (TODO #390; was r & 0xFF) */
-        idx_ba.b[nb - 1] = (uint8_t)r;
-        idx_ba.b[nb - 2] = (uint8_t)(r >> 8);
-        idx_ba.b[nb - 3] = (uint8_t)(r >> 16);
-        idx_ba.b[nb - 4] = (uint8_t)(r >> 24);
-        nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
-        v = ((uint32_t)ch_st.b[nb - 4] << 24)
-          | ((uint32_t)ch_st.b[nb - 3] << 16)
-          | ((uint32_t)ch_st.b[nb - 2] << 8)
-          |  ch_st.b[nb - 1];
-        joint_out[r] = (int)(v % 3u);
-    }
-}
-
-/* Rejection-sample a uniform trit in {0, 1, 2} for a SIMULATED ring member.
- *
- * Extracted from stern_ring_sign's loop by TODO #297, and extracted in all four
- * ports at once, because one trit had THREE schemes: this byte-with-rejection,
- * Go drawing a whole n-bit BitArray and reducing it modulo 3, and Java calling
- * Random.nextInt(3).  A sampler written inline in four places is a sampler
- * nobody compares; naming it is what makes the manifest able to.
- *
- * 256 is not divisible by 3, so a plain `byte % 3` is biased (86/256 against
- * 85/256 per residue, TODO #164).  Rejecting the single value 255 leaves 255
- * values over 3 residues exactly.
- *
- * Two smaller divergences went with the extraction.  The loop was bounded at
- * 8 tries and fell through with rnd1 = 255, i.e. b = 0, where the other three
- * retry indefinitely -- 2^-64, but a bias toward the branch that carried the
- * defect.  And a failed read fabricated a challenge from (i ^ r) rather than
- * exiting, which is the only fail-open read in this file; every other sampler
- * here treats a short read from /dev/urandom as fatal, and so does this now. */
-static int stern_ring_trit(FILE *urnd)
-{
-    uint8_t v;
-    for (;;) {
-        if (fread(&v, 1, 1, urnd) != 1) {
-            fputs("urandom error\n", stderr);
-            exit(1);
-        }
-        if (v != 255)
-            return (int)(v % 3u);
-    }
-}
-
-/* HVZK simulator for one Stern round given pre-chosen challenge b.
- * Fills c0[idx], c1[idx], c2[idx], b[idx], resp_a[idx], resp_b[idx].
- * H_mat must be pre-built for the member's seed (call stern_build_H once). */
-static void stern_ring_simulate(SternRingSig *sig, int idx, int b,
-                                  const BitArray H_mat[SDF_N_ROWS],
-                                  const uint8_t *syndr,
-                                  FILE *urnd)
-{
-    uint8_t  perm[KEYBITS], Hr_sim[SDF_SYNBYTES];
-    BitArray items[2], pi_sim = BA_INIT, r_sim = BA_INIT, y_sim = BA_INIT, sr_sim = BA_INIT, sy_sim = BA_INIT; ba_init_array(items, 2);
-    int n = H_mat[0].nbits;                    /* the member's N (TODO #383) */
-    ba_zero_w(&pi_sim, n); ba_zero_w(&r_sim, n); ba_zero_w(&y_sim, n);
-    ba_zero_w(&sr_sim, n); ba_zero_w(&sy_sim, n);
-
-    if (b == 0) {
-        /* c1 = hash(sr_sim wt-t), c2 = hash(sy_sim random), c0 dummy.
-         *
-         * THE DUMMY MUST BE RANDOM, and until TODO #297 it was not: this branch
-         * hashed TWO ZERO BitArrays, so c0 was one fixed 256-bit constant in
-         * every b = 0 simulated round of every ring signature this port ever
-         * produced.  The real signer's c0 is hash(pi_seed, H*r^T) with pi_seed
-         * freshly drawn, so it never takes that value -- which means the public
-         * signature carries a MARKER on the simulated members and not on the
-         * signer.  A non-signer's rounds are b = 0 about a third of the time,
-         * so at the default rounds = 32 every non-signer shows the constant
-         * with probability 1 - (2/3)^32 = 1 - 6e-6 and the signer never does:
-         * the signer is the member with none, read straight off the wire.  That
-         * is the anonymity the construction exists to provide, gone.
-         *
-         * Python and Java always drew a dummy here; C and Go did not, and no
-         * test could see it -- a ring signature with an identifiable signer
-         * still VERIFIES (c0 is unchecked for b = 0), so every round-trip and
-         * every interop pair passes.  Found by pinning the whole operation
-         * against a fixed stream and comparing the four ports, which is what
-         * KAT/operation_replay.json is for.
-         *
-         * Python's and Java's form is adopted verbatim -- hash(pi_dum, zero),
-         * with pi_dum drawn AFTER sy_sim -- rather than a third arrangement
-         * invented, so the four consumption orders agree (TODO #294's
-         * precedent). */
-        /* sr_sim UNIFORM and sy_sim = sr_sim ^ (weight-t): a PERFECT
-         * simulation of the real (sigma(r), sigma(r) ^ sigma(e)) now that r is
-         * uniform.  Until v8.0.0 sr_sim was weight-t and sy_sim uniform, so
-         * wt(sr ^ sy) was ~n/2 on every simulated round and exactly t on the
-         * signer's: ONE b = 0 round named the signer, off the public
-         * signature, with no statistics at all (TODO #298). */
-        BitArray zero = BA_INIT, pi_dum = BA_INIT, se_sim = BA_INIT;
-        ba_zero_w(&zero, n); ba_zero_w(&pi_dum, n); ba_zero_w(&se_sim, n);
-        ba_rand(&sr_sim, urnd);
-        stern_rand_error(&se_sim, urnd);
-        ba_xor(&sy_sim, &sr_sim, &se_sim);
-        ba_rand(&pi_dum, urnd);
-        items[0] = pi_dum; items[1] = zero;
-        stern_hash(&sig->c0[idx], items, 2, 1);    /* unchecked */
-        stern_hash(&sig->c1[idx], &sr_sim, 1, 2);
-        stern_hash(&sig->c2[idx], &sy_sim, 1, 3);
-        sig->b[idx]      = 0;
-        sig->resp_a[idx] = sr_sim;
-        sig->resp_b[idx] = sy_sim;
-    } else if (b == 1) {
-        /* c0 = hash(pi_sim, H*r_sim^T), c1 = hash(sigma(r_sim)), c2 dummy */
-        ba_rand(&pi_sim, urnd);
-        /* UNIFORM: the b = 1 response reveals r, and the real r is now
-         * uniform (TODO #298). */
-        ba_rand(&r_sim, urnd);
-        stern_gen_perm(perm, &pi_sim, n);
-        stern_syndrome_H(Hr_sim, H_mat, &r_sim);
-        stern_apply_perm(&sr_sim, perm, &r_sim, n);
-        ba_rand(&sy_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hr_sim, n);
-        stern_hash(&sig->c0[idx], items, 2, 1);
-        stern_hash(&sig->c1[idx], &sr_sim, 1, 2);
-        stern_hash(&sig->c2[idx], &sy_sim, 1, 3);  /* unchecked */
-        sig->b[idx]      = 1;
-        sig->resp_a[idx] = pi_sim;
-        sig->resp_b[idx] = r_sim;
-    } else {
-        /* c0 = hash(pi_sim, H*y_sim^T XOR s), c2 = hash(sigma(y_sim)), c1 dummy */
-        uint8_t Hys[SDF_SYNBYTES];
-        int k2;
-        ba_rand(&pi_sim, urnd);
-        ba_rand(&y_sim,  urnd);
-        stern_gen_perm(perm, &pi_sim, n);
-        stern_syndrome_H(Hr_sim, H_mat, &y_sim);
-        for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hr_sim[k2] ^ syndr[k2];
-        stern_apply_perm(&sy_sim, perm, &y_sim, n);
-        ba_rand(&sr_sim, urnd);
-        items[0] = pi_sim; syndr_to_ba_w(&items[1], Hys, n);
-        stern_hash(&sig->c0[idx], items, 2, 1);
-        stern_hash(&sig->c1[idx], &sr_sim, 1, 2);  /* unchecked */
-        stern_hash(&sig->c2[idx], &sy_sim, 1, 3);
-        sig->b[idx]      = 2;
-        sig->resp_a[idx] = pi_sim;
-        sig->resp_b[idx] = y_sim;
-    }
-}
-
-/* Sign as ring member j (0-indexed).
- * seeds[i] = i-th member's seed; syndromes_flat[i*SDF_SYNBYTES..] = syndrome. */
-static void stern_ring_sign(SternRingSig *sig,
-                              const BitArray *msg,
-                              const BitArray *e,
-                              int j,
-                              const BitArray *seeds,
-                              const uint8_t  *syndrs_flat,
-                              FILE *urnd)
-{
-    int k      = sig->k;
-    int rounds = sig->rounds;
-    /* temporaries for real signer */
-    BitArray *r_tmp  = (BitArray *)malloc(rounds * sizeof(BitArray));
-    BitArray *y_tmp  = (BitArray *)malloc(rounds * sizeof(BitArray));
-    BitArray *pi_tmp = (BitArray *)malloc(rounds * sizeof(BitArray));
-    BitArray *sr_tmp = (BitArray *)malloc(rounds * sizeof(BitArray));
-    BitArray *sy_tmp = (BitArray *)malloc(rounds * sizeof(BitArray));
-    uint8_t  *Hr_tmp = (uint8_t  *)malloc(rounds * SDF_SYNBYTES);
-    int i, r;
-
-    if (!r_tmp || !y_tmp || !pi_tmp || !sr_tmp || !sy_tmp || !Hr_tmp) {
-        fprintf(stderr, "stern_ring_sign: out of memory\n"); exit(1);
-    }
-    ba_init_array(r_tmp, rounds);  ba_init_array(y_tmp, rounds);
-    ba_init_array(pi_tmp, rounds); ba_init_array(sr_tmp, rounds);
-    ba_init_array(sy_tmp, rounds);
-
-    /* Step 1: simulate non-signer members (build H once per member) */
-    for (i = 0; i < k; i++) {
-        BitArray H_mat_i[SDF_N_ROWS]; ba_init_array(H_mat_i, SDF_N_ROWS);
-        const uint8_t *syn_i = syndrs_flat + i * SDF_SYNBYTES;
-        if (i == j) continue;
-        stern_build_H(H_mat_i, &seeds[i]);
-        for (r = 0; r < rounds; r++) {
-            int b_pre = stern_ring_trit(urnd);
-            stern_ring_simulate(sig, i * rounds + r, b_pre,
-                                 H_mat_i, syn_i, urnd);
-        }
-    }
-
-    /* Step 2: commit phase for real signer j */
-    {
-        BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
-        uint8_t perm[KEYBITS];
-        int n = seeds[j].nbits;                /* the ring's N (TODO #383) */
-        stern_build_H(H_mat, &seeds[j]);
-        for (r = 0; r < rounds; r++) {
-            int idx = j * rounds + r;
-            BitArray items[2]; ba_init_array(items, 2);
-            ba_zero_w(&r_tmp[r], n);  ba_rand(&r_tmp[r], urnd);
-            ba_xor(&y_tmp[r], e, &r_tmp[r]);
-            ba_zero_w(&pi_tmp[r], n); ba_rand(&pi_tmp[r], urnd);
-            stern_syndrome_H(Hr_tmp + r * SDF_SYNBYTES, H_mat, &r_tmp[r]);
-            stern_gen_perm(perm, &pi_tmp[r], n);
-            stern_apply_perm(&sr_tmp[r], perm, &r_tmp[r], n);
-            stern_apply_perm(&sy_tmp[r], perm, &y_tmp[r], n);
-            items[0] = pi_tmp[r]; syndr_to_ba_w(&items[1], Hr_tmp + r * SDF_SYNBYTES, n);
-            stern_hash(&sig->c0[idx], items, 2, 1);
-            stern_hash(&sig->c1[idx], &sr_tmp[r], 1, 2);
-            stern_hash(&sig->c2[idx], &sy_tmp[r], 1, 3);
-        }
-    }
-
-    /* Step 3: Fiat-Shamir joint challenges */
-    {
-        int *joint = (int *)malloc(rounds * sizeof(int));
-        if (!joint) { fprintf(stderr, "stern_ring_sign: out of memory\n"); exit(1); }
-        stern_ring_challenges(joint, rounds, k, msg, sig->c0, sig->c1, sig->c2);
-
-        /* Step 4: assign real signer's challenge via challenge splitting */
-        for (r = 0; r < rounds; r++) {
-            int sim_sum = 0;
-            for (i = 0; i < k; i++)
-                if (i != j) sim_sum += sig->b[i * rounds + r];
-            sig->b[j * rounds + r] = ((joint[r] - sim_sum) % 3 + 3) % 3;
-        }
-        free(joint);
-    }
-
-    /* Step 5: complete real signer's responses */
-    for (r = 0; r < rounds; r++) {
-        int idx = j * rounds + r;
-        int bv  = sig->b[idx];
-        if      (bv == 0) { sig->resp_a[idx] = sr_tmp[r]; sig->resp_b[idx] = sy_tmp[r]; }
-        else if (bv == 1) { sig->resp_a[idx] = pi_tmp[r]; sig->resp_b[idx] = r_tmp[r];  }
-        else              { sig->resp_a[idx] = pi_tmp[r]; sig->resp_b[idx] = y_tmp[r];  }
-    }
-
-    free(r_tmp); free(y_tmp); free(pi_tmp); free(sr_tmp); free(sy_tmp); free(Hr_tmp);
-}
-
-/* Verify a ring signature.  Returns 1 if valid, 0 if invalid. */
-static int stern_ring_verify(const SternRingSig *sig,
-                               const BitArray *msg,
-                               const BitArray *seeds,
-                               const uint8_t  *syndrs_flat)
-{
-    int k      = sig->k;
-    int rounds = sig->rounds;
-    int *joint = (int *)malloc(rounds * sizeof(int));
-    int i, r;
-
-    if (!joint) { fprintf(stderr, "stern_ring_verify: out of memory\n"); exit(1); }
-    stern_ring_challenges(joint, rounds, k, msg, sig->c0, sig->c1, sig->c2);
-
-    /* Check challenge consistency: sum_i b[i,r] mod 3 == joint[r].  TODO #421:
-     * each b must be a trit -- the branches below send any b other than 0 or 1
-     * to the b = 2 check while the sum takes it mod 3, so a b = 2 round
-     * re-encoded as 5 kept both and still verified (malleability). */
-    for (r = 0; r < rounds; r++) {
-        int s = 0;
-        for (i = 0; i < k; i++) {
-            int bv = sig->b[i * rounds + r];
-            if (bv < 0 || bv > 2) { free(joint); return 0; }
-            s += bv;
-        }
-        if ((s % 3 + 3) % 3 != joint[r]) { free(joint); return 0; }
-    }
-    free(joint);
-
-    /* Verify each member's responses */
-    for (i = 0; i < k; i++) {
-        BitArray H_mat[SDF_N_ROWS]; ba_init_array(H_mat, SDF_N_ROWS);
-        uint8_t perm[KEYBITS];
-        const uint8_t *syn_i = syndrs_flat + i * SDF_SYNBYTES;
-        int n = seeds[i].nbits, t = stern_t(n);
-        if (n != msg->nbits) return 0;         /* one N for the ring (TODO #383) */
-        stern_build_H(H_mat, &seeds[i]);
-        for (r = 0; r < rounds; r++) {
-            int idx = i * rounds + r;
-            int bv  = sig->b[idx];
-            BitArray tmp = BA_INIT;
-            if (sig->c0[idx].nbits != n || sig->c1[idx].nbits != n ||
-                sig->c2[idx].nbits != n || sig->resp_a[idx].nbits != n ||
-                sig->resp_b[idx].nbits != n) return 0;
-            if (bv == 0) {
-                BitArray xr = BA_INIT;
-                stern_hash(&tmp, &sig->resp_a[idx], 1, 2);
-                if (!ba_equal(&tmp, &sig->c1[idx])) return 0;
-                stern_hash(&tmp, &sig->resp_b[idx], 1, 3);
-                if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
-                /* binds wt(e) -- see hpks_stern_f_verify (TODO #298) */
-                ba_xor(&xr, &sig->resp_a[idx], &sig->resp_b[idx]);
-                if (ba_popcount(&xr) != t) return 0;
-            } else if (bv == 1) {
-                uint8_t Hr[SDF_SYNBYTES];
-                BitArray items[2], sr2 = BA_INIT; ba_init_array(items, 2);
-                stern_syndrome_H(Hr, H_mat, &sig->resp_b[idx]);
-                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hr, n);
-                stern_hash(&tmp, items, 2, 1);
-                if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], n);
-                stern_apply_perm(&sr2, perm, &sig->resp_b[idx], n);
-                stern_hash(&tmp, &sr2, 1, 2);
-                if (!ba_equal(&tmp, &sig->c1[idx])) return 0;
-            } else {
-                uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
-                BitArray items[2], sy2 = BA_INIT; ba_init_array(items, 2);
-                int k2;
-                stern_syndrome_H(Hy, H_mat, &sig->resp_b[idx]);
-                for (k2 = 0; k2 < n / 16; k2++) Hys[k2] = Hy[k2] ^ syn_i[k2];
-                items[0] = sig->resp_a[idx]; syndr_to_ba_w(&items[1], Hys, n);
-                stern_hash(&tmp, items, 2, 1);
-                if (!ba_equal(&tmp, &sig->c0[idx])) return 0;
-                stern_gen_perm(perm, &sig->resp_a[idx], n);
-                stern_apply_perm(&sy2, perm, &sig->resp_b[idx], n);
-                stern_hash(&tmp, &sy2, 1, 3);
-                if (!ba_equal(&tmp, &sig->c2[idx])) return 0;
-            }
         }
     }
     return 1;
@@ -4206,136 +3799,6 @@ static int hpks_stern_l_verify(const SternLSig *sig, const uint8_t msg[32],
     return ok;
 }
 
-/* A long-form ring signature, member-major: entry (i, r) at index i*rounds + r
- * of c (96 bytes), b and resp (2 x N/8 bytes). */
-typedef struct {
-    int      n, k, rounds;
-    uint8_t *c;
-    int     *b;
-    uint8_t *resp;
-} SternLRingSig;
-
-static void stern_l_ring_alloc(SternLRingSig *sig, int n, int k, int rounds)
-{
-    size_t m = (size_t)k * (size_t)rounds;
-    sig->n = n; sig->k = k; sig->rounds = rounds;
-    sig->c    = (uint8_t *)calloc(m, 96);
-    sig->b    = (int *)calloc(m, sizeof(int));
-    sig->resp = (uint8_t *)calloc(m, 2 * (size_t)(n / 8));
-    if (!sig->c || !sig->b || !sig->resp) {
-        fprintf(stderr, "stern_l_ring_alloc: out of memory\n"); exit(1);
-    }
-}
-
-static void stern_l_ring_free(SternLRingSig *sig)
-{
-    free(sig->c); free(sig->b); free(sig->resp);
-    sig->c = sig->resp = NULL; sig->b = NULL; sig->k = sig->rounds = 0;
-}
-
-/* stern_ring_simulate's draws, in its order, on the long-form primitives. */
-static void stern_l_simulate(uint8_t *c, uint8_t *resp, int b, const uint8_t *H,
-                             const uint8_t *syn, int n, FILE *urnd)
-{
-    int nb = n / 8, k;
-    uint8_t *a = resp, *v = resp + nb;
-    uint8_t t1[STERN_L_MAXB], t2[STERN_L_MAXB];
-    uint16_t perm[STERN_LONG_N];
-    BitArray h = BA_INIT;
-    if (b == 0) {
-        stern_l_read(a, (size_t)nb, urnd);                 /* sr uniform           */
-        stern_l_rand_error(t1, n, urnd);
-        for (k = 0; k < nb; k++) v[k] = a[k] ^ t1[k];      /* sy = sr ^ weight-t   */
-        stern_l_read(t1, (size_t)nb, urnd);                /* pi dummy             */
-        memset(t2, 0, (size_t)nb);
-        stern_l_hash2(&h, 1, t1, (size_t)nb, t2, (size_t)nb); memcpy(c, h.b, 32); /* unchecked */
-        stern_l_hash2(&h, 2, a, (size_t)nb, NULL, 0);          memcpy(c + 32, h.b, 32);
-        stern_l_hash2(&h, 3, v, (size_t)nb, NULL, 0);          memcpy(c + 64, h.b, 32);
-        return;
-    }
-    stern_l_read(a, (size_t)nb, urnd);                     /* pi                   */
-    stern_l_read(v, (size_t)nb, urnd);                     /* r or y, uniform      */
-    stern_l_gen_perm(perm, a, n);
-    stern_l_syndrome_H(t1, H, v, n);
-    if (b == 2) for (k = 0; k < nb; k++) t1[k] ^= syn[k];
-    stern_l_apply_perm(t2, perm, v, n);
-    stern_l_hash2(&h, 1, a, (size_t)nb, t1, (size_t)nb); memcpy(c, h.b, 32);
-    stern_l_read(t1, (size_t)nb, urnd);                    /* the unchecked dummy  */
-    if (b == 1) {
-        stern_l_hash2(&h, 2, t2, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
-        stern_l_hash2(&h, 3, t1, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
-    } else {
-        stern_l_hash2(&h, 2, t1, (size_t)nb, NULL, 0); memcpy(c + 32, h.b, 32);
-        stern_l_hash2(&h, 3, t2, (size_t)nb, NULL, 0); memcpy(c + 64, h.b, 32);
-    }
-}
-
-/* Sign as member j; seeds and syns are k x N/8 bytes.  *sig comes from
- * stern_l_ring_alloc(sig, n, k, rounds). */
-static void stern_l_ring_sign(SternLRingSig *sig, const uint8_t msg[32], const uint8_t *e,
-                              int j, const uint8_t *seeds, const uint8_t *syns, FILE *urnd)
-{
-    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r;
-    uint8_t *H, *sec;
-    BitArray st = BA_INIT;
-    for (i = 0; i < k; i++) {
-        if (i == j) continue;
-        H = stern_l_build_H(seeds + (size_t)i * nb, n);
-        for (r = 0; r < rounds; r++) {
-            size_t idx = (size_t)i * rounds + r;
-            sig->b[idx] = stern_ring_trit(urnd);
-            stern_l_simulate(sig->c + 96 * idx, sig->resp + idx * 2 * nb, sig->b[idx],
-                             H, syns + (size_t)i * nb, n, urnd);
-        }
-        free(H);
-    }
-    H = stern_l_build_H(seeds + (size_t)j * nb, n);
-    sec = (uint8_t *)malloc((size_t)rounds * 5 * (size_t)nb);
-    if (!sec) { fprintf(stderr, "stern_l_ring_sign: out of memory\n"); exit(1); }
-    for (r = 0; r < rounds; r++) {
-        uint8_t *s = sec + (size_t)r * 5 * nb;           /* r, then pi */
-        if (fread(s, 1, (size_t)nb, urnd) != (size_t)nb ||
-            fread(s + 2 * nb, 1, (size_t)nb, urnd) != (size_t)nb) {
-            fputs("ERROR: could not read from /dev/urandom\n", stderr);
-            exit(1);
-        }
-        stern_l_commit(sig->c + 96 * ((size_t)j * rounds + r), s, H, e, n);
-    }
-    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
-    for (r = 0; r < rounds; r++) {
-        int joint = stern_l_next_challenge(&st, r), sim = 0;
-        size_t idx = (size_t)j * rounds + r;
-        for (i = 0; i < k; i++) if (i != j) sim += sig->b[(size_t)i * rounds + r];
-        sig->b[idx] = ((joint - sim) % 3 + 3) % 3;
-        stern_l_respond(sig->resp + idx * 2 * nb, sig->b[idx], sec + (size_t)r * 5 * nb, n);
-    }
-    free(sec); free(H);
-}
-
-static int stern_l_ring_verify(const SternLRingSig *sig, const uint8_t msg[32],
-                               const uint8_t *seeds, const uint8_t *syns)
-{
-    int n = sig->n, nb = n / 8, k = sig->k, rounds = sig->rounds, i, r, ok = 1;
-    BitArray st = BA_INIT;
-    if (k < 1 || rounds < 1) return 0;
-    stern_l_fs_state(&st, msg, sig->c, (size_t)k * rounds);
-    for (r = 0; r < rounds; r++) {
-        int joint = stern_l_next_challenge(&st, r), s = 0;
-        for (i = 0; i < k; i++) s += sig->b[(size_t)i * rounds + r];
-        if (s % 3 != joint) return 0;
-    }
-    for (i = 0; i < k && ok; i++) {
-        uint8_t *H = stern_l_build_H(seeds + (size_t)i * nb, n);
-        for (r = 0; r < rounds && ok; r++) {
-            size_t idx = (size_t)i * rounds + r;
-            ok = stern_l_check_round(sig->b[idx], sig->c + 96 * idx, sig->resp + idx * 2 * nb,
-                                     H, syns + (size_t)i * nb, n);
-        }
-        free(H);
-    }
-    return ok;
-}
-
 /* Long-form demo KEM: K = H_4(seed, e') (256 bits), ct = H e'^T, e' out. */
 static void hpke_stern_l_decap_known(BitArray *K, const uint8_t *e_p, const uint8_t *seed, int n)
 {
@@ -4348,6 +3811,460 @@ static void hpke_stern_l_encap(BitArray *K, uint8_t *ct, uint8_t *e_p, const uin
     stern_l_rand_error(e_p, n, urnd);
     stern_l_syndrome(ct, seed, e_p, n);
     hpke_stern_l_decap_known(K, e_p, seed, n);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * HPKS-Ring: ONE Stern proof over a block-diagonal statement (TODO #415, v20.0.0)
+ *
+ * Replaces the OR-composition of k Stern proofs (TODO #78.I), which was
+ * existentially forgeable with no member's key: it split each round's challenge
+ * across the members mod 3, and a party without the witness answers two of
+ * Stern's three challenges, so two keyless members covered every residue.
+ * Here each round has ONE challenge for one statement only a member's key
+ * satisfies.  SPEC.md §11.2 is normative; Python's hpks_stern_ring_sign is the
+ * reference, and KAT/operation_replay.json pins both widths in all four ports.
+ *
+ *   statement  H~ = diag([H_1|s_1], ..., [H_k|s_k]) in canonical member order
+ *              (members sorted by seed || syndrome, duplicates refused);
+ *              z = (x_1..x_k ; c), c a k-bit indicator, H~ z = 0 and z in S =
+ *              { one c_p = 1, wt(x_p) = t, every other x_q = 0 }.
+ *   group      Pi = (tau in S_k, pi_i in S_n): Pi(z) puts pi_i(x_i) at block
+ *              tau(i) and c's bit i at tau(i).
+ *   round      draws r's k blocks, r's indicator (ceil(k/8) bytes, masked to k
+ *              bits), pi_seed, salt1, salt2 -- 32 bytes each -- in that order;
+ *              c0 = H_1(pi_seed || H~ r), c1 = H_2(salt1 || Pi r),
+ *              c2 = H_3(salt2 || Pi y), y = r + z.
+ *   wire       D = H_0(0x02 || n || k || rounds || msg || ring || c0 c1 c2 ...),
+ *              then per round the unopened commitment and the opening:
+ *              b=0: c0 salt1 salt2 Pi(r) Pi(y);  b=1: c2 pi_seed salt1 r;
+ *              b=2: c1 pi_seed salt2 y.  Trits come from H_6(D || ctr) bytes,
+ *              255 rejected.  H_tag(x) = HFSCX-256-DS(0x32, tag || x).
+ * Every vector is big-endian bytes: an n-bit block n/8, a syndrome n/16 (the
+ * caller converts herradura.h's little-endian syndr[] with stern_syndr_be).
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define RING_DS          0x32
+#define RING_VERSION     2
+#define RING_MAX_MEMBERS 1024
+#define RING_T_CH  0
+#define RING_T_C0  1
+#define RING_T_C1  2
+#define RING_T_C2  3
+#define RING_T_TAU 4
+#define RING_T_PI  5
+#define RING_T_XOF 6
+
+static void *ring_xmalloc(size_t n)
+{
+    void *p = calloc(n ? n : 1, 1);
+    if (!p) { fprintf(stderr, "hpks-ring: out of memory\n"); exit(1); }
+    return p;
+}
+
+/* H_tag(a || b) = HFSCX-256-DS(0x32, tag || a || b) */
+static void ring_h(uint8_t out[32], unsigned tag, const uint8_t *a, size_t alen,
+                   const uint8_t *b, size_t blen)
+{
+    uint8_t *buf = (uint8_t *)ring_xmalloc(1 + alen + blen);
+    buf[0] = (uint8_t)tag;
+    if (alen) memcpy(buf + 1, a, alen);
+    if (blen) memcpy(buf + 1 + alen, b, blen);
+    hfscx_256_ds(RING_DS, buf, 1 + alen + blen, NULL, out);
+    free(buf);
+}
+
+/* stern_gen_perm's generator over N positions, keyed by 32 bytes (uint16_t
+ * entries: N reaches 2304 for a block and 1024 for the member shuffle). */
+static void stern_perm_from_key(uint16_t *perm, const uint8_t key32[32], int N)
+{
+    BitArray k = BA_INIT, key = BA_INIT, st = BA_INIT;
+    int i, cursor = 32;
+    ba_zero_w(&k, 256);
+    memcpy(k.b, key32, 32);
+    ba_rol_k(&key, &k, 32);
+    st = k;
+    for (i = 0; i < N; i++) perm[i] = (uint16_t)i;
+    for (i = N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        if (cursor + 4 > 32) { nl_fscx_v1_ba(&st, &st, &key); cursor = 0; }
+        v = ((uint32_t)st.b[cursor] << 24) | ((uint32_t)st.b[cursor + 1] << 16) |
+            ((uint32_t)st.b[cursor + 2] << 8) | (uint32_t)st.b[cursor + 3];
+        cursor += 4;
+        j = (int)(((uint64_t)v * (uint64_t)(i + 1)) >> 32);
+        { uint16_t t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    }
+}
+
+/* out[perm[i]] = v[i] over n bits, n any multiple of 8 up to STERN_LONG_N;
+ * oblivious at word granularity, as stern_l_apply_perm. */
+static void ring_apply_perm(uint8_t *out, const uint16_t *perm, const uint8_t *v, int n)
+{
+    uint64_t w[STERN_L_MAXB / 8];
+    int nw = (n + 63) / 64, nb = n / 8, i, j;
+    memset(w, 0, sizeof w);
+    for (i = 0; i < n; i++) {
+        uint64_t bit = (uint64_t)((v[nb - 1 - i / 8] >> (i % 8)) & 1u);
+        uint32_t p = perm[i], pw = p >> 6, ps = p & 63u;
+        for (j = 0; j < nw; j++) {
+            uint32_t d = pw ^ (uint32_t)j;
+            uint64_t eq = (uint64_t)0 - (uint64_t)(((d | (0u - d)) >> 31) ^ 1u);
+            w[j] |= eq & (bit << ps);
+        }
+    }
+    for (i = 0; i < nb; i++)
+        out[nb - 1 - i] = (uint8_t)(w[i / 8] >> (8 * (i % 8)));
+}
+
+/* herradura.h's short-form syndr[] (bit i at syndr[i/8] bit i%8) as the ring's
+ * big-endian n/16 bytes. */
+static void stern_syndr_be(uint8_t *be, const uint8_t *syndr, int n)
+{
+    int i, sb = n / 16;
+    for (i = 0; i < sb; i++) be[sb - 1 - i] = syndr[i];
+}
+
+static int ring_n_ok(int n)
+{
+    return n == 32 || n == 64 || n == 128 || n == 256 ||
+           (n > KEYBITS && n % 256 == 0 && n <= STERN_LONG_N);
+}
+
+typedef struct {
+    int n, k, nb, sb, kb;
+    size_t vlen, menc;   /* one vector's bytes; one member's encoding (nb + sb) */
+    uint8_t *enc;        /* k members, canonical order */
+    uint8_t *H;          /* k matrices of n/2 rows x nb bytes */
+    int *pos;            /* caller's index -> canonical index */
+} SternRing;
+
+static void stern_ring_free(SternRing *R)
+{
+    free(R->enc); free(R->H); free(R->pos);
+    R->enc = R->H = NULL; R->pos = NULL;
+}
+
+/* 0 on a bad width, size or member, or a repeated member. */
+static int stern_ring_init(SternRing *R, const uint8_t *seeds, const uint8_t *syns, int k, int n)
+{
+    int i, a, *ord;
+    memset(R, 0, sizeof *R);
+    if (!ring_n_ok(n) || k < 1 || k > RING_MAX_MEMBERS) return 0;
+    R->n = n; R->k = k; R->nb = n / 8; R->sb = n / 16; R->kb = (k + 7) / 8;
+    R->menc = (size_t)R->nb + (size_t)R->sb;
+    R->vlen = (size_t)k * (size_t)R->nb + (size_t)R->kb;
+    ord = (int *)ring_xmalloc(sizeof(int) * (size_t)k);
+    for (i = 0; i < k; i++) ord[i] = i;
+    for (i = 1; i < k; i++)            /* insertion sort on seed || syndrome */
+        for (a = i; a > 0; a--) {
+            const uint8_t *sa = seeds + (size_t)ord[a - 1] * R->nb, *sb_ = seeds + (size_t)ord[a] * R->nb;
+            int c = memcmp(sa, sb_, (size_t)R->nb);
+            if (c == 0)
+                c = memcmp(syns + (size_t)ord[a - 1] * R->sb, syns + (size_t)ord[a] * R->sb, (size_t)R->sb);
+            if (c <= 0) break;
+            { int t = ord[a]; ord[a] = ord[a - 1]; ord[a - 1] = t; }
+        }
+    R->enc = (uint8_t *)ring_xmalloc((size_t)k * R->menc);
+    R->pos = (int *)ring_xmalloc(sizeof(int) * (size_t)k);
+    for (i = 0; i < k; i++) {
+        memcpy(R->enc + (size_t)i * R->menc, seeds + (size_t)ord[i] * R->nb, (size_t)R->nb);
+        memcpy(R->enc + (size_t)i * R->menc + R->nb, syns + (size_t)ord[i] * R->sb, (size_t)R->sb);
+        R->pos[ord[i]] = i;
+    }
+    free(ord);
+    for (i = 0; i + 1 < k; i++)
+        if (memcmp(R->enc + (size_t)i * R->menc, R->enc + (size_t)(i + 1) * R->menc, R->menc) == 0) {
+            stern_ring_free(R); return 0;
+        }
+    R->H = (uint8_t *)ring_xmalloc((size_t)k * (size_t)(n / 2) * (size_t)R->nb);
+    for (i = 0; i < k; i++) {
+        uint8_t *dst = R->H + (size_t)i * (size_t)(n / 2) * (size_t)R->nb;
+        const uint8_t *seed = R->enc + (size_t)i * R->menc;
+        if (n > KEYBITS) {
+            uint8_t *Hl = stern_l_build_H(seed, n);
+            memcpy(dst, Hl, (size_t)(n / 2) * (size_t)R->nb);
+            free(Hl);
+        } else {
+            BitArray sd = BA_INIT, Hs[SDF_N_ROWS];
+            int r;
+            ba_init_array(Hs, SDF_N_ROWS);
+            ba_zero_w(&sd, n);
+            memcpy(sd.b, seed, (size_t)R->nb);
+            stern_build_H(Hs, &sd);
+            for (r = 0; r < n / 2; r++) memcpy(dst + (size_t)r * R->nb, Hs[r].b, (size_t)R->nb);
+        }
+    }
+    return 1;
+}
+
+/* s = H_i x as n/16 big-endian bytes (bit i = row i) */
+static void ring_syn(uint8_t *s, const SternRing *R, int i, const uint8_t *x)
+{
+    const uint8_t *H = R->H + (size_t)i * (size_t)(R->n / 2) * (size_t)R->nb;
+    int row, b;
+    memset(s, 0, (size_t)R->sb);
+    for (row = 0; row < R->n / 2; row++) {
+        int pc = 0;
+        const uint8_t *h = H + (size_t)row * R->nb;
+        for (b = 0; b < R->nb; b++) pc ^= __builtin_popcount(h[b] & x[b]);
+        if (pc & 1) s[R->sb - 1 - row / 8] |= (uint8_t)(1u << (row % 8));
+    }
+}
+
+static int ring_ind_bit(const SternRing *R, const uint8_t *v, int i)
+{
+    const uint8_t *c = v + (size_t)R->k * R->nb;
+    return (c[R->kb - 1 - i / 8] >> (i % 8)) & 1;
+}
+
+/* out = H~ v, k * n/16 bytes */
+static void ring_htilde(uint8_t *out, const SternRing *R, const uint8_t *v)
+{
+    int i, b;
+    for (i = 0; i < R->k; i++) {
+        uint8_t *s = out + (size_t)i * R->sb;
+        ring_syn(s, R, i, v + (size_t)i * R->nb);
+        if (ring_ind_bit(R, v, i)) {
+            const uint8_t *si = R->enc + (size_t)i * R->menc + R->nb;
+            for (b = 0; b < R->sb; b++) s[b] ^= si[b];
+        }
+    }
+}
+
+/* tau (k entries) and pi_0..pi_{k-1} (n entries each) from pi_seed */
+static void ring_perms(uint16_t *tau, uint16_t *pis, const SternRing *R, const uint8_t pi_seed[32])
+{
+    uint8_t key[32], ib[2];
+    int i;
+    ring_h(key, RING_T_TAU, pi_seed, 32, NULL, 0);
+    stern_perm_from_key(tau, key, R->k);
+    for (i = 0; i < R->k; i++) {
+        ib[0] = (uint8_t)(i >> 8); ib[1] = (uint8_t)i;
+        ring_h(key, RING_T_PI, pi_seed, 32, ib, 2);
+        stern_perm_from_key(pis + (size_t)i * R->n, key, R->n);
+    }
+}
+
+static void ring_apply(uint8_t *out, const SternRing *R, const uint16_t *tau, const uint16_t *pis,
+                       const uint8_t *v)
+{
+    int i;
+    uint8_t *oc = out + (size_t)R->k * R->nb;
+    memset(oc, 0, (size_t)R->kb);
+    for (i = 0; i < R->k; i++) {
+        ring_apply_perm(out + (size_t)tau[i] * R->nb, pis + (size_t)i * R->n,
+                        v + (size_t)i * R->nb, R->n);
+        if (ring_ind_bit(R, v, i))
+            oc[R->kb - 1 - tau[i] / 8] |= (uint8_t)(1u << (tau[i] % 8));
+    }
+}
+
+/* the indicator's bits at or above k are zero */
+static int ring_ind_canonical(const SternRing *R, const uint8_t *v)
+{
+    int top = 8 * R->kb - R->k;
+    return top == 0 || (v[(size_t)R->k * R->nb] >> (8 - top)) == 0;
+}
+
+/* u + v in S: one indicator bit p, block p of weight t, every other block 0 */
+static int ring_in_S(const SternRing *R, const uint8_t *u, const uint8_t *v)
+{
+    int i, b, p = -1, count = 0, t = stern_t(R->n), ok = 1;
+    for (i = 0; i < R->k; i++)
+        if (ring_ind_bit(R, u, i) ^ ring_ind_bit(R, v, i)) { p = i; count++; }
+    if (count != 1) return 0;
+    for (i = 0; i < R->k; i++) {
+        int w = 0;
+        for (b = 0; b < R->nb; b++)
+            w += __builtin_popcount((unsigned)(u[(size_t)i * R->nb + b] ^ v[(size_t)i * R->nb + b]));
+        ok &= (i == p) ? (w == t) : (w == 0);
+    }
+    return ok;
+}
+
+static void ring_challenges(int *b, const uint8_t D[32], int rounds)
+{
+    uint8_t blk[32], ctr[4];
+    uint32_t c = 0;
+    int got = 0, i;
+    while (got < rounds) {
+        ctr[0] = (uint8_t)(c >> 24); ctr[1] = (uint8_t)(c >> 16);
+        ctr[2] = (uint8_t)(c >> 8);  ctr[3] = (uint8_t)c;
+        ring_h(blk, RING_T_XOF, D, 32, ctr, 4);
+        for (i = 0; i < 32 && got < rounds; i++)
+            if (blk[i] != 255) b[got++] = blk[i] % 3;
+        c++;
+    }
+}
+
+/* D over the header, message, ring and every round's c0 c1 c2 (rounds * 96 bytes) */
+static void ring_digest(uint8_t D[32], const SternRing *R, int rounds, const uint8_t msg[32],
+                        const uint8_t *commits)
+{
+    size_t rlen = (size_t)R->k * R->menc, len = 7 + 32 + rlen + 96 * (size_t)rounds;
+    uint8_t *buf = (uint8_t *)ring_xmalloc(len);
+    buf[0] = RING_VERSION;
+    buf[1] = (uint8_t)(R->n >> 8); buf[2] = (uint8_t)R->n;
+    buf[3] = (uint8_t)(R->k >> 8); buf[4] = (uint8_t)R->k;
+    buf[5] = (uint8_t)(rounds >> 8); buf[6] = (uint8_t)rounds;
+    memcpy(buf + 7, msg, 32);
+    memcpy(buf + 39, R->enc, rlen);
+    memcpy(buf + 39 + rlen, commits, 96 * (size_t)rounds);
+    ring_h(D, RING_T_CH, buf, len, NULL, 0);
+    free(buf);
+}
+
+/* The byte length of a ring signature whose digest is D. */
+static size_t stern_ring_sig_len(const uint8_t D[32], int k, int n, int rounds)
+{
+    size_t vlen = (size_t)k * (size_t)(n / 8) + (size_t)((k + 7) / 8), len = 32;
+    int *b, i;
+    if (rounds < 1 || rounds > 0xFFFF) return 0;
+    b = (int *)ring_xmalloc(sizeof(int) * (size_t)rounds);
+    ring_challenges(b, D, rounds);
+    for (i = 0; i < rounds; i++) len += 96 + (b[i] == 0 ? 2 * vlen : vlen);
+    free(b);
+    return len;
+}
+
+/* Ring-sign the 32-byte message as the caller's member j (secret e, n/8 bytes).
+ * seeds: k * n/8 bytes, syns: k * n/16 big-endian bytes, any order.  Returns a
+ * malloc'd signature of *siglen bytes, or NULL on a bad ring, width, round
+ * count, index, or a secret that is not member j's key. */
+static uint8_t *stern_ring_sign(size_t *siglen, const uint8_t msg[32], const uint8_t *e, int j,
+                                const uint8_t *seeds, const uint8_t *syns, int k, int n,
+                                int rounds, FILE *urnd)
+{
+    SternRing R;
+    int i, jj, w = 0, *b;
+    uint8_t *st, *commits, *z, *sig, *hs, *out, syn[STERN_L_MAXB];
+    uint16_t *tau, *pis;
+    size_t vl, per, pos;
+    if (rounds < 1 || rounds > 0xFFFF || j < 0 || j >= k) return NULL;
+    if (!stern_ring_init(&R, seeds, syns, k, n)) return NULL;
+    jj = R.pos[j];
+    for (i = 0; i < R.nb; i++) w += __builtin_popcount(e[i]);
+    ring_syn(syn, &R, jj, e);
+    if (w != stern_t(n) || memcmp(syn, R.enc + (size_t)jj * R.menc + R.nb, (size_t)R.sb) != 0) {
+        stern_ring_free(&R); return NULL;
+    }
+    vl = R.vlen;
+    per = 4 * vl + 96;                 /* r, y, u, v, pi_seed, salt1, salt2 */
+    z = (uint8_t *)ring_xmalloc(vl);
+    memcpy(z + (size_t)jj * R.nb, e, (size_t)R.nb);
+    z[(size_t)k * R.nb + R.kb - 1 - jj / 8] |= (uint8_t)(1u << (jj % 8));
+    st = (uint8_t *)ring_xmalloc(per * (size_t)rounds);
+    commits = (uint8_t *)ring_xmalloc(96 * (size_t)rounds);
+    hs = (uint8_t *)ring_xmalloc((size_t)k * R.sb);
+    tau = (uint16_t *)ring_xmalloc(sizeof(uint16_t) * (size_t)k);
+    pis = (uint16_t *)ring_xmalloc(sizeof(uint16_t) * (size_t)k * (size_t)n);
+    for (i = 0; i < rounds; i++) {
+        uint8_t *r = st + per * (size_t)i, *y = r + vl, *u = y + vl, *v = u + vl;
+        uint8_t *ps = v + vl, *s1 = ps + 32, *s2 = s1 + 32, *c = commits + 96 * (size_t)i;
+        size_t a;
+        int top = 8 * R.kb - k;
+        if (fread(r, 1, vl, urnd) != vl || fread(ps, 1, 32, urnd) != 32 ||
+            fread(s1, 1, 32, urnd) != 32 || fread(s2, 1, 32, urnd) != 32) {
+            fputs("ERROR: could not read from /dev/urandom\n", stderr);
+            exit(1);
+        }
+        if (top) r[(size_t)k * R.nb] &= (uint8_t)(0xFFu >> top);
+        for (a = 0; a < vl; a++) y[a] = r[a] ^ z[a];
+        ring_perms(tau, pis, &R, ps);
+        ring_apply(u, &R, tau, pis, r);
+        ring_apply(v, &R, tau, pis, y);
+        ring_htilde(hs, &R, r);
+        ring_h(c, RING_T_C0, ps, 32, hs, (size_t)k * R.sb);
+        ring_h(c + 32, RING_T_C1, s1, 32, u, vl);
+        ring_h(c + 64, RING_T_C2, s2, 32, v, vl);
+    }
+    {
+        uint8_t D[32];
+        ring_digest(D, &R, rounds, msg, commits);
+        *siglen = stern_ring_sig_len(D, k, n, rounds);
+        sig = (uint8_t *)ring_xmalloc(*siglen);
+        memcpy(sig, D, 32);
+        b = (int *)ring_xmalloc(sizeof(int) * (size_t)rounds);
+        ring_challenges(b, D, rounds);
+    }
+    pos = 32;
+    for (i = 0; i < rounds; i++) {
+        uint8_t *r = st + per * (size_t)i, *y = r + vl, *u = y + vl, *v = u + vl;
+        uint8_t *ps = v + vl, *s1 = ps + 32, *s2 = s1 + 32, *c = commits + 96 * (size_t)i;
+        out = sig + pos;
+        if (b[i] == 0) {
+            memcpy(out, c, 32); memcpy(out + 32, s1, 32); memcpy(out + 64, s2, 32);
+            memcpy(out + 96, u, vl); memcpy(out + 96 + vl, v, vl);
+            pos += 96 + 2 * vl;
+        } else {
+            memcpy(out, b[i] == 1 ? c + 64 : c + 32, 32);
+            memcpy(out + 32, ps, 32);
+            memcpy(out + 64, b[i] == 1 ? s1 : s2, 32);
+            memcpy(out + 96, b[i] == 1 ? r : y, vl);
+            pos += 96 + vl;
+        }
+    }
+    memset(st, 0, per * (size_t)rounds);       /* r and y carry e */
+    memset(z, 0, vl);
+    free(st); free(commits); free(z); free(hs); free(tau); free(pis); free(b);
+    stern_ring_free(&R);
+    return sig;
+}
+
+/* 1 iff sig (siglen bytes) is a ring signature on msg by some member of the
+ * ring (any order) at this width and round count. */
+static int stern_ring_verify(const uint8_t *sig, size_t siglen, const uint8_t msg[32],
+                             const uint8_t *seeds, const uint8_t *syns, int k, int n, int rounds)
+{
+    SternRing R;
+    int i, ok = 1, *b;
+    uint8_t *commits, *hs, *pw, D[32];
+    uint16_t *tau, *pis;
+    size_t vl, pos = 32;
+    if (rounds < 1 || rounds > 0xFFFF || !sig || siglen < 32) return 0;
+    if (!stern_ring_init(&R, seeds, syns, k, n)) return 0;
+    if (siglen != stern_ring_sig_len(sig, k, n, rounds)) { stern_ring_free(&R); return 0; }
+    vl = R.vlen;
+    b = (int *)ring_xmalloc(sizeof(int) * (size_t)rounds);
+    ring_challenges(b, sig, rounds);
+    commits = (uint8_t *)ring_xmalloc(96 * (size_t)rounds);
+    hs = (uint8_t *)ring_xmalloc((size_t)k * R.sb);
+    pw = (uint8_t *)ring_xmalloc(vl);
+    tau = (uint16_t *)ring_xmalloc(sizeof(uint16_t) * (size_t)k);
+    pis = (uint16_t *)ring_xmalloc(sizeof(uint16_t) * (size_t)k * (size_t)n);
+    for (i = 0; i < rounds && ok; i++) {
+        const uint8_t *un = sig + pos, *a = un + 32, *c = un + 64, *w = un + 96;
+        uint8_t *cm = commits + 96 * (size_t)i;
+        if (b[i] == 0) {
+            const uint8_t *w2 = w + vl;
+            ok = ring_ind_canonical(&R, w) && ring_ind_canonical(&R, w2) && ring_in_S(&R, w, w2);
+            memcpy(cm, un, 32);
+            ring_h(cm + 32, RING_T_C1, a, 32, w, vl);
+            ring_h(cm + 64, RING_T_C2, c, 32, w2, vl);
+            pos += 96 + 2 * vl;
+        } else {
+            ok = ring_ind_canonical(&R, w);
+            ring_htilde(hs, &R, w);
+            ring_h(cm, RING_T_C0, a, 32, hs, (size_t)k * R.sb);
+            ring_perms(tau, pis, &R, a);
+            ring_apply(pw, &R, tau, pis, w);
+            if (b[i] == 1) {
+                ring_h(cm + 32, RING_T_C1, c, 32, pw, vl);
+                memcpy(cm + 64, un, 32);
+            } else {
+                memcpy(cm + 32, un, 32);
+                ring_h(cm + 64, RING_T_C2, c, 32, pw, vl);
+            }
+            pos += 96 + vl;
+        }
+    }
+    if (ok) {
+        ring_digest(D, &R, rounds, msg, commits);
+        ok = memcmp(D, sig, 32) == 0;
+    }
+    free(b); free(commits); free(hs); free(pw); free(tau); free(pis);
+    stern_ring_free(&R);
+    return ok;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

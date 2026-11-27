@@ -158,6 +158,8 @@ _KEY_SITES = {
     ('verify', 'hpks-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
     ('sign', 'hpks-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
     ('verify', 'hpks-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
+    ('sign', 'hpks-ring', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
+    ('verify', 'hpks-ring', '--ring'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
     ('sign', 'rnl-sigma', '--key'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
     ('verify', 'rnl-sigma', '--pubkey'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
     ('sign', 'nl-zkboo', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
@@ -207,6 +209,7 @@ _DER_ITEMS = {
     'HERRADURA HPKS PUBLIC KEY': (2, 2),
     'HERRADURA HPKS-NL PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-NL PUBLIC KEY': (2, 2),
+    'HERRADURA HPKS-RING-V2 SIGNATURE': (5, 5),
     'HERRADURA HPKS-STERN PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-STERN PUBLIC KEY': (3, 3),
     'HERRADURA HPKS-WOTS PRIVATE KEY': (2, 2),
@@ -770,6 +773,29 @@ def _der_field_check(label, v, enc):
             if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)) and not ((F[3] * 32) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3] * 32)
             return None
+    elif label == 'HERRADURA HPKS-RING-V2 SIGNATURE':
+        if 5 <= n <= 5:
+            if n > 0 and L[0] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 2)
+            if n > 1 and L[1] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
+            if n > 2 and L[2] > (2):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
+            if n > 3 and L[3] > (32):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], 32)
+            if n > 4 and L[4] > (F[2] * (96 + 2 * (F[1] * (F[0]//8) + (F[1] + 7)//8))):
+                return '%s: field %d is %d bytes (expected at most %d)' % (label, 4, L[4], F[2] * (96 + 2 * (F[1] * (F[0]//8) + (F[1] + 7)//8)))
+            if n > 0 and enc[0][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
+            if n > 1 and enc[1][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
+            if n > 2 and enc[2][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
+            if n > 3 and enc[3][0] != (32) and not (enc[3][1] == 2 and enc[3][0] + 1 == (32)) and not ((32) == 0 and enc[3][0] == 1 and L[3] == 0):
+                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], 32)
+            if n > 4 and enc[4][1] == 1:
+                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 4)
+            return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
         if 2 <= n <= 2:
             if n > 1 and L[1] > (2):
@@ -1332,7 +1358,8 @@ _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — cli
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 _LABEL_HDRBG_STATE = 'HERRADURA HDRBG STATE'         # (state[32], blocks) — DRBG checkpoint (TODO #119)
-_LABEL_RING_SIG    = 'HERRADURA HPKS-RING SIGNATURE'  # (k, rounds, n, blob) — ring signature (TODO #121)
+_LABEL_RING_SIG    = 'HERRADURA HPKS-RING-V2 SIGNATURE'  # (n, k, rounds, D, blob) — ring signature (TODO #415)
+_LABEL_RING_SIG_V1 = 'HERRADURA HPKS-RING SIGNATURE'     # the forgeable OR-composition (TODO #121); refused
 _LABEL_HCRED_PRIV  = 'HERRADURA HCRED PRIVATE KEY'
 _LABEL_HCRED_PUB   = 'HERRADURA HCRED PUBLIC KEY'
 _LABEL_HCRED_CRED  = 'HERRADURA HCRED CREDENTIAL'
@@ -1623,7 +1650,7 @@ def _read_pem_ints(path):
 # are both of that kind) runs after the allocation it was meant to guard.
 # ---------------------------------------------------------------------------
 
-_RING_MAX_K     = 64      # herradura_cli.c RING_MAX_K
+_RING_MAX_K     = 1024    # herradura_cli.c RING_MAX_K == the suites' ring bound (TODO #415)
 _SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
 _XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 _STERN_MAX_N    = KEYBITS # the widest short-form Stern instance
@@ -2788,98 +2815,64 @@ def _unpack_stern_sig(path):
 
 
 # ---------------------------------------------------------------------------
-# HPKS-Stern-Ring signature codec (TODO #121)
+# HPKS-Ring signature codec (TODO #415)
 #
-# Member-major, round-major flat blob; per (member, round) entry:
-#   c0 || c1 || c2 || b(1 byte) || resp_a || resp_b   (each n-bit value = n/8 B).
-# resp_a is a BitArray when b != 0 (pi_seed), else an integer (sr); resp_b is
-# always an integer.  PEM: SEQ(k, rounds, n, blob).
+# PEM 'HERRADURA HPKS-RING-V2 SIGNATURE': SEQ(n, k, rounds, D, blob).  D is the
+# 32-byte transcript digest; blob is the rest of the suite's signature (per round
+# the unopened commitment and the opening), minimal DER, its exact length fixed
+# by the challenges D derives.  SPEC.md §11.2.
 # ---------------------------------------------------------------------------
 
-def _pack_ring_sig(sig, n):
-    all_commits, all_challenges, all_responses = sig
-    k      = len(all_challenges)
-    rounds = len(all_challenges[0])
-    nbytes = n // 8
+_RING_V1_REFUSED = ("this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING SIGNATURE), "
+                    "which is forgeable without any member's key (TODO #415) and is no longer "
+                    "accepted; re-sign it with this release")
 
-    cbytes = min(n, 256) // 8      # commitments: 256 bits above N = 256 (TODO #382)
 
-    def _vb(v, nb=nbytes):
-        iv = v.uint if isinstance(v, BitArray) else int(v)
-        return iv.to_bytes(nb, 'big')
-
-    blob = bytearray()
-    for i in range(k):
-        for r in range(rounds):
-            c0, c1, c2 = all_commits[i][r]
-            ra, rb     = all_responses[i][r]
-            blob += _vb(c0, cbytes) + _vb(c1, cbytes) + _vb(c2, cbytes)
-            blob += bytes([all_challenges[i][r] & 0xFF])
-            blob += _vb(ra) + _vb(rb)
-
-    der = der_seq(der_int(k), der_int(rounds), der_int(n),
-                  der_int(int.from_bytes(blob, 'big'), len(blob)))
+def _pack_ring_sig(sig, n, k, rounds):
+    der = der_seq(der_int(n), der_int(k), der_int(rounds),
+                  der_int(int.from_bytes(sig[:32], 'big'), 32),
+                  der_int(int.from_bytes(sig[32:], 'big')))
     return pem_wrap(_LABEL_RING_SIG, der)
 
 
 def _unpack_ring_sig(path):
-    """Return (sig, k, rounds, n) — sig = (all_commits, all_challenges, all_responses)."""
-    label, ints = _read_pem_ints(path)
+    """Return (sig bytes, n, k, rounds)."""
+    label, der = _read_pem(path)
+    if label == _LABEL_RING_SIG_V1:
+        sys.exit(f"verify: {_RING_V1_REFUSED}")
     if label != _LABEL_RING_SIG:
-        raise ValueError(f"Expected HPKS-RING SIGNATURE PEM, got {label!r}")
-    # Bounded before use: k, rounds and n each multiply into the blob length
-    # below, and `verify`'s own k/n cross-checks only run after this returns.
-    k      = _bounded(ints[0], 2, _RING_MAX_K,     'ring member count', 'verify')
-    rounds = _bounded(ints[1], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
-    n      = _bounded_stern_n(ints[2], 'verify')
-    blob_int = ints[3]
-    nbytes = n // 8
-    cw     = min(n, 256)
-    cb     = cw // 8
-    entry  = 3 * cb + 2 * nbytes + 1
-    blen   = k * rounds * entry
-    if _int_nbytes(blob_int) > blen:
-        sys.exit(f"verify: HPKS-RING signature payload is "
-                 f"{_int_nbytes(blob_int)} bytes, but k={k} rounds={rounds} "
-                 f"n={n} describe {blen}")
-    blob   = _fit(blob_int, blen, 'blob', 'pem')
-
-    all_commits    = [[None] * rounds for _ in range(k)]
-    all_challenges = [[0]    * rounds for _ in range(k)]
-    all_responses  = [[None] * rounds for _ in range(k)]
-    off = 0
-    for i in range(k):
-        for r in range(rounds):
-            c0 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            c1 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            c2 = BitArray(cw, int.from_bytes(blob[off:off+cb], 'big')); off += cb
-            b  = blob[off]; off += 1
-            ra = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
-            rb = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
-            all_commits[i][r]    = (c0, c1, c2)
-            all_challenges[i][r] = b
-            all_responses[i][r]  = ((ra if b == 0 or _stern_long(n) else BitArray(n, ra)), rb)
-    return (all_commits, all_challenges, all_responses), k, rounds, n
+        raise ValueError(f"Expected HPKS-RING-V2 SIGNATURE PEM, got {label!r}")
+    ints = _der_items(label, der)
+    n      = _bounded_stern_n(ints[0], 'verify')
+    k      = _bounded(ints[1], 1, _RING_MAX_K,     'ring member count', 'verify')
+    rounds = _bounded(ints[2], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
+    D = _fit(ints[3], 32, 'digest', 'verify')
+    blen = _suite_mod.hpks_stern_ring_sig_len(D, k, n, rounds) - 32
+    return D + _fit(ints[4], blen, 'signature body', 'verify'), n, k, rounds
 
 
 def _load_ring_pubkeys(ring_arg):
     """Parse a comma-separated list of hpks-stern public-key PEM paths.
 
-    Returns (ring_keys, n) where ring_keys[i] = (seed BitArray, syndrome int)."""
+    Returns (ring_keys, n) where ring_keys[i] = (seed int, syndrome int)."""
     paths = [p for p in ring_arg.split(',') if p]
-    if len(paths) < 2:
-        sys.exit("hpks-ring: --ring needs at least 2 member public keys")
+    if not paths:
+        sys.exit("hpks-ring: --ring needs at least one member public key")
+    if len(paths) > _RING_MAX_K:
+        sys.exit(f"hpks-ring: --ring lists {len(paths)} members, at most {_RING_MAX_K} supported")
     ring_keys, ring_n = [], None
     for p in paths:
         algo_i, ints_i = _decode_pubkey(p)
         if algo_i != 'hpks-stern':
-            sys.exit(f"hpks-ring: ring member {p!r} is {algo_i!r}, expected hpks-stern")
+            sys.exit(f"hpks-ring: ring member '{p}' is {algo_i}, expected hpks-stern")
         syn_i, seed_i, n_i = ints_i
         if ring_n is None:
             ring_n = n_i
         elif n_i != ring_n:
             sys.exit("hpks-ring: all ring members must share the same n")
-        ring_keys.append((_stern_seed(seed_i, n_i), syn_i))
+        if (seed_i, syn_i) in ring_keys:
+            sys.exit(f"hpks-ring: --ring lists the member '{p}' twice")
+        ring_keys.append((seed_i, syn_i))
     return ring_keys, ring_n
 
 
@@ -3848,29 +3841,18 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: --ring (comma-separated member public keys) required")
         e_int, seed_int, n = our_ints
         ring_keys, ring_n = _load_ring_pubkeys(args.ring)
-        # TODO #272.  _RING_MAX_K bounds the READER (TODO #240, adopting C's
-        # constant), and every CLI's reader enforces it -- but only C's writer
-        # did, so Python, Go and Java each signed rings this and every other
-        # verifier then refused: an unverifiable signature returned with exit 0.
-        if len(ring_keys) > _RING_MAX_K:
-            sys.exit(f"hpks-ring sign: ring has {len(ring_keys)} members, at most "
-                     f"{_RING_MAX_K} supported (a larger ring produces a signature "
-                     f"no CLI will verify)")
         if ring_n != n:
             sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
-        # Locate the signer's own index in the ring (matched by seed).
-        j = next((idx for idx, (sd, _sy) in enumerate(ring_keys)
-                  if (sd if isinstance(sd, int) else sd.uint) == seed_int), None)
+        # The signer's own public key, matched by seed AND syndrome.
+        own = (seed_int, _stern_syn(seed_int, e_int, n))
+        j = next((idx for idx, m in enumerate(ring_keys) if m == own), None)
         if j is None:
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
-        msg    = _stern_msg(in_bytes, n)
+        msg    = _stern_msg(in_bytes, 256)
         rounds = args.rounds if args.rounds is not None else _STERN_CLI_ROUNDS
-        if _stern_long(n):
-            sig = _suite_mod.hpks_stern_l_ring_sign(msg, e_int, j, ring_keys, n, rounds)
-        else:
-            sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
-        _write_file(args.out, _pack_ring_sig(sig, n))
+        sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
+        _write_file(args.out, _pack_ring_sig(sig, n, len(ring_keys), rounds))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
               file=sys.stderr)
 
@@ -4155,18 +4137,14 @@ def cmd_verify(args):
         if not getattr(args, 'ring', None):
             sys.exit("hpks-ring verify: --ring (comma-separated member public keys) required")
         ring_keys, n = _load_ring_pubkeys(args.ring)
-        sig, k, rounds, sig_n = _unpack_ring_sig(sig_path)
+        sig, sig_n, k, rounds = _unpack_ring_sig(sig_path)
         _require_rounds(rounds, _round_floor(args, 'verify'), 'hpks-ring signature', 'verify')
         if sig_n != n:
             sys.exit(f"hpks-ring verify: signature n={sig_n} != ring n={n}")
         if k != len(ring_keys):
             sys.exit(f"hpks-ring verify: signature ring size {k} != "
                      f"{len(ring_keys)} provided members")
-        msg = _stern_msg(in_bytes, n)
-        if _stern_long(n):
-            ok = _suite_mod.hpks_stern_l_ring_verify(msg, sig, ring_keys, n)
-        else:
-            ok = hpks_stern_ring_verify(msg, sig, ring_keys, n)
+        ok = hpks_stern_ring_verify(_stern_msg(in_bytes, 256), sig, ring_keys, n, rounds)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -5305,8 +5283,6 @@ def main():
     args   = parser.parse_args()
     # TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
     # verify refuse it before any file is read, until the redesign.
-    if args.cmd in ('sign', 'verify') and getattr(args, 'algo', None) == 'hpks-ring':
-        sys.exit(f"{args.cmd}: --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature")
     # TODO #366: every key flag's label, against the generated table.
     _check_key_labels(args.cmd, getattr(args, 'algo', '') or '',
                       {'--' + k.replace('_', '-'): v for k, v in vars(args).items()

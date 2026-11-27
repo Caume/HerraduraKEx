@@ -597,17 +597,20 @@ SECURITY = {
                               "the claim, which is what this item was filed about.",
                        source=["TODO_DONE.md #208", "TODO_DONE.md #201",
                                "CliTest/test_cross_lang_matrix.sh", "TODO_DONE.md #346"]),
-    "hpks-ring": dict(status="broken", quantum_resistant="conjectured",
-                       notes="BROKEN (TODO #415, v20.0.0): existentially forgeable with no member's "
-                             "secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition "
-                             "splits each round's challenge across members mod 3, which is sound only if "
-                             "a party without the witness can answer one challenge per round; in Stern, "
-                             "b = 0 and b = 1 never read the syndrome, so two keyless members cover every "
-                             "residue and nobody is ever forced to answer b = 2. Hashing the ring's keys "
-                             "does not help. A repair must replace the composition. Every CLI's "
-                             "sign and verify refuse hpks-ring (TODO #422). Was demo-only, "
-                             "inheriting hpks-stern's caveats.",
-                       source=["herradura.h SDF_* constants", "TODO.md #415"]),
+    "hpks-ring": dict(status="demo-only", quantum_resistant="conjectured",
+                       notes="Redesigned in v20.0.0 (TODO #415): ONE Stern proof over the ring's "
+                             "block-diagonal statement diag([H_i | s_i]), proving that the signer knows one "
+                             "member's weight-t error under a block and position shuffle that hides which. "
+                             "Three valid openings of one round give a member's key, so a forger answers at "
+                             "most two challenges in three: (2/3)^219 < 2^-128 at the CLI's 219 rounds. The "
+                             "challenge binds the message, the canonical (sorted) ring and every commitment; "
+                             "salted commitments keep the signer hidden even from someone holding every "
+                             "member's key. The OR-composition it replaces (signatures labelled HERRADURA "
+                             "HPKS-RING SIGNATURE) was forgeable with no member's key and is refused by "
+                             "every CLI. Demo-only like hpks-stern: N = 256 is a ~24-38-bit instance; the "
+                             "128-bit instance is the long form, N = 2304. Assembly/Arduino still carry the "
+                             "old 32-bit demo (TODO #424).",
+                       source=["SPEC.md section 11.2", "TODO_DONE.md #415", "CliTest/test_ring.sh"]),
     "hpks-t":    dict(status="pedagogical", quantum_resistant=False,
                        classical_security_bits="~36.5 (n=256)",
                        notes="Threshold / aggregate Schnorr over GF(2^n)* (herradura.h 4074), with signing "
@@ -1929,13 +1932,12 @@ KEY_LABEL_SITES = (
                          ("hpke-stern-kem", _KF_KEM))
        for sub, flag, role in (("enc", "--pubkey", "pub"), ("dec", "--key", "priv"))]
     + [(sub, algo, flag, role, fam)
-       # hpks-ring has no rows: sign and verify refuse it before reading a key
-       # (TODO #422, until #415's redesign).
        for algo, fam in (("hpks", _KF_GF), ("hpks-nl", _KF_GF), ("hpks-stern", _KF_STERN),
-                         ("rnl-sigma", _KF_RNL),
+                         ("hpks-ring", _KF_STERN), ("rnl-sigma", _KF_RNL),
                          ("nl-zkboo", ["hpks-zkp-nl"]), ("nl-zkbpp", ["hpks-zkp-nl"]),
                          ("hpks-xmss", ["hpks-xmss"]), ("hpks-wots", ["hpks-wots"]))
-       for sub, flag, role in (("sign", "--key", "priv"), ("verify", "--pubkey", "pub"))]
+       for sub, flag, role in (("sign", "--key", "priv"),
+                               ("verify", "--ring" if algo == "hpks-ring" else "--pubkey", "pub"))]
     # TODO #412: the group an HPKS-T signature is checked against, a comma-
     # separated list (the checkers split it, as they split --ring).
     + [("verify", "hpks-t", "--pubkey", "pub", ["hpks", "hpks-nl"])]
@@ -1987,8 +1989,10 @@ PEM_DER_ITEMS = {
     "HERRADURA HPKS-XMSS PRIVATE KEY": (4, 4),
     "HERRADURA HPKS-XMSS PUBLIC KEY": (2, 2),
     "HERRADURA HPKS-XMSS SIGNATURE": (5, 5),
-    # "HERRADURA HPKS-RING SIGNATURE" has no row: no subcommand reads one while
-    # hpks-ring is disabled (TODO #422).  It was (4, 4).
+    # TODO #415: (n, k, rounds, D, blob).  The v1 label "HERRADURA HPKS-RING
+    # SIGNATURE" (the forgeable OR-composition) has no row: verify names it and
+    # refuses it before this table is consulted.
+    "HERRADURA HPKS-RING-V2 SIGNATURE": (5, 5),
     "HERRADURA OPRF PRIVATE KEY": (2, 2),
     "HERRADURA OPRF CLIENT STATE": (3, 3),
     "HERRADURA OPRF EVALUATION": (2, 2),
@@ -2464,9 +2468,11 @@ PEM_DER_FIELD_CAPS = [
     # (leaf, %d WOTS values of n/8 bytes, h auth-path nodes of 32, h, n)
     ("HERRADURA HPKS-XMSS SIGNATURE", (5, 5), None,
      {0: "4", 1: "=%d*(f4/8)" % _WOTS_L, 2: "=f3*32", 3: "1", 4: "2"}),
-    # HERRADURA HPKS-RING SIGNATURE: no row while hpks-ring is disabled (TODO
-    # #422).  It was (4, 4) with caps {0: "1", 1: "2", 2: "2",
-    # 3: "=f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)"} (k, rounds, n, entry blob).
+    # (n, k, rounds, D, blob): the blob's exact length follows from the
+    # challenges D derives, so it is minimal DER under the all-b=0 bound
+    # rounds * (96 + 2 * vector), a vector being k * n/8 + ceil(k/8) bytes.
+    ("HERRADURA HPKS-RING-V2 SIGNATURE", (5, 5), None,
+     {0: "2", 1: "2", 2: "2", 3: "=32", 4: "f2*(96+2*(f1*(f0/8)+(f1+7)/8))"}),
     ("HERRADURA OPRF PRIVATE KEY", (2, 2), None, _GF_PUB),
     ("HERRADURA OPRF CLIENT STATE", (3, 3), None, _GF_N),
     ("HERRADURA OPRF EVALUATION", (2, 2), None, _GF_PUB),

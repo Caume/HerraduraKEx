@@ -10,123 +10,18 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #415: Fiat-Shamir challenges that omit the public key
+### #424: the assembly and Arduino suites still demo the retired HPKS-Ring
 
-Found by #410 part C.  These transcripts hash the message and commitments but not the
-signer's public key:
-- the HPKS-Stern-F challenge, short and long form (`ch_st` over msg ‖ commits;
-  `_sternl_fs_state`);
-- the ring signature's challenge (not even the ring's keys);
-- the Schnorr-family challenges: HPKS's `fscx_revolve(R, msg)`, and
-  HFSCX-256-DS(0x30, R ‖ msg) for HPKS-NL and HPKS-T.
+TODO #415 replaced the OR-composed ring with one Stern proof over the ring's
+block-diagonal statement (SPEC.md §11.2) in C, Go, Python and Java.  The ARM Thumb-2,
+NASM i386 and Arduino suites (and the Arduino harness) still carry their own fixed-width
+32-bit demo of the OR-composition, which is forgeable with no member's key.  They have
+no CLI and produce no artifact, so nothing they make reaches a verifier; but each prints
+"signature verified" for a broken construction.
 
-ZKBoo, ZKB++, ZKP-RNL and HCRED all bind their statement.  The matrix shows no forgery
-under a FIXED honest key: every wrong-secret cell fails, because the Stern b = 2 branch
-and the Schnorr equation read the key.  But this is the weak Fiat-Shamir pattern: a
-proof that is not bound to its statement leaves room for key-substitution and
-statement-choice attacks (an adversary picks the key after the transcript).  For the
-ring, a signature might be re-attributed to another ring, which needs analysis.
-
-To do:
-1. For each scheme, establish what an adversary gains: a second public key under which a
-   given signature verifies (duplicate-signature key selection), or a ring signature
-   valid for another ring.
-2. Either prefix the key and the ring into the challenge (a wire change, MAJOR), or
-   record in SECURITY.md why the omission is safe.
-
-**Investigated 2026-11-25** (prototypes in scratchpad against the real suite; NO shipped
-code changed).  Item 1 answered for all three; it is worse than "omits the public key".
-
-**(a) HPKS-Ring is EXISTENTIALLY FORGEABLE — no secret key, both forms.** A ring
-signature for a freshly-generated ring holding NONE of the members' secrets is accepted
-by the shipped `hpks_stern_ring_verify` (k = 2 and 3) and `hpks_stern_l_ring_verify`
-(N = 2304), at the production round count (219).  This is not key-substitution of an
-honest signature; it is a from-scratch forgery, so the stated "EUF-CMA under SD(N,t) per
-member" is false.  #410's matrix missed it: its ring cell presents ANOTHER ring's honest
-signature, never a forgery built for the target ring.
-
-Root cause: the OR-composition is CDS challenge-splitting (`Σ b_i ≡ joint_b mod 3`),
-sound only for a 2-special-sound base protocol (unqualified prover answers ONE challenge).
-Stern is 3-challenge with 2/3 cheating: an honest round on a FAKE weight-t vector answers
-b ∈ {0,1} (only b = 2 reads the key).  With the free split, {0,1}+{0,1} = Z_3 covers
-every joint challenge, so no member ever has to answer b = 2.  Prefixing the ring/keys
-into the hash (item 2's suggestion) does NOT fix it — the forgery is independent of the
-hash contents.
-
-Both tractable repairs were prototyped and BROKEN, pinning the obstruction:
-- local-hash chain (removes the free split): rounds become independent, so a forger
-  grinds each round's commitments until its challenges avoid b = 2 — ~477 tries total for
-  k = 2 over 219 rounds (demonstrated);
-- global hash + per-member forced challenges (stops grinding and covering): the honest
-  signer can no longer simulate non-signers (their challenge is the hash of their own
-  commitment — circular), and grinding to sign needs (2/3)^((k-1)*rounds) ~ 2^-128.
-Making the hash global is what stops grinding and is exactly what makes signing
-infeasible, because the base protocol's answerable set is a constant fraction (2/3), not
-a singleton.  A sound construction must REPLACE the composition with a 2-special-sound
-(single-shot) proof of syndrome decoding — MPC/VOLE-in-the-head (Feneuil-Joux-Rivain) or
-a Merkle-accumulator one-out-of-many proof — new ZK machinery, wire format, KATs and
-analysis across four ports.  That is a dedicated multi-session project, tracked here.
-PAUSED 2026-11-25 by maintainer: do not ship a hand-rolled OR fix; `hpks-ring` stays
-shipping (and forgeable) until the redesign.  The safe interim, if revisited, is to make
-`sign`/`verify --algo hpks-ring` refuse (MAJOR).
-
-**(b) HPKS / HPKS-NL / HPKS-T: duplicate-signature key selection (the weak-FS item).**
-The challenge e omits the public key C, so a signature (R, s) on a message verifies under
-a SECOND key C' = C*z whenever gcd(e, 2^n - 1) > 1, which anyone computes from public
-values.  Measured 95/200 honest signatures (~ the predicted 1 - Prod(1 - 1/p) = 0.50)
-verify under a forgeable second key.  No existing message is forged; this is
-key-substitution.  Fix: prefix C (and the group, for -T) into the challenge (MAJOR), or
-record why it is acceptable.  Not yet done.
-
-**(c) HPKS-Stern single-signer (non-ring) BINDS its key — safe.** Its commitments pin
-both the seed (b = 1: c0 = h(pi, H r)) and the syndrome (b = 2: c0 = h(pi, H y + s)), so
-a changed seed or syndrome misses a commitment; verified that a one-bit change to either
-is rejected.  No action.
-
-**Re-reviewed 2026-11-26, from the code, not the old tests.**
-- **(a) holds in all four ports.** `hpks_stern_ring_verify` (Python), `stern_ring_verify`
-  (herradura.h), `HpksSternRingVerify` (Go) and `SternRing.verify` (Java) each make one
-  check per round, `Σ_i b_i ≡ J (mod 3)`, and then check each member's round on its own.
-  The `b = 0` branch reads neither H_i nor s_i, and `b = 1` reads H_i only, so the public
-  key s_i is read only when `b = 2`.  A keyless party can make a round answerable for both
-  `b = 0` and `b = 1`; with k ≥ 2 such members, {0,1} + {0,1} = Z_3, so `b = 2` is never
-  forced.  The flaw is in the composition, so hashing the ring's keys changes nothing.
-  The long form uses the same composition.
-- **New code-review observation (unverified, not exploited):** the ring signature's
-  challenge byte is not range-checked.  (Confirmed and fixed by #421, v20.0.0.)  Python, Go and Java read the whole byte, and C
-  masks it to 2 bits.  Every port sends any value other than 0 or 1 to the `b = 2`
-  branch but sums the raw value mod 3.  So a `b = 2` round re-encoded as 5 keeps the sum
-  and the check: an encoding-malleability candidate, separate from (a).  Fix: refuse
-  b ∉ {0,1,2} at decode.
-- **(b) holds; reconfirmed end to end** through all four CLIs: of 40 honest signatures,
-  HPKS had 14 and HPKS-NL 17 that also verify under C' = C·z (with z^e = 1, found from
-  e and the factors of 2^256 − 1).  The predicted share is 0.501.  A z whose order does
-  not divide e was refused by every CLI.  It is key substitution only: neither the
-  message nor the substitute key's secret is under the attacker's control.  **HPKS-T is
-  not affected by this direct substitution**, because #412's verifier rebuilds C_agg
-  from the member list with MuSig coefficients that hash the whole list.
-- **(c) holds analytically.** The single-signer verifier pins H (from the seed) in every
-  `b = 1` round and the syndrome in every `b = 2` round.  A different key would have to
-  agree with the honest one on ~73 random H·r values and on H·y ⊕ s, which means
-  matching the seed through the hash.
-- **Fix direction, revised.** The pause note says a sound ring needs new ZK machinery
-  (MPC/VOLE-in-the-head).  That is too pessimistic.  A single Stern proof over a
-  block-diagonal statement avoids challenge-splitting altogether:
-  - augment each H_i with s_i as an extra column, so the statement is H̃·z = 0 with
-    H̃ = diag([H_1 | s_1], …, [H_k | s_k]) and the witness z = (0, …, (e_j, 1), …, 0);
-  - the permutations permute the blocks and the positions within each block, but keep
-    each block's last coordinate in place;
-  - `b = 0` also checks that σ(z) has exactly one non-zero block, of weight t + 1, with
-    its last coordinate set.
-  This keeps Stern's (2/3)-per-round soundness at 219 rounds and its anonymity
-  argument.  The construction is in the style of Aguilar Melchor–Cayrel–Gaborit's
-  Stern-based ring signatures.  It still needs a prototype, a written soundness and
-  anonymity argument, wire format, KATs and four ports, and it is MAJOR.
-- **Documented in v20.0.0:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
-  record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG's #410 section line on #415
-  ("no forgery under a fixed key") is superseded; the #415 section says so.  Not done (the
-  maintainer's call): the redesign.  The challenge-byte bound was done as #421, and
-  `sign` / `verify --algo hpks-ring` now refuse in every CLI (#422), both in v20.0.0.
+To do: port the new ring at N = 32 (k = 2, its block shuffle is one bit), or remove
+the ring demo from all three and their harnesses, and update the build scripts' gate
+counts.  Not MAJOR: no wire format or CLI surface.
 
 Status: **OPEN**
 

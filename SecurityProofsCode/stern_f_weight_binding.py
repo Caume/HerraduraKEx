@@ -16,15 +16,20 @@ life of all seven ports.
       it -- and, as a control, that the RETIRED rule accepts it.
 
   §2  RING ANONYMITY, structurally.  A ring signature must not carry a marker
-      that separates the signer's rounds from the simulated ones.  Two markers
-      are checked: a repeated commitment value (TODO #297's defect, the constant
-      b = 0 dummy c0), and a response statistic that identifies the signer
-      (this item's: the simulated b = 0 pair had wt(respA ^ respB) ~ n/2 where a
-      real signer's is exactly t, so ONE b = 0 round named the signer).
+      that names the signer.  Since TODO #415 the ring is ONE Stern proof over
+      the ring's block-diagonal statement (SPEC.md §11.2), and its b = 0 opening
+      reveals Pi(z): one non-zero block, at the position the member shuffle tau
+      sent the signer's block to.  Two markers are checked: a repeated
+      commitment value among the signature's unopened commitments (the shape of
+      TODO #297's constant dummy c0), and the canonical position of that
+      non-zero block, which must be the signer's no more often than chance.
+      (Until #415 this section scored the OR-composition's simulated b = 0
+      pairs, TODO #298's own anonymity break; that construction is gone.)
 
-  §3  NEGATIVE CONTROLS.  Both sections are re-run against the RETIRED
-      constructions and must FAIL there.  A hiding test that cannot fail is the
-      vacuous pass TODO #234 found in the Arduino harness, one layer out.
+  §3  NEGATIVE CONTROLS.  Both markers are re-run against a construction that
+      LEAKS -- tau forced to the identity, and a planted repeated commitment --
+      and must fire there.  A hiding test that cannot fail is the vacuous pass
+      TODO #234 found in the Arduino harness, one layer out.
 
 Exits non-zero if a finding stops reproducing.
 """
@@ -277,73 +282,52 @@ def _ring_keys(k):
     keys, secrets = [], []
     for _ in range(k):
         seed, e, syn = H.stern_f_keygen()
-        keys.append((seed, syn))
+        keys.append((seed.uint, syn))
         secrets.append(e)
     return keys, secrets
 
 
-def _commit_collisions(commits, k, rounds):
-    seen, dups = set(), 0
-    for i in range(k):
-        for r in range(rounds):
-            for c in commits[i][r]:
-                v = c.uint if hasattr(c, "uint") else int(c)
-                if v in seen:
-                    dups += 1
-                seen.add(v)
-    return dups
+def _walk(sig, k, rounds):
+    """The signature's unopened commitments (D first) and each b = 0 opening's
+    (Pi(r), Pi(y)) bytes, by the suite's own challenge derivation."""
+    vlen = k * (N // 8) + (k + 7) // 8
+    unopened, b0, pos = [bytes(sig[:32])], [], 32
+    for b in H._ring_challenges(sig[:32], rounds):
+        unopened.append(bytes(sig[pos:pos + 32]))
+        if b == 0:
+            u = sig[pos + 96:pos + 96 + vlen]
+            v = sig[pos + 96 + vlen:pos + 96 + 2 * vlen]
+            b0.append((u, v))
+            pos += 96 + 2 * vlen
+        else:
+            pos += 96 + vlen
+    return unopened, b0
 
 
-def _as_int(v):
-    return v.uint if hasattr(v, "uint") else int(v)
+def _named_member(sig, k, rounds):
+    """The canonical index the b = 0 marker points at: the most frequent
+    position of Pi(z)'s non-zero block, or None without a b = 0 round."""
+    nb = N // 8
+    _un, b0 = _walk(sig, k, rounds)
+    votes = [0] * k
+    for u, v in b0:
+        z = bytes(a ^ c for a, c in zip(u, v))
+        for i in range(k):
+            if any(z[i * nb:(i + 1) * nb]):
+                votes[i] += 1
+    return votes.index(max(votes)) if any(votes) else None
 
 
-def _signer_score(chals, resps, k, rounds):
-    """Rank members by the b = 0 marker: the mean wt(respA ^ respB) over that
-    member's b = 0 rounds.  A real signer's is exactly t; the pre-fix simulator
-    produced ~n/2.  Returns the member index the statistic points at (the
-    minimum), or None if no member had a b = 0 round."""
-    best, best_i = None, None
-    for i in range(k):
-        ws = [bin(_as_int(resps[i][r][0]) ^ _as_int(resps[i][r][1])).count("1")
-              for r in range(rounds) if chals[i][r] == 0]
-        if not ws:
-            continue
-        m = sum(ws) / len(ws)
-        if best is None or m < best:
-            best, best_i = m, i
-    return best_i
-
-
-def _retired_sim_b0():
-    """The b = 0 simulated response pair as it stood until v8.0.0: respA a
-    weight-t vector, respB uniform and INDEPENDENT of it."""
-    return H._csprng_weight_t(N, T), _uniform()
-
-
-def _identification_rate(trials, k, rounds, retired):
-    """How often does the b = 0 marker name the true signer?  Under a correct
-    construction this is 1/k; the pre-fix one scored 1.0."""
+def _identification_rate(trials, k, rounds):
+    """How often does the marker name the true signer?  Under a correct
+    construction this is 1/k (tau is uniform); with tau = identity it is 1."""
     hits = 0
     for _ in range(trials):
         keys, secrets = _ring_keys(k)
         j = int.from_bytes(os.urandom(1), "big") % k
-        msg = H.BitArray.random(N)
-        commits, chals, resps = H.hpks_stern_ring_sign(
-            msg, secrets[j], j, keys, rounds=rounds)
-        if retired:
-            # Replace every SIMULATED b = 0 pair with the retired form.  The
-            # statistic is what is under test, so rebuilding the transcript
-            # around it is enough -- and it keeps the control to one function
-            # rather than a second copy of the whole ring signer.
-            resps = [list(m) for m in resps]
-            for i in range(k):
-                if i == j:
-                    continue
-                for r in range(rounds):
-                    if chals[i][r] == 0:
-                        resps[i][r] = _retired_sim_b0()
-        if _signer_score(chals, resps, k, rounds) == j:
+        msg = os.urandom(32)
+        sig = H.hpks_stern_ring_sign(msg, secrets[j], j, keys, N, rounds)
+        if _named_member(sig, k, rounds) == H._Ring(keys, N).position[j]:
             hits += 1
     return hits
 
@@ -351,12 +335,10 @@ def _identification_rate(trials, k, rounds, retired):
 # §2's identification gate owns its trial count, for the reason §1 owns its
 # round count (TODO #337), and found the same way (TODO #361's rate-table
 # audit).  Its bar is (trials * 3) // 4 against a Binomial(trials, 1/k) null,
-# replicated.  main() used to pass --quick's 8 here, which puts the bar at 6/8:
-# P(Bin(8, 1/4) >= 6) = 4.2e-3 per sample, 1.8e-5 replicated -- 1.8e5 times
-# the 1e-10 the gate runner listed, which had been computed at 20.  At 20 it
-# is 3.8e-6 per sample and 1.5e-11 replicated.  The null is exactly 1/k at any
-# round count (j is drawn uniformly and independently of the transcript), so
-# §2 keeps the shared --quick ROUND count and only the trial count is fixed.
+# replicated: at 20 it is 3.8e-6 per sample and 1.5e-11 replicated.  The null
+# is exactly 1/k at any round count (tau is a fresh uniform shuffle every
+# round), so §2 keeps the shared --quick ROUND count and only the trial count
+# is fixed.
 SECTION2_TRIALS = 20
 
 
@@ -364,31 +346,29 @@ def section2(k=4, rounds=32, trials=SECTION2_TRIALS):
     print("\n§2  Ring anonymity — does any structural marker name the signer?")
     keys, secrets = _ring_keys(k)
     j = 1
-    msg = H.BitArray.random(N)
-    commits, chals, resps = H.hpks_stern_ring_sign(
-        msg, secrets[j], j, keys, rounds=rounds)
-
-    verified = H.hpks_stern_ring_verify(msg, (commits, chals, resps), keys)
+    msg = os.urandom(32)
+    sig = H.hpks_stern_ring_sign(msg, secrets[j], j, keys, N, rounds)
+    verified = H.hpks_stern_ring_verify(msg, sig, keys, N, rounds)
     print(f"  Accept control : ring signature verifies: {verified}")
 
-    dups = _commit_collisions(commits, k, rounds)
-    print(f"  Commitments    : repeated values across {3 * k * rounds} "
-          f"member-rounds: {dups}  ({'PASS' if dups == 0 else 'FAIL'})")
+    unopened, _b0 = _walk(sig, k, rounds)
+    dups = len(unopened) - len(set(unopened))
+    print(f"  Commitments    : repeated values among {len(unopened)} unopened "
+          f"commitments: {dups}  ({'PASS' if dups == 0 else 'FAIL'})")
 
-    # Identification rate.  Under a correct construction the marker is pure
-    # chance (1/k); a real marker scores 1.0.  Gating a RATE against a fixed
-    # threshold is the shape TODO #299 found failing one run in twenty, so the
-    # threshold is set where the binomial tail is negligible and an exceedance
-    # is CONFIRMED against a second independent block before it fails.
+    # Gating a RATE against a fixed threshold is the shape TODO #299 found
+    # failing one run in twenty, so the threshold is set where the binomial
+    # tail is negligible and an exceedance is CONFIRMED against a second
+    # independent block before it fails.
     thresh = (trials * 3) // 4
-    hits = _identification_rate(trials, k, rounds, retired=False)
+    hits = _identification_rate(trials, k, rounds)
     print(f"  Identification : signer named {hits}/{trials} times "
           f"(chance is ~{trials // k})")
     ok_id = hits < thresh
     if not ok_id:
         print(f"  Identification : over {thresh}/{trials} — confirming "
               f"against a second independent block")
-        hits2 = _identification_rate(trials, k, rounds, retired=False)
+        hits2 = _identification_rate(trials, k, rounds)
         print(f"  Identification : second block {hits2}/{trials}")
         ok_id = hits2 < thresh
 
@@ -402,37 +382,32 @@ def section2(k=4, rounds=32, trials=SECTION2_TRIALS):
 # ---------------------------------------------------------------------------
 
 def section3(k=4, rounds=32, trials=20):
-    print("\n§3  Negative controls — both markers must FIRE on the retired form")
+    print("\n§3  Negative controls — both markers must FIRE on a leaking construction")
     thresh = (trials * 3) // 4
 
-    hits = _identification_rate(trials, k, rounds, retired=True)
-    fired_resp = hits >= thresh
-    print(f"  Retired b=0 pair : signer named {hits}/{trials} "
-          f"({'control FIRES' if fired_resp else 'DID NOT FIRE'})")
+    real = H._Ring.perms
+    def no_shuffle(self, pi_seed):
+        tau, pis = real(self, pi_seed)
+        return list(range(self.k)), pis
+    H._Ring.perms = no_shuffle
+    try:
+        hits = _identification_rate(trials, k, rounds)
+    finally:
+        H._Ring.perms = real
+    fired_tau = hits >= thresh
+    print(f"  tau = identity   : signer named {hits}/{trials} "
+          f"({'control FIRES' if fired_tau else 'DID NOT FIRE'})")
 
-    # TODO #297's marker: a constant dummy c0 on every simulated b = 0 round.
     keys, secrets = _ring_keys(k)
-    j = 0
-    msg = H.BitArray.random(N)
-    commits, chals, _ = H.hpks_stern_ring_sign(
-        msg, secrets[j], j, keys, rounds=rounds)
-    const_c0 = H._stern_hash(N, H.BitArray(N, 0), H.BitArray(N, 0), ds=1)
-    commits = [list(m) for m in commits]
-    n_planted = 0
-    for i in range(k):
-        if i == j:
-            continue
-        for r in range(rounds):
-            if chals[i][r] == 0:
-                c0, c1, c2 = commits[i][r]
-                commits[i][r] = (const_c0, c1, c2)
-                n_planted += 1
-    dups = _commit_collisions(commits, k, rounds)
-    fired_c0 = dups > 0
-    print(f"  Retired c0 dummy : {n_planted} constants planted, "
-          f"{dups} repeats seen ({'control FIRES' if fired_c0 else 'DID NOT FIRE'})")
+    sig = bytearray(H.hpks_stern_ring_sign(os.urandom(32), secrets[0], 0, keys, N, rounds))
+    unopened, _b0 = _walk(sig, k, rounds)
+    planted = unopened + [unopened[1]]          # one round's commitment, twice
+    dups = len(planted) - len(set(planted))
+    fired_c = dups > 0
+    print(f"  Repeated commit  : 1 planted, {dups} repeats seen "
+          f"({'control FIRES' if fired_c else 'DID NOT FIRE'})")
 
-    ok = fired_resp and fired_c0
+    ok = fired_tau and fired_c
     print(f"  Controls         : {'PASS' if ok else 'FAIL'}")
     return ok
 

@@ -135,9 +135,6 @@ public final class HerraduraCli {
         checkUnknownFlags(cmd, opt);
         // TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign
         // and verify refuse it before any file is read, until the redesign.
-        if ((cmd.equals("sign") || cmd.equals("verify")) && "hpks-ring".equals(opt.get("algo"))) {
-            throw new CliError(cmd + ": --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature");
-        }
         checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
@@ -1618,46 +1615,42 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
 
     /** Parses a comma-separated list of hpks-stern public-key PEM paths for
-     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys.
-     * Returns the ring's member keys, all sharing one width n (any GF width
-     * since TODO #384), as Python's does; that n is returned in nOut[0]. */
+     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys: 1 to
+     * RING_MAX_K members of one width (returned in nOut[0]), none repeated. */
     private static List<SternRing.RingKey> loadRingPubkeys(String ringArg, int[] nOut) throws IOException {
-        String[] paths = ringArg.split(",");
+        List<String> paths = new java.util.ArrayList<>();
+        for (String p : ringArg.split(",")) if (!p.isEmpty()) paths.add(p);
+        if (paths.isEmpty()) throw new CliError("hpks-ring: --ring needs at least one member public key");
+        if (paths.size() > RING_MAX_K) {
+            throw new CliError("hpks-ring: --ring lists " + paths.size() + " members, at most "
+                + RING_MAX_K + " supported");
+        }
         List<SternRing.RingKey> keys = new java.util.ArrayList<>();
         int n = 0;
         for (String p : paths) {
-            if (p.isEmpty()) continue;
             String pem = readString(p);
             Codec.PemBlock block = Codec.pemUnwrap(pem);
             if (!block.label.equals(Codec.PEM_HPKS_STERN_PUB)) {
-                throw new CliError("hpks-ring: ring member " + p + " is " + block.label + ", expected " + Codec.PEM_HPKS_STERN_PUB);
+                throw new CliError("hpks-ring: ring member '" + p + "' is " + block.label + ", expected hpks-stern");
             }
             Codec.SternPubKey pub = Codec.decodeSternPubKey(pem, block.label);
             if (n == 0) n = pub.nbits;
             if (pub.nbits != n) {
                 throw new CliError("hpks-ring: all ring members must share the same n");
             }
-            keys.add(new SternRing.RingKey(pub.seed, pub.syndrome));
-        }
-        if (keys.size() < 2) {
-            throw new CliError("hpks-ring: --ring needs at least 2 member public keys");
-        }
-        // TODO #272.  RING_MAX_K bounds the READER in C, Go and Python (TODO
-        // #240 adopted C's constant), but only C's writer enforced it -- so
-        // this port signed rings that no verifier anywhere would accept, and
-        // has no ring verifier of its own to notice.  Bounding it here is what
-        // makes the four agree about what an hpks-ring signature can be.
-        if (keys.size() > RING_MAX_K) {
-            throw new CliError("hpks-ring: ring has " + keys.size() + " members, at most "
-                + RING_MAX_K + " supported (a larger ring produces a signature no CLI "
-                + "will verify)");
+            SternRing.RingKey m = new SternRing.RingKey(pub.seed, pub.syndrome, n);
+            for (SternRing.RingKey o : keys) {
+                if (java.util.Arrays.equals(o.seed, m.seed) && java.util.Arrays.equals(o.syndrome, m.syndrome))
+                    throw new CliError("hpks-ring: --ring lists the member '" + p + "' twice");
+            }
+            keys.add(m);
         }
         nOut[0] = n;
         return keys;
     }
 
-    /** Matches herradura_cli.c's RING_MAX_K and herradura.py's _RING_MAX_K. */
-    private static final int RING_MAX_K = 64;
+    /** Matches herradura_cli.c's RING_MAX_K and herradura.py's _RING_MAX_K (TODO #415). */
+    private static final int RING_MAX_K = 1024;
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
@@ -1729,23 +1722,25 @@ public final class HerraduraCli {
             Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
             int[] ringNOut = new int[1];
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"), ringNOut);
+            int ringN = ringNOut[0];
+            if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
+                throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
+            }
+            // The signer's own public key, matched by seed AND syndrome.
+            BigInteger syn = SternL.isLong(pk.nbits) ? SternL.syndrome(pk.seed, pk.e, pk.nbits)
+                : Stern.sternSyndromeH(Stern.sternBuildH(pk.seed, pk.nbits / 2, pk.nbits), pk.e);
+            SternRing.RingKey own = new SternRing.RingKey(pk.seed, syn, pk.nbits);
             int j = -1;
             for (int i = 0; i < ring.size(); i++) {
-                if (ring.get(i).seed.equals(pk.seed)) { j = i; break; }
+                if (java.util.Arrays.equals(ring.get(i).seed, own.seed)
+                        && java.util.Arrays.equals(ring.get(i).syndrome, own.syndrome)) { j = i; break; }
             }
             if (j < 0) {
                 throw new CliError("hpks-ring sign: signer's public key is not in --ring "
                     + "(run pkey --pubout on the signer key and include it)");
             }
-            int ringN = ringNOut[0];
-            if (ringN != pk.nbits) {   // worded as Python's (TODO #384)
-                throw new CliError("hpks-ring sign: signer n=" + pk.nbits + " != ring n=" + ringN);
-            }
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(pk.nbits, 256) / 8));
-            SternRing.RingSignature sig = SternL.isLong(pk.nbits)    // TODO #382
-                ? SternL.ringSign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG)
-                : SternRing.sign(msgInt, pk.e, j, ring, rounds, pk.nbits, RNG);
-            writeString(out, Codec.encodeRingSig(sig, pk.nbits));
+            byte[] sig = SternRing.sign(padTrunc(msg, 32), pk.e, j, ring, pk.nbits, rounds, RNG);
+            writeString(out, Codec.encodeRingSig(sig, pk.nbits, ring.size(), rounds));
             System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
             return;
         }
@@ -1985,18 +1980,16 @@ public final class HerraduraCli {
             List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"), ringNOut);
             int ringN = ringNOut[0];
             Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
-            requireRounds(sig.sig.rounds(), minRounds(opt, "verify"), "hpks-ring signature", "verify");
+            requireRounds(sig.rounds, minRounds(opt, "verify"), "hpks-ring signature", "verify");
             if (sig.nbits != ringN) {
                 throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + ringN);
             }
-            if (sig.sig.ringSize() != ring.size()) {
-                throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
+            if (sig.k != ring.size()) {
+                throw new CliError("hpks-ring verify: signature ring size " + sig.k
                     + " != " + ring.size() + " provided members");
             }
             byte[] msg = readMessage(opt, "verify");
-            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Math.min(ringN, 256) / 8));
-            boolean ok = SternL.isLong(ringN) ? SternL.ringVerify(msgInt, sig.sig, ring, ringN)   // TODO #382
-                                              : SternRing.verify(msgInt, sig.sig, ring, ringN);
+            boolean ok = SternRing.verify(padTrunc(msg, 32), sig.sig, ring, ringN, sig.rounds);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }

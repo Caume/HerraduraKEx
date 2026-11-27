@@ -4,9 +4,11 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-26
 
-**One release for thirteen development steps (TODO #410–#423), seven of them breaking.**
-Each breaking change has its own MIGRATING.md section: #412 (§54), #413 (§55), #417
-(§56), #419 and #420 (§57), #421 (§58), #422 (§59) and #423 (§60).  The first eleven
+**One release for fourteen development steps (TODO #410–#423, and #415's redesign of
+HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
+section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
+(§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
+#415's redesign supersedes in this same release; their sections say so.  The first eleven
 were developed on `devtest` as v19.0.1–v24.0.0, and were folded into this one release
 before it shipped; those numbers appear only in commit messages.  The sections below
 follow the order the work was done.
@@ -425,6 +427,54 @@ New `CliTest/test_hpks_s_bound.sh` (cross-lang-compat) has 164 cells:
 
 The pre-fix build fails exactly its 33 signer, refused and table cells.  The assembly
 and Arduino suites, which run 32-bit HPKS demos with no CLI, are unchanged.
+
+### #415: HPKS-Ring is one Stern proof over the ring (breaking, MIGRATING §61)
+
+The ring signature is redesigned and `sign` / `verify --algo hpks-ring` work again.  The
+OR-composition was forgeable with no member's secret key.  It split each round's
+challenge across the members mod 3, and a Stern party without the witness answers two
+of the three challenges.  It is replaced by ONE Stern proof over the ring's
+block-diagonal statement `diag([H_i | s_i])` (SPEC.md §11.2).  The witness is the
+signer's error in its block with that block's indicator set.  A per-round shuffle of the
+blocks (τ) and of the positions inside each block (π_i) hides which block.  The `b = 0`
+opening checks that the shuffled witness is one block of weight t with its indicator
+set.
+
+Every round has one challenge for one statement, and three openings of one commitment
+yield a member's key, so a forger answers at most two challenges in three:
+(2/3)^219 < 2^-128.  The transcript digest hashes the message, the canonical (sorted)
+ring and every commitment, which also closes #415's "challenge omits the keys" item for
+the ring.  `c1` and `c2` are salted, so the signer is hidden even from someone holding
+every member's key.  The wire carries D and, per round, the one unopened commitment
+with its opening; the verifier rebuilds the rest.
+
+- **Signature.**  It is about half the old size: ~57 KiB for 4 members at N = 256.
+  Rings hold 1 to 1024 members, given in any order, duplicates refused.  New PEM label
+  `HERRADURA HPKS-RING-V2 SIGNATURE`; the old label is named and refused by every CLI.
+- **Implementation.**  One code path covers both widths in each port, and the four
+  agree byte for byte.  `KAT/operation_replay.json` pins whole signatures at N = 256
+  and N = 2304, in place of the OR-composition's two member-major rows.  The
+  long-form ring functions and the simulator and trit helpers are removed.
+- **Tests.**
+  - `CliTest/test_ring.sh` is a 4x4 interop test again (62 cells, two controls that
+    fire).
+  - The ring cells #422 removed from the key-label, DER, malformed-PEM, numeric-flag,
+    round-floor, `stern_128`, width and wrong-secret matrices are back, adapted to the
+    new layout.  The wrong-secret CHEAT cell now patches the signer's two refusals to
+    reach the verifier with a wrong witness.
+  - Harness `[20]` (C, Go, Python) and Java `[26]` assert completeness, ring-order
+    independence, and refusal of another message, one changed byte and a wrong secret.
+    The Python harness's own copy matches the shipped suite byte for byte under one
+    stream and cross-verifies both ways.
+  - `[53]` and Java `[35]` check the signature's unopened commitments are distinct.
+- **Analysis gates.**  `SecurityProofsCode/stern_f_weight_binding.py` §2/§3 now score
+  the new ring's `b = 0` marker, the position of the non-zero block, against chance,
+  with a τ = identity control that fires.  `stern_ring_challenge_bias.py` anchors its
+  255-rejection check on the transcript-challenge expander.
+- **Census.**  `spec/` gains the ring's PRIMITIVES, PARAMETERS and rejection-basis rows,
+  and drops the retired ones.
+
+The assembly and Arduino suites keep the retired 32-bit demo (TODO #424).
 
 ## [19.0.0] - 2026-11-24
 

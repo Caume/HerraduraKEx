@@ -97,9 +97,9 @@ for c in "${LANGS[@]}"; do
         --in "$TMP/env_$c" --out "$TMP/envpt_$c"
     ok "genpkey --xmss-height 1 ($c)" $X genpkey --algo hpks-xmss --xmss-height 1 --out "$TMP/xm_$c"
 
-    # hpks-ring left this list when TODO #422 disabled it.
-    for a in hpks-stern nl-zkboo nl-zkbpp; do
+    for a in hpks-stern nl-zkboo nl-zkbpp hpks-ring; do
         k="$F/st.pem"; ring=(); case $a in nl-*) k="$F/zk.pem" ;; esac
+        [ "$a" = hpks-ring ] && ring=(--ring "$F/st_pub.pem,$F/st2_pub.pem")
         ok "sign --algo $a --rounds 1 ($c)" $X sign --algo "$a" --key "$k" "${ring[@]}" \
             --in "$F/msg.bin" --rounds 1 --out "$TMP/s_${a}_$c"
     done
@@ -125,6 +125,7 @@ SITES=(
 "genpkey|--xmss-height|1|20|py c go java|genpkey --algo hpks-xmss --xmss-height {V} --out {O}"
 "rand|--bytes|0|33554432|py c go java|rand --seed $F/seed.bin --bytes {V} --out {O}"
 "sign|--rounds|1|4096|py c go java|sign --algo hpks-stern --key $F/st.pem --in $F/msg.bin --rounds {V} --out {O}"
+"sign|--rounds|1|4096|py c go java|sign --algo hpks-ring --key $F/st.pem --ring $F/st_pub.pem,$F/st2_pub.pem --in $F/msg.bin --rounds {V} --out {O}"
 "sign|--rounds|1|4096|py c go java|sign --algo nl-zkboo --key $F/zk.pem --in $F/msg.bin --rounds {V} --out {O}"
 "sign|--rounds|1|4096|py c go java|sign --algo nl-zkbpp --key $F/zk.pem --in $F/msg.bin --rounds {V} --out {O}"
 "verify|--min-rounds|1|4096|py c go java|verify --algo hpks-stern --pubkey $F/st_pub.pem --in $F/msg.bin --sig $F/sig.pem --min-rounds {V}"

@@ -29,6 +29,8 @@ final class KeyLabelTable {
         {"verify", "hpks-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", "HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"},
         {"sign", "hpks-stern", "--key", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"},
         {"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"},
+        {"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"},
+        {"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern", "HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"},
         {"sign", "rnl-sigma", "--key", "hkex-rnl", "HERRADURA HKEX-RNL PRIVATE KEY"},
         {"verify", "rnl-sigma", "--pubkey", "hkex-rnl", "HERRADURA HKEX-RNL PUBLIC KEY"},
         {"sign", "nl-zkboo", "--key", "hpks-zkp-nl", "HERRADURA ZKP-NL PRIVATE KEY"},
@@ -78,6 +80,7 @@ final class KeyLabelTable {
         {"HERRADURA HPKS PUBLIC KEY", "2", "2"},
         {"HERRADURA HPKS-NL PRIVATE KEY", "3", "3"},
         {"HERRADURA HPKS-NL PUBLIC KEY", "2", "2"},
+        {"HERRADURA HPKS-RING-V2 SIGNATURE", "5", "5"},
         {"HERRADURA HPKS-STERN PRIVATE KEY", "3", "3"},
         {"HERRADURA HPKS-STERN PUBLIC KEY", "3", "3"},
         {"HERRADURA HPKS-WOTS PRIVATE KEY", "2", "2"},
@@ -444,6 +447,21 @@ final class KeyLabelTable {
                 if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
                 if (n > 1) { long c = 67L * (F0.applyAsLong(4)/8L); if (!(ew[1] == c || (lz[1] == 2 && ew[1] + 1 == c) || (c == 0 && ew[1] == 1 && L.applyAsInt(1) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 1, (long) ew[1], c); }
                 if (n > 2) { long c = F0.applyAsLong(3) * 32L; if (!(ew[2] == c || (lz[2] == 2 && ew[2] + 1 == c) || (c == 0 && ew[2] == 1 && L.applyAsInt(2) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, (long) ew[2], c); }
+                return null;
+            }
+            return null;
+        case "HERRADURA HPKS-RING-V2 SIGNATURE":
+            if (n >= 5 && n <= 5) {
+                if (n > 0) { long c = 2L; if (L.applyAsInt(0) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 0, (long) L.applyAsInt(0), c); }
+                if (n > 1) { long c = 2L; if (L.applyAsInt(1) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 1, (long) L.applyAsInt(1), c); }
+                if (n > 2) { long c = 2L; if (L.applyAsInt(2) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 2, (long) L.applyAsInt(2), c); }
+                if (n > 3) { long c = 32L; if (L.applyAsInt(3) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 3, (long) L.applyAsInt(3), c); }
+                if (n > 4) { long c = F0.applyAsLong(2) * (96L + 2L * (F0.applyAsLong(1) * (F0.applyAsLong(0)/8L) + (F0.applyAsLong(1) + 7L)/8L)); if (L.applyAsInt(4) > c) return String.format("%s: field %d is %d bytes (expected at most %d)", label, 4, (long) L.applyAsInt(4), c); }
+                if (n > 0 && lz[0] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0);
+                if (n > 1 && lz[1] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1);
+                if (n > 2 && lz[2] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2);
+                if (n > 3) { long c = 32L; if (!(ew[3] == c || (lz[3] == 2 && ew[3] + 1 == c) || (c == 0 && ew[3] == 1 && L.applyAsInt(3) == 0))) return String.format("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, (long) ew[3], c); }
+                if (n > 4 && lz[4] == 1) return String.format("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4);
                 return null;
             }
             return null;

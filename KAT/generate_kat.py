@@ -1206,6 +1206,50 @@ def _nbit_hex(x, n: int) -> str:
     return f"{v:0{(n + 3) // 4}x}"
 
 
+def _gen_ring_row(name: str, n: int, k: int, j: int, rounds: int, tag: bytes) -> dict:
+    """One HPKS-Ring signing row (TODO #415): the whole signature, byte for byte.
+
+    The ring's members come from their own fixed keygen streams, in the order
+    given (the library sorts them, so the row also pins the canonical order);
+    the signing stream is exactly rounds * (vector + 96) bytes -- r, its
+    indicator, pi_seed and two salts per round, with no rejection anywhere --
+    so `consumed` is exact and a port that reads one byte more runs off the
+    end.  The stream must reach all three challenges, so every opening is
+    pinned, not only the ones the first label happened to draw."""
+    t, nb, kb = max(2, n // 16), n // 8, (k + 7) // 8
+    keys = []
+    for idx in range(k):
+        with _replay(det_bytes(b"op-%s-key-%d" % (tag, idx), 8 * nb)):
+            if n > 256:
+                sd, e_i, sy = suite.stern_l_keygen(n)
+            else:
+                sd, e_i, sy = suite.stern_f_keygen(n)
+                sd = sd.uint
+        keys.append((sd, e_i, sy))
+    msg = det_bytes(b"op-%s-msg" % tag, 32)
+    stream = det_bytes(b"op-%s-sign" % tag, rounds * (k * nb + kb + 96))
+    ring = [(sd, sy) for sd, _e, sy in keys]
+    with _replay(stream) as st:
+        sig = suite.hpks_stern_ring_sign(msg, keys[j][1], j, ring, n, rounds)
+    assert st.pos == len(stream), "operation replay: the ring stream is one exact read"
+    assert set(suite._ring_challenges(sig[:32], rounds)) == {0, 1, 2}, \
+        ("operation replay: the %s stream must reach all three challenges" % name)
+    assert suite.hpks_stern_ring_verify(msg, sig, ring, n, rounds), \
+        "operation replay: the pinned ring signature does not verify"
+    return {
+        "name": name,
+        "calls": {"c": "stern_ring_sign", "go": "HpksSternRingSign",
+                  "python": "hpks_stern_ring_sign", "java": "SternRing.sign"},
+        "params": {"n": n, "t": t, "n_rows": n // 2, "rounds": rounds, "k": k, "j": j},
+        "statement": {"msg": msg.hex(), "e": _nbit_hex(keys[j][1], n),
+                      "seeds": [_nbit_hex(sd, n) for sd, _ in ring],
+                      "syndromes": [_nbit_hex(sy, n // 2) for _, sy in ring]},
+        "stream": stream.hex(),
+        "expect": {"sig": sig.hex()},
+        "consumed": st.pos,
+    }
+
+
 def gen_operation_replay() -> dict:
     rows = []
     n = KEYBITS
@@ -1317,69 +1361,11 @@ def gen_operation_replay() -> dict:
         "consumed": st.pos,
     })
 
-    # --- Stern-F ring signing: the operation that had the DEFECT (TODO #297) ---
-    # k-1 simulated members, each round of each drawing a challenge trit and then
-    # one of three branch-specific draw sequences, followed by the real signer's
-    # rounds.  That shape is why this row earns its size: no leaf sampler is
-    # involved in choosing the trit, the branch taken decides what is drawn next,
-    # and the whole thing reaches the wire through commitments a verifier accepts
-    # whatever they contain.
-    #
-    # Two divergences lived here, both invisible to every other check because a
-    # simulated member's randomness reaches no artifact a verifier examines:
-    #   - the trit had THREE schemes (C/Python one byte rejecting 255, Go a
-    #     whole n-bit draw modulo 3, Java Random.nextInt(3));
-    #   - and the b = 0 dummy commitment was hash(ZERO, ZERO) in C and Go, a
-    #     CONSTANT marking every simulated b = 0 round, so the signer was the
-    #     member whose rounds never carried it.  That is an anonymity break, and
-    #     the row below is what stops it coming back.
-    ring_k, ring_rounds, ring_j = 3, 4, 1
-    ring_keys, ring_e = [], None
-    for idx in range(ring_k):
-        with _replay(det_bytes(b"op-ring-key-%d" % idx, 256)):
-            rseed, re_int, rsyn = suite.stern_f_keygen(n)
-        ring_keys.append((rseed, rsyn))
-        if idx == ring_j:
-            ring_e = re_int
-    ring_msg = BitArray(n, int.from_bytes(det_bytes(b"op-ring-msg", n // 8), "big"))
-    stream = det_bytes(b"op-ring-sign", 8192)
-    with _replay(stream) as st:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            r_commits, r_challenges, r_responses = suite.hpks_stern_ring_sign(
-                ring_msg, ring_e, ring_j, ring_keys, n, ring_rounds)
-    # The b = 0 branch is the one that carried the defect, so a stream whose
-    # simulated members never draw it would pin the fix and prove nothing.
-    sim_b = [r_challenges[i][r] for i in range(ring_k) for r in range(ring_rounds)
-             if i != ring_j]
-    assert 0 in sim_b, \
-        ("operation replay: the ring stream must make a SIMULATED member draw "
-         "b = 0 -- that is the branch whose dummy commitment was a constant in "
-         "C and Go; got %r" % (sorted(set(sim_b)),))
-    rows.append({
-        "name": "hpks_stern_ring_sign",
-        "calls": {"c": "stern_ring_sign", "go": "HpksSternRingSign",
-                  "python": "hpks_stern_ring_sign", "java": "SternRing.sign"},
-        "params": {"n": n, "t": sf_t, "n_rows": n // 2, "rounds": ring_rounds,
-                   "k": ring_k, "j": ring_j},
-        "statement": {
-            "msg": _nbit_hex(ring_msg, n),
-            "e": _nbit_hex(ring_e, n),
-            "seeds": [_nbit_hex(sd, n) for sd, _ in ring_keys],
-            "syndromes": [_nbit_hex(sy, n // 2) for _, sy in ring_keys],
-        },
-        "stream": stream.hex(),
-        "expect": {
-            "commits": [[[_nbit_hex(c, n) for c in r_commits[i][r]]
-                         for r in range(ring_rounds)] for i in range(ring_k)],
-            "challenges": [[r_challenges[i][r] for r in range(ring_rounds)]
-                           for i in range(ring_k)],
-            "responses": [[[_nbit_hex(a, n), _nbit_hex(b, n)]
-                           for a, b in (r_responses[i][r] for r in range(ring_rounds))]
-                          for i in range(ring_k)],
-        },
-        "consumed": st.pos,
-    })
+    # --- HPKS-Ring signing (TODO #415) ---
+    # The OR-composition this row used to pin (TODO #297's defect lived in its
+    # simulated members) is gone: the ring is one Stern proof over the ring's
+    # block-diagonal statement.  k = 3 at N = 256 with the signer in the middle.
+    rows.append(_gen_ring_row("hpks_stern_ring_sign", n, 3, 1, 7, b"ring"))
 
     # --- Ring-LWR Sigma signing: the inline mask draw TODO #294 was about ---
     # The statement is an HKEX-RNL keypair plus C = round_p(m*s), derived here
@@ -1813,44 +1799,9 @@ def _gen_stern_long_rows() -> list:
         "consumed": st.pos,
     })
 
-    ring_k, ring_rounds, ring_j = 2, 4, 1
-    ring_keys, ring_e = [], None
-    for idx in range(ring_k):
-        with _replay(det_bytes(b"op-sternl-ring-key-%d" % idx, 4 * nb)):
-            rs, re_int, rsyn = suite.stern_l_keygen(n)
-        ring_keys.append((rs, rsyn))
-        if idx == ring_j:
-            ring_e = re_int
-    ring_msg = BitArray(256, int.from_bytes(det_bytes(b"op-sternl-ring-msg", 32), "big"))
-    stream = det_bytes(b"op-sternl-ring-sign", 32 * nb)
-    with _replay(stream) as st:
-        rc, rch, rresp = suite.hpks_stern_l_ring_sign(ring_msg, ring_e, ring_j, ring_keys,
-                                                     n, ring_rounds)
-    sim_b = [rch[i][r] for i in range(ring_k) for r in range(ring_rounds) if i != ring_j]
-    assert 0 in sim_b and (1 in sim_b or 2 in sim_b), \
-        ("operation replay: the long-form ring stream must make the SIMULATED "
-         "member draw b = 0 and a b in {1, 2}; got %r" % (sorted(set(sim_b)),))
-    assert suite.hpks_stern_l_ring_verify(ring_msg, (rc, rch, rresp), ring_keys, n), \
-        "operation replay: the pinned long-form ring signature does not verify"
-    out.append({
-        "name": "hpks_stern_l_ring_sign",
-        "calls": {"c": "stern_l_ring_sign", "go": "HpksSternLRingSign",
-                  "python": "hpks_stern_l_ring_sign", "java": "SternL.ringSign"},
-        "params": {"n": n, "t": t, "n_rows": n // 2, "rounds": ring_rounds,
-                   "k": ring_k, "j": ring_j},
-        "statement": {"msg": _nbit_hex(ring_msg, 256), "e": _nbit_hex(ring_e, n),
-                      "seeds": [_nbit_hex(sd, n) for sd, _ in ring_keys],
-                      "syndromes": [_nbit_hex(sy, n) for _, sy in ring_keys]},
-        "stream": stream.hex(),
-        "expect": {
-            "commits": [[[_nbit_hex(c, 256) for c in rc[i][r]] for r in range(ring_rounds)]
-                        for i in range(ring_k)],
-            "challenges": [[rch[i][r] for r in range(ring_rounds)] for i in range(ring_k)],
-            "responses": [[[_nbit_hex(a, n), _nbit_hex(b, n)] for a, b in
-                           (rresp[i][r] for r in range(ring_rounds))] for i in range(ring_k)],
-        },
-        "consumed": st.pos,
-    })
+    # The ring at N = 2304 (TODO #415): the same algorithm on the long form's
+    # matrix expander.
+    out.append(_gen_ring_row("hpks_stern_ring_sign_l", n, 2, 1, 6, b"sternl-ring"))
     return out
 
 
@@ -1963,36 +1914,20 @@ def emit_operation_header(vec: dict) -> str:
     emitted.add("zkp_nl_prove")
 
     r = rows["hpks_stern_ring_sign"]
-    e, st = r["expect"], r["statement"]
-    k, rr = r["params"]["k"], r["params"]["rounds"]
-    # Flattened to [k * rounds] in member-major order, which is exactly how
-    # SternRingSig indexes its own arrays (i * rounds + r) -- so the consumer
-    # compares element for element with no reshaping to get wrong.
-    flat = [(i, j) for i in range(k) for j in range(rr)]
-    L += ["/* Stern-F ring signing: the operation TODO #297 found a defect in.",
-          " * Flat [k * rounds] arrays, member-major, matching SternRingSig.",
-          " */",
+    st = r["statement"]
+    L += ["/* HPKS-Ring signing (TODO #415): the whole signature, byte for byte;",
+          " * seeds and syndromes flat, in the order given, syndromes big-endian. */",
           f"#define OPR_RING_N        {r['params']['n']}",
-          f"#define OPR_RING_K        {k}",
-          f"#define OPR_RING_ROUNDS   {rr}",
+          f"#define OPR_RING_K        {r['params']['k']}",
+          f"#define OPR_RING_ROUNDS   {r['params']['rounds']}",
           f"#define OPR_RING_J        {r['params']['j']}",
           f"#define OPR_RING_CONSUMED {r['consumed']}",
           _c_bytes("opr_ring_stream", hx(r["stream"])),
           _c_bytes("opr_ring_msg", hx(st["msg"])),
           _c_bytes("opr_ring_e", hx(st["e"])),
-          _c_bytes2("opr_ring_seeds", [hx(x) for x in st["seeds"]]),
-          # Same little-endian transposition as opr_sfk_syndrome, and for the
-          # same reason -- herradura.h packs row i into byte i/8.
-          _c_bytes2("opr_ring_syndromes",
-                    [int(x, 16).to_bytes(r["params"]["n_rows"] // 8, "little")
-                     for x in st["syndromes"]]),
-          _c_bytes2("opr_ring_c0", [hx(e["commits"][i][j][0]) for i, j in flat]),
-          _c_bytes2("opr_ring_c1", [hx(e["commits"][i][j][1]) for i, j in flat]),
-          _c_bytes2("opr_ring_c2", [hx(e["commits"][i][j][2]) for i, j in flat]),
-          _c_int_list("opr_ring_challenge", [e["challenges"][i][j] for i, j in flat]),
-          _c_bytes2("opr_ring_resp_a", [hx(e["responses"][i][j][0]) for i, j in flat]),
-          _c_bytes2("opr_ring_resp_b", [hx(e["responses"][i][j][1]) for i, j in flat]), ""]
-
+          _c_bytes("opr_ring_seeds", b"".join(hx(x) for x in st["seeds"])),
+          _c_bytes("opr_ring_syns", b"".join(hx(x) for x in st["syndromes"])),
+          _c_bytes("opr_ring_sig", hx(r["expect"]["sig"])), ""]
     emitted.add("hpks_stern_ring_sign")
 
     r = rows["rnl_sigma_sign"]
@@ -2221,26 +2156,22 @@ def emit_operation_header(vec: dict) -> str:
           _c_bytes("opr_sls_resp", b"".join(hx(v) for pr in e["responses"] for v in pr)), ""]
     emitted.add("hpks_stern_l_sign")
 
-    r = rows["hpks_stern_l_ring_sign"]
-    e, st = r["expect"], r["statement"]
-    k, rr = r["params"]["k"], r["params"]["rounds"]
-    flat = [(i, j) for i in range(k) for j in range(rr)]
-    L += ["/* Stern-F long form ring signing, member-major as SternLRingSig. */",
-          f"#define OPR_SLR_N         {r['params']['n']}",
-          f"#define OPR_SLR_K         {k}",
-          f"#define OPR_SLR_ROUNDS    {rr}",
-          f"#define OPR_SLR_J         {r['params']['j']}",
-          f"#define OPR_SLR_CONSUMED  {r['consumed']}",
-          _c_bytes("opr_slr_stream", hx(r["stream"])),
-          _c_bytes("opr_slr_msg", hx(st["msg"])),
-          _c_bytes("opr_slr_e", hx(st["e"])),
-          _c_bytes("opr_slr_seeds", b"".join(hx(x) for x in st["seeds"])),
-          _c_bytes("opr_slr_syns", b"".join(hx(x) for x in st["syndromes"])),
-          _c_bytes("opr_slr_c", b"".join(hx(c) for i, j in flat for c in e["commits"][i][j])),
-          _c_int_list("opr_slr_challenge", [e["challenges"][i][j] for i, j in flat]),
-          _c_bytes("opr_slr_resp", b"".join(hx(v) for i, j in flat for v in e["responses"][i][j])),
-          ""]
-    emitted.add("hpks_stern_l_ring_sign")
+    r = rows["hpks_stern_ring_sign_l"]
+    st = r["statement"]
+    L += ["/* HPKS-Ring signing (TODO #415): the whole signature, byte for byte;",
+          " * seeds and syndromes flat, in the order given, syndromes big-endian. */",
+          f"#define OPR_RINGL_N        {r['params']['n']}",
+          f"#define OPR_RINGL_K        {r['params']['k']}",
+          f"#define OPR_RINGL_ROUNDS   {r['params']['rounds']}",
+          f"#define OPR_RINGL_J        {r['params']['j']}",
+          f"#define OPR_RINGL_CONSUMED {r['consumed']}",
+          _c_bytes("opr_ringl_stream", hx(r["stream"])),
+          _c_bytes("opr_ringl_msg", hx(st["msg"])),
+          _c_bytes("opr_ringl_e", hx(st["e"])),
+          _c_bytes("opr_ringl_seeds", b"".join(hx(x) for x in st["seeds"])),
+          _c_bytes("opr_ringl_syns", b"".join(hx(x) for x in st["syndromes"])),
+          _c_bytes("opr_ringl_sig", hx(r["expect"]["sig"])), ""]
+    emitted.add("hpks_stern_ring_sign_l")
 
     # Exhaustive in the direction that decays: a row added to the JSON with no
     # block here would leave the C consumer silently short of the other three,

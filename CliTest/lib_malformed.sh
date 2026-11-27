@@ -62,6 +62,8 @@ hkx_mal_fixtures() {
     $PY genpkey --algo hpks-stern --out "$d/rm2.pem" 2>/dev/null
     $PY pkey --in "$d/rm1.pem" --pubout --out "$d/rm1_pub.pem" 2>/dev/null
     $PY pkey --in "$d/rm2.pem" --pubout --out "$d/rm2_pub.pem" 2>/dev/null
+    $PY sign --algo hpks-ring --key "$d/rm1.pem" --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" \
+        --in "$d/rmsg.txt" --out "$d/rsig.pem" 2>/dev/null
     # Plain Stern-F, for the round count that TODO #236 bounded in C only.
     $PY sign --algo hpks-stern --key "$d/rm1.pem" --in "$d/rmsg.txt" \
         --out "$d/ssig.pem" 2>/dev/null
@@ -146,8 +148,27 @@ hkx_mal_suite() {
     local bad="$d/bad_$lang.pem"
     local case idx val
 
-    # ── HPKS-RING: its k/rounds/n/payload cases ran here until TODO #422
-    #    disabled hpks-ring (verify refuses it before reading the signature).
+    # ── HPKS-RING (TODO #415): n, k, rounds and the signature body length ──
+    if _hkx_mal_control "[$lang] ring: genuine signature verifies" \
+        "${CLI[@]}" verify --algo hpks-ring \
+        --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$d/rsig.pem"; then
+        # item 0 = n, 1 = k, 2 = rounds, 3 = D (32 bytes), 4 = the body.
+        for case in "1 1073741824 k=2^30" \
+                    "1 2147483647 k=2^31-1" \
+                    "1 1025 k=1025 (> RING_MAX_K)" \
+                    "1 0 k=0" \
+                    "2 1073741824 rounds=2^30" \
+                    "2 0 rounds=0" \
+                    "0 2147483647 n=2^31-1" \
+                    "2 1 body longer than rounds describe"; do
+            set -- $case
+            idx="$1" val="$2"; shift 2
+            hkx_mal_craft "$d/rsig.pem" "$bad" "$idx" "$val"
+            _hkx_mal_expect "[$lang] ring rejects $*" \
+                "${CLI[@]}" verify --algo hpks-ring \
+                --ring "$d/rm1_pub.pem,$d/rm2_pub.pem" --in "$d/rmsg.txt" --sig "$bad"
+        done
+    fi
 
     # ── HPKS-Stern-F: the round count TODO #236 bounded in C only ──
     if _hkx_mal_control "[$lang] stern: genuine signature verifies" \

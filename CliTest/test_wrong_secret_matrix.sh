@@ -16,7 +16,8 @@
 #            RNL's C from the secret they hold, and HCRED's prover refuses -- so
 #            CliTest/wrong_secret/cheat_sign.py runs the Python CLI with that
 #            derivation patched, and exits 3 if the patch is never reached.
-# Covered: hpks, hpks-nl, rnl-sigma, hpks-stern (N = 256 and 2304), hpks-wots, hpks-xmss, HCRED proofs and credentials,
+# Covered: hpks, hpks-nl, rnl-sigma, hpks-stern (N = 256 and 2304), hpks-ring
+# (both widths), hpks-wots, hpks-xmss, HCRED proofs and credentials,
 # hske-nla1 --aead, hske-duplex, hske-duplex3, encfile / decfile, and pkey
 # --decrypt; nl-zkboo / nl-zkbpp are test_raw_body_diff.sh's wrongA cells.
 # The modes with NO tag cannot refuse a wrong key, so their cells (TODO #414)
@@ -138,7 +139,7 @@ need "$TMP/rnl_c0" "patched rnl-sigma" &&
 need "$TMP/rnl_cx" "patched rnl-sigma" &&
     cell "rnl-sigma CHEAT: wrong s, true C" BAD verify --algo rnl-sigma --pubkey "$TMP/r1p.pem" --in "$TMP/m" --sig "$TMP/rnl_cx"
 
-# ── Stern-F, at N = 256 and N = 2304 ───────────────────────────────────────────
+# ── Stern-F and the ring, at N = 256 and N = 2304 ─────────────────────────────
 for lv in 256 2304; do
     o=""; [ $lv = 2304 ] && o="--level 128"
     for k in 1 2 3; do mk --algo hpks-stern $o --out "$TMP/t${lv}_$k.pem"; pub "$TMP/t${lv}_$k.pem" "$TMP/t${lv}_${k}p.pem"; done
@@ -155,8 +156,16 @@ for lv in 256 2304; do
         cell "hpks-stern N=$lv CHEAT control" OK verify --algo hpks-stern --pubkey "$TMP/t${lv}_1p.pem" --in "$TMP/m" --sig "$TMP/st_${lv}_c0"
     need "$TMP/st_${lv}_cx" "patched hpks-stern N=$lv" &&
         cell "hpks-stern N=$lv CHEAT: wrong e, true syndrome" BAD verify --algo hpks-stern --pubkey "$TMP/t${lv}_1p.pem" --in "$TMP/m" --sig "$TMP/st_${lv}_cx"
-    # The hpks-ring cells ran here until TODO #422 disabled hpks-ring
-    # (CliTest/test_ring.sh asserts the refusal).
+    R="$TMP/t${lv}_1p.pem,$TMP/t${lv}_3p.pem"
+    $X "$TMP/t${lv}_1.pem" -- sign --algo hpks-ring --key "$TMP/t${lv}_1.pem"  --ring "$R" --in "$TMP/m" --out "$TMP/rg_${lv}_c0" 2>/dev/null
+    $X "$TMP/t${lv}_1.pem" -- sign --algo hpks-ring --key "$TMP/t${lv}_1x.pem" --ring "$R" --in "$TMP/m" --out "$TMP/rg_${lv}_cx" 2>/dev/null
+    $G sign --algo hpks-ring --key "$TMP/t${lv}_2.pem" --ring "$TMP/t${lv}_2p.pem,$TMP/t${lv}_3p.pem" --in "$TMP/m" --out "$TMP/rg_${lv}_o" >/dev/null 2>&1
+    need "$TMP/rg_${lv}_c0" "ring N=$lv" &&
+        cell "hpks-ring N=$lv control" OK verify --algo hpks-ring --ring "$R" --in "$TMP/m" --sig "$TMP/rg_${lv}_c0"
+    need "$TMP/rg_${lv}_cx" "ring N=$lv" &&
+        cell "hpks-ring N=$lv CHEAT: a member's seed, a wrong e" BAD verify --algo hpks-ring --ring "$R" --in "$TMP/m" --sig "$TMP/rg_${lv}_cx"
+    need "$TMP/rg_${lv}_o" "ring N=$lv" &&
+        cell "hpks-ring N=$lv: a non-member's ring signature, presented for this ring" BAD verify --algo hpks-ring --ring "$R" --in "$TMP/m" --sig "$TMP/rg_${lv}_o"
 done
 
 # ── hash-based one-time and tree signatures ───────────────────────────────────

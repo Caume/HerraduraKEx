@@ -10,7 +10,7 @@
 #               every key is byte-identical, and --text agrees (level 128)
 #   hpks-stern  every CLI signs, every CLI verifies (4x4), at a reduced round
 #               count; one 219-round C signature verified at the default floor
-#   hpks-ring   (disabled by TODO #422; see test_ring.sh)
+#   hpks-ring   a two-member ring, 4x4
 #   hpke-stern  every CLI refuses enc --algo hpke-stern (retired by TODO #413)
 #   hcred       a long-form issuer's credential, issued by every CLI and checked
 #               by every CLI's cred-verify
@@ -227,10 +227,25 @@ for v in "${LANGS[@]}"; do
         --pubkey "$TMP/k_c_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/s219.pem"
 done
 
-# ── hpks-ring: disabled (TODO #422) ───────────────────────────────────────────
-# The long-form ring ran here, 4x4, until TODO #422 disabled hpks-ring;
-# CliTest/test_ring.sh asserts the refusal and holds the shipped library's long-form
-# ring verifier to its checks.
+# ── hpks-ring ─────────────────────────────────────────────────────────────────
+RING="$TMP/k_c_pub.pem,$TMP/k_go_pub.pem"
+for s in "${LANGS[@]}"; do
+    key="$TMP/k_c.pem"; [ "$s" = c ] || key="$TMP/k_go.pem"   # each signer, either member
+    ${CLI[$s]} sign --algo hpks-ring --key "$key" --ring "$RING" --in "$TMP/msg.bin" \
+        --rounds 4 --out "$TMP/r_$s.pem" 2>/dev/null || fail "hpks-ring sign ($s)"
+done
+${CLI[c]} sign --algo hpks-ring --key "$TMP/k_c.pem" --ring "$RING" --in "$TMP/msg.bin" \
+    --rounds $RJ --out "$TMP/r_rj.pem" 2>/dev/null || fail "hpks-ring $RJ-round sign (c)"
+for v in "${LANGS[@]}"; do
+    for s in "${LANGS[@]}"; do
+        accepts "hpks-ring $s->$v" ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
+            --in "$TMP/msg.bin" --sig "$TMP/r_$s.pem" --min-rounds 4
+    done
+    accepts "hpks-ring $RJ-round signature ($v), the rejection's control" ${CLI[$v]} verify \
+        --algo hpks-ring --ring "$RING" --in "$TMP/msg.bin" --sig "$TMP/r_rj.pem" --min-rounds $RJ
+    rejects "hpks-ring changed message ($v)" ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
+        --in "$TMP/msg2.bin" --sig "$TMP/r_rj.pem" --min-rounds $RJ
+done
 
 # ── hpke-stern: retired (TODO #413) ───────────────────────────────────────────
 # The demo KEM's ciphertext carried the error vector, so anyone decrypted it;

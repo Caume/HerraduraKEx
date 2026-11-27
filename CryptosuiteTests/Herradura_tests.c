@@ -3770,10 +3770,12 @@ static void test_stern_witness_binding(void)
     uint8_t  syndr[SDF_SYNBYTES], syn_chk[SDF_SYNBYTES];
     static SternSig sf_sig;
     BitArray ring_seeds[RK], ring_e[RK], rmsg = BA_INIT; ba_init_array(ring_seeds, RK); ba_init_array(ring_e, RK);
-    uint8_t  ring_syndrs[RK * SDF_SYNBYTES];
-    SternRingSig rsig;
+    uint8_t  ring_syndrs[RK * SDF_SYNBYTES], rs_flat[RK * KEYBYTES], ry_flat[RK * SDF_SYNBYTES];
+    uint8_t *rsig, *un[RND + 1];
+    size_t rsiglen = 0, pos, vlen = (size_t)RK * KEYBYTES + 1;
+    int chal[RND];
     int honest_ok, forged_ok, solved, off_weight, ring_ok, dups = 0;
-    int i, j, r, a, b, ok;
+    int i, j, a, b, ok;
 
     printf("[53] Stern-F witness binding + ring commitment distinctness  [SECURITY]\n");
 
@@ -3797,82 +3799,95 @@ static void test_stern_witness_binding(void)
         stern_rand_error_ba(&ring_e[i]);
         stern_syndrome_ba(ring_syndrs + i * SDF_SYNBYTES,
                           &ring_seeds[i], &ring_e[i]);
+        memcpy(rs_flat + i * KEYBYTES, ring_seeds[i].b, KEYBYTES);
+        stern_syndr_be(ry_flat + i * SDF_SYNBYTES, ring_syndrs + i * SDF_SYNBYTES, KEYBITS);
     }
     j = 1;
     ba_rand(&rmsg, urnd_fp);
-    stern_ring_alloc(&rsig, RK, RND);
-    stern_ring_sign(&rsig, &rmsg, &ring_e[j], j,
-                    ring_seeds, ring_syndrs, urnd_fp);
-    ring_ok = stern_ring_verify(&rsig, &rmsg, ring_seeds, ring_syndrs);
-    /* O(m^2) over m = 3*k*rounds = 108 values; a hash set would be faster and
-     * would need a hash function this file does not otherwise have. */
-    for (a = 0; a < RK * RND * 3; a++) {
-        const BitArray *va = (a % 3 == 0) ? &rsig.c0[a / 3]
-                           : (a % 3 == 1) ? &rsig.c1[a / 3] : &rsig.c2[a / 3];
-        for (b = 0; b < a; b++) {
-            const BitArray *vb = (b % 3 == 0) ? &rsig.c0[b / 3]
-                               : (b % 3 == 1) ? &rsig.c1[b / 3] : &rsig.c2[b / 3];
-            if (ba_equal(va, vb)) { dups++; break; }
+    rsig = stern_ring_sign(&rsiglen, rmsg.b, ring_e[j].b, j, rs_flat, ry_flat, RK, KEYBITS,
+                           RND, urnd_fp);
+    ring_ok = rsig && stern_ring_verify(rsig, rsiglen, rmsg.b, rs_flat, ry_flat, RK, KEYBITS, RND);
+    /* TODO #415: the signature carries D and, per round, ONE unopened
+     * commitment; all RND + 1 must differ (fresh randomness every round). */
+    if (rsig) {
+        ring_challenges(chal, rsig, RND);
+        un[0] = rsig;
+        for (i = 0, pos = 32; i < RND; i++) {
+            un[i + 1] = rsig + pos;
+            pos += 96 + (chal[i] == 0 ? 2 * vlen : vlen);
         }
+        for (a = 0; a <= RND; a++)
+            for (b = 0; b < a; b++)
+                if (!memcmp(un[a], un[b], 32)) { dups++; break; }
+        free(rsig);
     }
-    stern_ring_free(&rsig);
-    (void)r;
 
     ok = honest_ok && solved && off_weight && !forged_ok && ring_ok && dups == 0;
     printf("    rounds=%d  honest=%d  forged-witness wt=%d (t=%d) "
            "syndrome-matches=%d  forgery-accepted=%d\n",
            FRND, honest_ok, ba_popcount(&e_forged), SDF_T, solved, forged_ok);
     printf("    ring k=%d verified=%d  repeated commitments=%d/%d  [%s]\n\n",
-           RK, ring_ok, dups, 3 * RK * RND, ok ? "PASS" : "FAIL");
+           RK, ring_ok, dups, RND + 1, ok ? "PASS" : "FAIL");
 }
 
-/* [20] HPKS-Stern-Ring (78.I): OR-composed ring signature, k=3, N=256 */
+/* [20] HPKS-Ring (TODO #415): one Stern proof over the ring's block-diagonal
+ * statement, k=3, N=256.  The accept-control is the honest verify; the ring is
+ * also verified reversed (the signature binds the canonical ring, not the
+ * order given).  Refused: the same signature on another message, the signature
+ * with one byte flipped, and a sign attempt with another member's secret. */
 static void test_hpks_stern_ring_correctness(void)
 {
 #define RING_K 3
     struct timespec t0;
-    int N, ok = 0, i, re_tried = 0, re_refused = 0;
-    printf("[20] HPKS-Stern-Ring (78.I): OR-composition, k=%d, N=256, rounds=%d"
+    int N, ok = 0, ord = 0, other = 0, tam = 0, wrong = 0, i;
+    printf("[20] HPKS-Ring: one Stern proof over the ring, k=%d, N=256, rounds=%d"
            "  [CODE-BASED RING SIG]\n", RING_K, SDF_TEST_ROUNDS);
     N = TEST_ROUNDS(3);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
-        BitArray ring_seeds[RING_K]; ba_init_array(ring_seeds, RING_K);
-        uint8_t  ring_syndrs[RING_K * SDF_SYNBYTES];
-        BitArray ring_e[RING_K], msg = BA_INIT; ba_init_array(ring_e, RING_K);
-        SternRingSig rsig;
-        int ki, j;
+        BitArray seed = BA_INIT, ring_e[RING_K], msg = BA_INIT; ba_init_array(ring_e, RING_K);
+        uint8_t seeds[RING_K * KEYBYTES], syns[RING_K * SDF_SYNBYTES], syndr[SDF_SYNBYTES];
+        uint8_t rseeds[RING_K * KEYBYTES], rsyns[RING_K * SDF_SYNBYTES], *sig, *bad;
+        size_t siglen = 0, badlen = 0;
+        int ki, j = i % RING_K;
 
         ba_rand(&msg, urnd_fp);
         for (ki = 0; ki < RING_K; ki++) {
-            ba_rand(&ring_seeds[ki], urnd_fp);
+            ba_rand(&seed, urnd_fp);
             stern_rand_error_ba(&ring_e[ki]);
-            stern_syndrome_ba(ring_syndrs + ki * SDF_SYNBYTES,
-                              &ring_seeds[ki], &ring_e[ki]);
+            stern_syndrome_ba(syndr, &seed, &ring_e[ki]);
+            memcpy(seeds + ki * KEYBYTES, seed.b, KEYBYTES);
+            stern_syndr_be(syns + ki * SDF_SYNBYTES, syndr, KEYBITS);
         }
-        j = i % RING_K;
-        stern_ring_alloc(&rsig, RING_K, SDF_TEST_ROUNDS);
-        stern_ring_sign(&rsig, &msg, &ring_e[j], j,
-                        ring_seeds, ring_syndrs, urnd_fp);
-        if (stern_ring_verify(&rsig, &msg, ring_seeds, ring_syndrs))
+        for (ki = 0; ki < RING_K; ki++) {        /* the ring, reversed */
+            memcpy(rseeds + ki * KEYBYTES, seeds + (RING_K - 1 - ki) * KEYBYTES, KEYBYTES);
+            memcpy(rsyns + ki * SDF_SYNBYTES, syns + (RING_K - 1 - ki) * SDF_SYNBYTES, SDF_SYNBYTES);
+        }
+        sig = stern_ring_sign(&siglen, msg.b, ring_e[j].b, j, seeds, syns, RING_K, KEYBITS,
+                              SDF_TEST_ROUNDS, urnd_fp);
+        if (sig && stern_ring_verify(sig, siglen, msg.b, seeds, syns, RING_K, KEYBITS, SDF_TEST_ROUNDS)) {
             ok++;
-        /* TODO #421: re-encode the first b = 2 entry as 5 (same residue mod 3);
-         * the verifier must refuse it, not read it as b = 2. */
-        { int x, nb = RING_K * SDF_TEST_ROUNDS;
-          for (x = 0; x < nb && rsig.b[x] != 2; x++) ;
-          if (x < nb) {
-              re_tried++;
-              rsig.b[x] = 5;
-              if (!stern_ring_verify(&rsig, &msg, ring_seeds, ring_syndrs)) re_refused++;
-              rsig.b[x] = 2;
-          } }
-        stern_ring_free(&rsig);
+            if (stern_ring_verify(sig, siglen, msg.b, rseeds, rsyns, RING_K, KEYBITS, SDF_TEST_ROUNDS))
+                ord++;
+            msg.b[0] ^= 1;
+            if (!stern_ring_verify(sig, siglen, msg.b, seeds, syns, RING_K, KEYBITS, SDF_TEST_ROUNDS))
+                other++;
+            msg.b[0] ^= 1;
+            sig[siglen / 2] ^= 0x01;
+            if (!stern_ring_verify(sig, siglen, msg.b, seeds, syns, RING_K, KEYBITS, SDF_TEST_ROUNDS))
+                tam++;
+        }
+        free(sig);
+        bad = stern_ring_sign(&badlen, msg.b, ring_e[(j + 1) % RING_K].b, j, seeds, syns, RING_K,
+                              KEYBITS, SDF_TEST_ROUNDS, urnd_fp);
+        if (!bad) wrong++;
+        free(bad);
         if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    /* A run with no b = 2 entry re-encoded nothing: n/a, never a pass or a fail. */
-    printf("    %d / %d ring-verified; %d / %d b=2 re-encoded as 5 refused%s  [%s]\n\n",
-           ok, N, re_refused, re_tried, re_tried == 0 ? " (n/a)" : "",
-           ok == N && re_refused == re_tried ? "PASS" : "FAIL");
+    printf("    %d / %d ring-verified, %d / %d in reversed order; refused: %d / %d other message, "
+           "%d / %d tampered, %d / %d wrong secret  [%s]\n\n",
+           ok, N, ord, N, other, N, tam, N, wrong, N,
+           ok == N && ord == N && other == N && tam == N && wrong == N ? "PASS" : "FAIL");
 #undef RING_K
 }
 

@@ -236,49 +236,6 @@ def _measure_zkboo_poke(H, rounds, trials):
     return acc, wit, alt, ctrl
 
 
-def _measure_ring_forgery(H, rounds, trials):
-    """java [26] (TODO #321): a ring signature produced with a witness that
-    matches NO member's syndrome.  Detecting event: any round whose challenge
-    for the forging member is b != 1, because TWO branches catch it -- b = 0
-    binds wt(respA ^ respB) = t (TODO #298's fix, which did not exist when this
-    test's rate was written down) and b = 2 checks H(pi_seed, Hy ^ syndrome).
-    Only b = 1 reads neither, so the rate is (1/3)^rounds.
-
-    Alternative under test: "no b = 2 round" -- the PRE-#298 mechanism, when
-    b = 0 bound nothing, and still what SelfTest.java's comment and both spec/
-    tables said.  It predicts (2/3)^rounds, 4.6 million times larger at the
-    shipped 32 rounds, and it is what made TODO #260 see a real flake at 8.
-
-    Run at the harness's own ring width n = 32 rather than at Java's 256: the
-    mechanism is a statement about which verifier BRANCH reads what, identical
-    in the two ports' source, and one n = 256 trial costs 6.7 s against 0.5 s
-    here -- 1.7 hours for the ladder instead of 13 minutes."""
-    n = 32
-    k = 4                           # Java's ring size, not the harness's 3
-    acc = wit = alt = ctrl = 0
-    for _ in range(trials):
-        keys, errs = [], []
-        for _ in range(k):
-            seed_i, e_i, syn_i = H.stern_f_keygen(n)
-            keys.append((seed_i, syn_i))
-            errs.append(e_i)
-        msg = H.BitArray.random(n)
-        # The accept control, as everywhere here: an honest ring signature must
-        # verify, or a signer producing nothing verifiable scores every trial a
-        # rejection and reads as a perfect result (#234's vacuous pass).
-        honest = H.hpks_stern_ring_sign_local(msg, errs[0], 0, keys, n, rounds)
-        if H.hpks_stern_ring_verify_local(msg, honest, keys, n):
-            ctrl += 1
-        bad = H.BitArray.random(n).uint      # matches no member's syndrome
-        sig = H.hpks_stern_ring_sign_local(msg, bad, 0, keys, n, rounds)
-        out = H.hpks_stern_ring_verify_local(msg, sig, keys, n)
-        ch = sig[1][0]                       # the forging member's challenges
-        acc += bool(out)
-        wit += (bool(out) == all(b == 1 for b in ch))
-        alt += (bool(out) == (2 not in ch))
-    return acc, wit, alt, ctrl
-
-
 def _measure_zkpnl_message(H, rounds, trials):
     """TODO #322, java [19]/[28]: the ZKP-NL family's message-tamper rejection.
 
@@ -372,7 +329,6 @@ _MEASURERS = {
     "corrupted-syndrome": _measure_corrupted_syndrome,
     "offweight-witness":  _measure_offweight_witness,
     "zkboo-poke":         _measure_zkboo_poke,
-    "ring-forgery":       _measure_ring_forgery,
 }
 
 

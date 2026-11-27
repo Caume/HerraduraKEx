@@ -26,6 +26,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
@@ -56,7 +57,7 @@ import (
 // "signature ring size != provided members" check runs after the allocation it
 // was meant to guard.
 const (
-	ringMaxK  = 64      // herradura_cli.c RING_MAX_K
+	ringMaxK  = 1024    // herradura_cli.c RING_MAX_K == RingMaxMembers (TODO #415)
 	xmssMaxH  = 20      // herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
 	sternMaxN = 256     // the widest short-form Stern instance
 )
@@ -234,7 +235,8 @@ const (
 	lblHpksXmssPriv = "HERRADURA HPKS-XMSS PRIVATE KEY"
 	lblHpksXmssPub  = "HERRADURA HPKS-XMSS PUBLIC KEY"
 	lblHpksXmssSig  = "HERRADURA HPKS-XMSS SIGNATURE"
-	lblRingSig      = "HERRADURA HPKS-RING SIGNATURE"
+	lblRingSig      = "HERRADURA HPKS-RING-V2 SIGNATURE" // TODO #415
+	lblRingSigV1    = "HERRADURA HPKS-RING SIGNATURE"    // the forgeable v1; refused
 
 	lblSession    = "HERRADURA SESSION KEY"
 	lblRnlResp    = "HERRADURA HKEX-RNL RESPONSE"
@@ -1560,34 +1562,43 @@ func alignBlob(v []byte, dstLen int) []byte {
 	return blob
 }
 
-// ── HPKS-Stern-Ring signature helpers (TODO #121) ────────────────────────────
+// ── HPKS-Ring signature helpers (TODO #415) ──────────────────────────────────
 //
-// Wire format matches the Python/C CLIs: SEQ(k, rounds, n, blob) where blob is a
-// member-major / round-major flat layout of c0||c1||c2||b(1 byte)||respA||respB
-// (each n-bit value = n/8 bytes) per (member, round).
+// PEM "HERRADURA HPKS-RING-V2 SIGNATURE": SEQ(n, k, rounds, D, blob) -- D the
+// 32-byte transcript digest, blob the rest of the package's signature (per
+// round the unopened commitment and the opening), minimal DER; its exact length
+// follows from the challenges D derives.  SPEC.md §11.2.
 
-func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
-	ring, _, n := loadRingPubkeysAny(ringArg)
-	return ring, n
-}
+const ringV1Refused = "this is a version-1 HPKS-Ring signature (HERRADURA HPKS-RING " +
+	"SIGNATURE), which is forgeable without any member's key (TODO #415) and is no " +
+	"longer accepted; re-sign it with this release"
 
-// loadRingPubkeysAny reads the ring at either form: the short form's members
-// in the first slice, the long form's (TODO #382) in the second.
-func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
-	paths := strings.Split(ringArg, ",")
-	var ring []RingKeypair
-	var ringL []SternLRingKey
+// loadRing reads --ring: every member's seed (n/8 bytes) and big-endian
+// syndrome (n/16), and the members' one width.
+func loadRing(ringArg string) ([]RingMember, int) {
+	var paths []string
+	for _, p := range strings.Split(ringArg, ",") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least one member public key")
+		os.Exit(1)
+	}
+	if len(paths) > ringMaxK {
+		fmt.Fprintf(os.Stderr, "hpks-ring: --ring lists %d members, at most %d supported\n", len(paths), ringMaxK)
+		os.Exit(1)
+	}
+	var ring []RingMember
 	ringN := -1
 	for _, p := range paths {
-		if p == "" {
-			continue
-		}
 		label, ints, err := readPEMInts(p)
 		if err != nil {
 			die("hpks-ring", err)
 		}
 		if label != lblHpksSternPub {
-			fmt.Fprintf(os.Stderr, "hpks-ring: ring member %q is %q, expected hpks-stern public key\n", p, label)
+			fmt.Fprintf(os.Stderr, "hpks-ring: ring member '%s' is %s, expected hpks-stern\n", p, label)
 			os.Exit(1)
 		}
 		n := sternWireN(ints[2], "hpks-ring")
@@ -1597,154 +1608,57 @@ func loadRingPubkeysAny(ringArg string) ([]RingKeypair, []SternLRingKey, int) {
 			fmt.Fprintln(os.Stderr, "hpks-ring: all ring members must share the same n")
 			os.Exit(1)
 		}
-		if SternIsLong(n) {
-			ringL = append(ringL, SternLRingKey{
-				Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
-				Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring"),
-			})
-			continue
+		m := RingMember{
+			Seed:     sternLField(ints[1], n, "seed", "hpks-ring"),
+			Syndrome: sternLField(ints[0], n, "syndrome", "hpks-ring")[n/8-n/16:],
 		}
-		ring = append(ring, RingKeypair{
-			Seed:     NewBitArray(n, new(big.Int).SetBytes(ints[1])),
-			Syndrome: new(big.Int).SetBytes(ints[0]),
-		})
+		for _, o := range ring {
+			if bytes.Equal(o.Seed, m.Seed) && bytes.Equal(o.Syndrome, m.Syndrome) {
+				fmt.Fprintf(os.Stderr, "hpks-ring: --ring lists the member '%s' twice\n", p)
+				os.Exit(1)
+			}
+		}
+		ring = append(ring, m)
 	}
-	if len(ring)+len(ringL) < 2 {
-		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least 2 member public keys")
-		os.Exit(1)
-	}
-	return ring, ringL, ringN
+	return ring, ringN
 }
 
-// encodeRingSigL is encodeRingSig for the long form: 32-byte commitments,
-// n/8-byte responses.
-func encodeRingSigL(sig *SternLRingSig, n int) string {
-	nb := n / 8
-	blob := make([]byte, 0, sig.K*sig.Rounds*(3*32+2*nb+1))
-	for i := 0; i < sig.K; i++ {
-		for _, rd := range sig.Members[i].Rounds {
-			blob = append(blob, rd.C0.Bytes()...)
-			blob = append(blob, rd.C1.Bytes()...)
-			blob = append(blob, rd.C2.Bytes()...)
-			blob = append(blob, byte(rd.B))
-			blob = append(blob, rd.RespA...)
-			blob = append(blob, rd.RespB...)
-		}
-	}
-	kd, _ := derIntSmall(sig.K)
-	rdd, _ := derIntSmall(sig.Rounds)
+func encodeRingSig(sig []byte, n, k, rounds int) string {
 	nd, _ := derIntSmall(n)
-	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
-	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
+	kd, _ := derIntSmall(k)
+	rdd, _ := derIntSmall(rounds)
+	dd, _ := DerIntEnc(sig[:32])
+	body := new(big.Int).SetBytes(sig[32:]).Bytes()
+	if len(body) == 0 {
+		body = []byte{0}
+	}
+	bd, _ := DerIntEnc(body)
+	seq, _ := DerSeqEnc(nd, kd, rdd, dd, bd)
 	return PemWrap(lblRingSig, seq)
 }
 
-func encodeRingSig(sig *SternRingSig, n int) string {
-	nb := n / 8
-	blob := make([]byte, 0, sig.K*sig.Rounds*(5*nb+1))
-	put := func(ba *BitArray) {
-		b := make([]byte, nb)
-		fillBA(b, ba)
-		blob = append(blob, b...)
-	}
-	for i := 0; i < sig.K; i++ {
-		for r := 0; r < sig.Rounds; r++ {
-			rd := sig.Members[i].Rounds[r]
-			put(rd.C0)
-			put(rd.C1)
-			put(rd.C2)
-			blob = append(blob, byte(rd.B))
-			put(rd.RespA)
-			put(rd.RespB)
+// decodeRingSig returns the signature bytes (D || blob) and its n, k, rounds.
+func decodeRingSig(path string) ([]byte, int, int, int) {
+	if data, err := readFile(path); err == nil {
+		if label, _, err := PemUnwrap(string(data)); err == nil && label == lblRingSigV1 {
+			fmt.Fprintln(os.Stderr, "verify: "+ringV1Refused)
+			os.Exit(1)
 		}
 	}
-	kd, _ := derIntSmall(sig.K)
-	rdd, _ := derIntSmall(sig.Rounds)
-	nd, _ := derIntSmall(n)
-	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
-	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
-	return PemWrap(lblRingSig, seq)
-}
-
-func decodeRingSig(path string) (*SternRingSig, int) {
-	sig, _, n := decodeRingSigAny(path)
-	return sig, n
-}
-
-// decodeRingSigAny decodes either form (the long form's in the second result).
-func decodeRingSigAny(path string) (*SternRingSig, *SternLRingSig, int) {
 	label, ints, err := readPEMInts(path)
 	if err != nil {
 		die("verify", err)
 	}
 	if label != lblRingSig {
-		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING SIGNATURE PEM, got %q\n", label)
+		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING-V2 SIGNATURE PEM, got %q\n", label)
 		os.Exit(1)
 	}
-	// Bounded before use: k, rounds and n each multiply into the blob length
-	// below, and verify's own k/n cross-checks only run after this returns.
-	k := bounded(wireInt(ints[0], "ring member count", "verify"), 2, ringMaxK,
-		"ring member count", "verify")
-	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
-		"round count", "verify")
-	n := boundedSternN(wireInt(ints[2], "n", "verify"), "verify")
-	nb := n / 8
-	cb := nb
-	if SternIsLong(n) {
-		cb = 32 // 256-bit commitments (TODO #382)
-	}
-	entry := 3*cb + 2*nb + 1
-	blen := k * rounds * entry
-	// A payload longer than (k, rounds, n) describe is a mismatch, not
-	// something to truncate; shorter is legal (DER strips leading zero bytes)
-	// and FillBytes zero-pads it.
-	if len(ints[3]) > blen {
-		fmt.Fprintf(os.Stderr, "verify: HPKS-RING signature payload is %d bytes, "+
-			"but k=%d rounds=%d n=%d describe %d\n", len(ints[3]), k, rounds, n, blen)
-		os.Exit(1)
-	}
-	blob := make([]byte, blen)
-	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
-
-	if SternIsLong(n) {
-		lsig := &SternLRingSig{K: k, Rounds: rounds, Members: make([]SternLSig, k)}
-		off := 0
-		cut := func(w int) []byte { v := blob[off : off+w]; off += w; return v }
-		for i := 0; i < k; i++ {
-			lsig.Members[i].Rounds = make([]SternLRound, rounds)
-			for r := 0; r < rounds; r++ {
-				rd := &lsig.Members[i].Rounds[r]
-				rd.C0 = NewFromBytes(cut(32), 0, 256)
-				rd.C1 = NewFromBytes(cut(32), 0, 256)
-				rd.C2 = NewFromBytes(cut(32), 0, 256)
-				rd.B = int(cut(1)[0])
-				rd.RespA = cut(nb)
-				rd.RespB = cut(nb)
-			}
-		}
-		return nil, lsig, n
-	}
-	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
-	off := 0
-	take := func() *BitArray {
-		v := NewBitArray(n, new(big.Int).SetBytes(blob[off:off+nb]))
-		off += nb
-		return v
-	}
-	for i := 0; i < k; i++ {
-		sig.Members[i].Rounds = make([]SternRound, rounds)
-		for r := 0; r < rounds; r++ {
-			c0 := take()
-			c1 := take()
-			c2 := take()
-			b := int(blob[off])
-			off++
-			ra := take()
-			rb := take()
-			sig.Members[i].Rounds[r] = SternRound{C0: c0, C1: c1, C2: c2, B: b, RespA: ra, RespB: rb}
-		}
-	}
-	return sig, nil, n
+	n := boundedSternN(wireInt(ints[0], "n", "verify"), "verify")
+	k := bounded(wireInt(ints[1], "ring member count", "verify"), 1, ringMaxK, "ring member count", "verify")
+	rounds := bounded(wireInt(ints[2], "round count", "verify"), 1, SdfMaxRounds, "round count", "verify")
+	D := fitBytes(ints[3], 32, "digest", "verify")
+	blen := HpksSternRingSigLen(D, k, n, rounds) - 32
+	return append(D, fitBytes(ints[4], blen, "signature body", "verify")...), n, k, rounds
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -5069,21 +4983,23 @@ func cmdSign(args []string) {
 			os.Exit(1)
 		}
 		n := sternWireN(ourInts[2], "sign")
-		signerSeed := new(big.Int).SetBytes(ourInts[1])
-		ringKeys, ringKeysL, ringN := loadRingPubkeysAny(*ring)
+		e := sternLField(ourInts[0], n, "e", "sign")
+		seed := sternLField(ourInts[1], n, "seed", "sign")
+		var syn []byte
+		if SternIsLong(n) {
+			syn = SternLSyndrome(seed, e)[n/8-n/16:]
+		} else {
+			syn = SternSyndromeBE(SternSyndrome(NewFromBytes(seed, 0, n), NewFromBytes(e, 0, n)), n)
+		}
+		members, ringN := loadRing(*ring)
 		if ringN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", n, ringN)
 			os.Exit(1)
 		}
+		// The signer's own public key, matched by seed AND syndrome.
 		j := -1
-		for idx := range ringKeys {
-			if ringKeys[idx].Seed.BigInt().Cmp(signerSeed) == 0 {
-				j = idx
-				break
-			}
-		}
-		for idx := range ringKeysL {
-			if new(big.Int).SetBytes(ringKeysL[idx].Seed).Cmp(signerSeed) == 0 {
+		for idx, m := range members {
+			if bytes.Equal(m.Seed, seed) && bytes.Equal(m.Syndrome, syn) {
 				j = idx
 				break
 			}
@@ -5093,30 +5009,14 @@ func cmdSign(args []string) {
 				"(run pkey --pubout on the signer key and include it)")
 			os.Exit(1)
 		}
-		// TODO #272: ringMaxK bounds the READER in every CLI (TODO #240), but
-		// only C's writer enforced it, so Go signed rings that every verifier
-		// -- Go's included -- then refused.
-		if len(ringKeys)+len(ringKeysL) > ringMaxK {
-			fmt.Fprintf(os.Stderr, "hpks-ring sign: ring has %d members, at most %d "+
-				"supported (a larger ring produces a signature no CLI will verify)\n",
-				len(ringKeys)+len(ringKeysL), ringMaxK)
-			os.Exit(1)
+		rsig, err := HpksSternRingSign(msgPad(inBytes, 32), e, j, members, n, sternRounds)
+		if err != nil {
+			die("hpks-ring sign", err)
 		}
-		msg := sternMsg(inBytes, n)
-		var pem string
-		if SternIsLong(n) {
-			lsig := HpksSternLRingSign(msg, sternLField(ourInts[0], n, "e", "sign"), j,
-				ringKeysL, sternRounds)
-			pem = encodeRingSigL(lsig, n)
-		} else {
-			e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
-			sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
-			pem = encodeRingSig(sig, n)
-		}
-		if err := writeString(*out, pem); err != nil {
+		if err := writeString(*out, encodeRingSig(rsig, n, len(members), sternRounds)); err != nil {
 			die("sign", err)
 		}
-		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys)+len(ringKeysL))
+		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(members))
 
 	case "hpks-wots":
 		if wotsIsUsed(*key) {
@@ -5234,38 +5134,25 @@ func cmdVerify(args []string) {
 		inBytes = Hfscx256(inBytes, nil)
 	}
 
-	// hpks-ring: anonymous ring verification against --ring members.
+	// hpks-ring: anonymous ring verification against --ring members (TODO #415).
 	if *algo == "hpks-ring" {
 		if *ring == "" {
 			fmt.Fprintln(os.Stderr, "hpks-ring verify: --ring (comma-separated member public keys) required")
 			os.Exit(1)
 		}
-		ringKeys, ringKeysL, n := loadRingPubkeysAny(*ring)
-		rsig, rsigL, sigN := decodeRingSigAny(*sig)
-		sigK, sigRounds := 0, 0
-		if rsigL != nil {
-			sigK, sigRounds = rsigL.K, rsigL.Rounds
-		} else {
-			sigK, sigRounds = rsig.K, rsig.Rounds
-		}
+		members, n := loadRing(*ring)
+		rsig, sigN, sigK, sigRounds := decodeRingSig(*sig)
 		requireRounds(sigRounds, minRounds, "hpks-ring signature", "verify")
 		if sigN != n {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
 			os.Exit(1)
 		}
-		if sigK != len(ringKeys)+len(ringKeysL) {
+		if sigK != len(members) {
 			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature ring size %d != %d provided members\n",
-				sigK, len(ringKeys)+len(ringKeysL))
+				sigK, len(members))
 			os.Exit(1)
 		}
-		msg := sternMsg(inBytes, n)
-		var ok bool
-		if rsigL != nil {
-			ok = HpksSternLRingVerify(msg, rsigL, ringKeysL)
-		} else {
-			ok = HpksSternRingVerify(msg, rsig, ringKeys)
-		}
-		if ok {
+		if HpksSternRingVerify(msgPad(inBytes, 32), rsig, members, n, sigRounds) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		}
@@ -6261,6 +6148,8 @@ var keySites = []keySite{
 	{"verify", "hpks-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
 	{"sign", "hpks-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
 	{"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
+	{"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
+	{"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
 	{"sign", "rnl-sigma", "--key", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
 	{"verify", "rnl-sigma", "--pubkey", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
 	{"sign", "nl-zkboo", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
@@ -6310,6 +6199,7 @@ var derItems = map[string][2]int{
 	"HERRADURA HPKS PUBLIC KEY": {2, 2},
 	"HERRADURA HPKS-NL PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-NL PUBLIC KEY": {2, 2},
+	"HERRADURA HPKS-RING-V2 SIGNATURE": {5, 5},
 	"HERRADURA HPKS-STERN PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-STERN PUBLIC KEY": {3, 3},
 	"HERRADURA HPKS-WOTS PRIVATE KEY": {2, 2},
@@ -7042,6 +6932,40 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
+			}
+			return ""
+		}
+	case "HERRADURA HPKS-RING-V2 SIGNATURE":
+		if n >= 5 && n <= 5 {
+			if c := int64(2); n > 0 && L(0) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
+			}
+			if c := int64(2); n > 1 && L(1) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
+			}
+			if c := int64(2); n > 2 && L(2) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
+			}
+			if c := int64(32); n > 3 && L(3) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
+			}
+			if c := int64(F(2) * (96 + 2 * (F(1) * (F(0)/8) + (F(1) + 7)/8))); n > 4 && L(4) > c {
+				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 4, L(4), c)
+			}
+			if n > 0 && lz[0] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
+			}
+			if n > 1 && lz[1] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
+			}
+			if n > 2 && lz[2] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
+			}
+			if c := int64(32); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
+				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
+			}
+			if n > 4 && lz[4] == 1 {
+				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 4)
 			}
 			return ""
 		}
@@ -7782,15 +7706,6 @@ func pemFileLabel(path string) string {
 // the passphrase envelope is refused by name, TODO #397): a response, session key or hex key goes
 // on to the loader, whose own message is the more specific one.
 func checkKeyLabels(cmd string, fs *flag.FlagSet) {
-	// TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
-	// verify refuse it here, right after flag parsing and before any file is
-	// read (every subcommand calls this first), until the redesign.
-	if cmd == "sign" || cmd == "verify" {
-		if f := fs.Lookup("algo"); f != nil && f.Value.String() == "hpks-ring" {
-			fmt.Fprintln(os.Stderr, cmd+": --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature")
-			os.Exit(1)
-		}
-	}
 	algo := ""
 	if f := fs.Lookup("algo"); f != nil {
 		algo = f.Value.String()
