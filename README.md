@@ -340,7 +340,7 @@ SecurityProofs-9.md                                 — formal analysis §11.37�
                                                       quenched check against exact mu; the
                                                       certified ladder to n = 20; the
                                                       exact slope to n = 23)
-SecurityProofs-10.md                                — formal analysis §11.43–§11.81 (the
+SecurityProofs-10.md                                — formal analysis §11.43–§11.82 (the
                                                       local certificate: a sound lower
                                                       bound on mu at any width, why its
                                                       window must grow with n, and the

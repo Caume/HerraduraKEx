@@ -643,6 +643,17 @@ by 2.7 / 3.6.  So the flat 22 -> 23 step is a one-bit step too small to resolve,
 1.3 / 1.5 SE, not established.  Long arcs fail at n = 20 too (up to 16 / 18 of 20 bits).
 E[mu] at n = 20 is unchanged within one SE.  No rating moves.
 
+**Fifteenth pass (v20.0.0, SecurityProofs-10.md §11.82, `nl_fscx_v3_worst_class_n17.py`):
+v3's worst LSB class at n = 17, item (3).**  §11.53 proved the LSB-row ceiling, 1.4150 at
+delta(B) = 5 mod 8, but its n = 17 evidence was 24 uniform keys, few of them in that class.
+96 keys drawn from the class itself (seed 2570317, disjoint from §11.53's, about 4.5 h at
+8 threads) all solve, certified, to exactly 1.4150374993 on a length-1 cycle: 96 on the
+ceiling, 0 above, 0 below (share below under 3.1% at 95%).  So floor = ceiling on the
+worst class at n = 17, in sample, and the worst-key linear margin there is 1.77x.  A
+control shows the below/above counts fire.  Item (3) stays open past n = 17, where
+carry-receiving rows multiply.  (v2's n = 0 mod 3 class does not exist: M is singular
+there, so the v2 class question has no third class to sample.)  No rating moves.
+
 **Reach (restated in v12.0.1; the earlier text predated #345 and #351).**  Four
 production-track rows rest on this item: HSKE-NL-A2, `twk`, HSKE-NL-A3 and `twk --v3`,
 each under the conjecture named in the "Ratings now rest on this item" block above, and

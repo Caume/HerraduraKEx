@@ -586,6 +586,18 @@ in all four CLIs (150 cells).  Its fail-open control now fails all 23 damaged ce
 The FIFO cell is shown to fire: a C CLI built without `O_NONBLOCK` hangs on it and
 times out.  Not MAJOR: refusals and messages are unchanged.
 
+### #257, fifteenth pass: v3's worst LSB class at n = 17 sits on the ceiling
+
+Research only; no code, wire format or rating changes.  §11.53 proved that every v3 key
+with delta(B) = 5 (mod 8) has linear slope at most 1.4150, which caps the worst-key linear
+margin at 1.77x.  It left the floor open: a cycle through carry-receiving rows might
+undercut that.  The new gate `SecurityProofsCode/nl_fscx_v3_worst_class_n17.py` reads 96
+pinned, certified n = 17 solves drawn from that class (`nl_fscx_v3_worst_class_n17.json`,
+about 4.5 h at 8 threads).  All 96 sit exactly on the ceiling, none above and none below.
+So floor = ceiling on the worst class at n = 17, in sample.  A control moves one slope
+just below the ceiling and one just above, and the gate counts both, so a key below the
+ceiling would show.  SecurityProofs-10.md §11.82; TODO #257 stays open past n = 17.
+
 ## [19.0.0] - 2026-11-24
 
 Two breaking changes: the raw-body ZKP-NL and HCRED encodings (TODO #408) and the ZKBoo
