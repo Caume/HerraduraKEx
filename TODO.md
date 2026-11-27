@@ -10,6 +10,47 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #427: two gaps left after #426 and #425
+
+Neither is a security gap; both are recorded so they are not lost.
+
+1. **Go and Java check a one-time-signature state file before opening it.**  #426 made
+   the C and Python readers open `<key>.idx` first, with `O_NOFOLLOW | O_NONBLOCK`, and
+   then `fstat` the descriptor.  Go's `otsStateRead` and Java's `readIdxState` still
+   `Lstat` / `isRegularFile` the name first, and only then open it:
+   - Go then checks the opened file against the name (`os.SameFile`);
+   - Java opens with `NOFOLLOW_LINKS`.
+
+   Both refuse a symlink, and neither can be made to read a file other than the one
+   checked.  But a FIFO swapped in between the check and the open makes the open BLOCK.
+   That is a hang, not an acceptance.  To do: open without blocking, then check the
+   opened file:
+   - **Go:** `syscall.O_NONBLOCK` where the GOOS has it, behind a build-tagged helper
+     like the one #417 avoided.
+   - **Java:** `Files.newByteChannel` with `NOFOLLOW_LINKS` can still block on a FIFO,
+     so it may need a `FileChannel` opened from the `stat`-ed attributes' `fileKey`, or
+     an accepted residual window.
+
+   A test cell would need to win the race, so the evidence would be a deterministic
+   swap hook rather than `CliTest/test_ots_state.sh`.
+2. **The Arduino IDE path is untested.**  #425 put the 32-bit routines in a
+   `Herradura32` library (`demos/arduino/libraries/Herradura32`: `library.properties`,
+   `src/Herradura32.h`), with each demo a sketch of its own name.  Only
+   `build_arduino.sh` (raw `avr-g++ -I…`) and simavr have run it.  Nobody has:
+   - copied the library into an Arduino IDE sketchbook;
+   - compiled a sketch with `arduino-cli compile --libraries demos/arduino/libraries`;
+   - uploaded one to a Mega 2560.
+
+   To do: compile every sketch with `arduino-cli` (`arduino:avr:mega`) in CI or once by
+   hand, and fix the library metadata if it complains.  Then restore the
+   `arduino-cli` line removed from README.md's Arduino section.
+
+Not MAJOR: no wire format or CLI surface.
+
+Status: **OPEN**
+
+---
+
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
