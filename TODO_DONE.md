@@ -27991,3 +27991,77 @@ also found that the Arduino harness's Stern matrix lacked TODO #88's HFSCX-32
 finalization; that is fixed.  Not MAJOR: no CLI or artifact.
 
 Status: **DONE v20.0.0** — the assembly and Arduino ring demos are one Stern proof over a k=2 ring at N=32, pinned to one vector in all three harnesses.
+
+---
+
+### #425: split the assembly and Arduino suite demos into one program per algorithm
+
+The ARM Thumb-2 (`.s`, ~4.9k lines), NASM i386 (`.asm`, ~5.0k) and Arduino (`.ino`,
+~1.6k) suites are each ONE program that runs about twenty demos in sequence, with the
+"Eve" attack checks gathered into a block in the middle.  That makes it hard to read one
+algorithm end to end, to see which output belongs to which demo, or to drop or port a
+single demo (#424 was that problem for the ring).
+
+To do: give each target a shared core (BitArray-free 32-bit FSCX, NL-FSCX v1/v2,
+HFSCX-32, GF(2^32) mul/pow, the PRNG, the `hprintf` / `print_str` / `check()` [FAIL]
+gate) and one small non-interactive program per algorithm.  Each program runs one whole
+operation on fixed sample data and prints its inputs, intermediates and verdict:
+- key exchange (HKEX-GF, HKEX-RNL): both parties' keys and the shared secret;
+- encryption (HSKE, HSKE-NL-A1/A2, HPKE, HPKE-NL, HPKE-Stern-F, FPE, tweakable,
+  masked HSKE, ratchet): plaintext, ciphertext, decryption, round-trip check;
+- signatures and proofs (HPKS, HPKS-NL, HPKS-Stern-F, ZKP-RNL, ZKP-NL, OPRF,
+  accumulator): sign/prove, verify, then the same verifier rejecting a tampered message
+  or signature, which keeps each program's accept control and the rejection next to
+  each other.
+"Fixed sample data" means fixed message, plaintext and key seeds.  The randomness a
+scheme needs (nonces, Stern masks) still comes from the PRNG; a `--seed`-style fixed seed
+would make the output byte-stable, but that is optional.
+
+Sharing the core:
+- **ARM, i386:** a core object linked into each program, so no copy of the code.
+- **Arduino:** arduino-cli needs one directory per sketch, with the `.ino` named after
+  the directory, and a relative `#include` outside the sketch folder does not survive the
+  sketch copy.  Use a local library (`--libraries`) for the core.  Smaller firmwares also
+  relieve the SRAM headroom check in `build_arduino.sh`.
+
+What has to move with it:
+- `build_{arm,asm_i386,arduino}.sh`: build N programs; the GATE-EXEMPT ungated-call
+  guard covers every source.
+- `run_{arm,asm_i386,arduino}.sh suite`: run them all and fail on any `*** FAILED:` or
+  a missing OK line.
+- ci.yml's `arm-i386` and `arduino` steps, `docker-entrypoint.sh`, and
+  `tools/check_docker_mirror.py` / `check_runnable_coverage.py` if they name the binaries.
+- The SecurityProofsCode gates that read the suite sources by path:
+  `v1_remaining_sites.py`, `v2_v3_b_setter.py` (`EXPECTED_32` counts per file),
+  `hfscx_mmo_compression.py`.  Re-point them at the new files and keep their counts
+  equal to the old totals, shown to fire on a planted site.
+- CLAUDE.md (Repository Structure, Assembly), README and TUTORIAL references to the suite
+  demo.
+
+Out of scope:
+- The test harnesses `CryptosuiteTests/Herradura_tests.{s,asm,ino}` ([1]–[18]) stay
+  single programs; numbered-test parity depends on them.
+- C, Go, Python and Java keep their one-file suites.
+
+#424 is done, on the single files.  Its pinned ring vector in each harness's `[13]` is a
+cross-port check that the split must keep passing.  Not MAJOR: no wire format or CLI
+surface.
+
+Done.  Each target is a shared core plus twenty one-algorithm programs under `demos/`
+(`demos/README.md`), and the three single-file suites are removed.  Two points differ
+from the plan above:
+- **Included, not linked.**  The ARM and i386 cores are included (`.include` /
+  `%include`) rather than linked.  Their labels are file-local, so linking would need
+  every routine and datum exported.  No code is copied either way.
+- **Tamper checks.**  HPKS, HPKS-NL and the accumulator gain exact tamper refusals.
+  Stern-F, the ring, HPKE-NL, HKEX-RNL and HPKE-Stern-F keep their Eve checks, each now
+  in its own program.  ZKP-NL and ZKP-RNL gain none: a tampered message passes with
+  probability 1/81 and ~1.7e-6 respectively, too flaky for a gated demo.  OPRF has no
+  verifier.
+
+The build and run scripts glob the programs.  A run fails on a non-zero exit, a
+`[FAIL]` or a missing OK line, and controls show it does.  The Arduino runner stops a
+firmware at its first verdict.  The four SecurityProofsCode gates read core plus
+programs, with their counts and controls intact.  Not MAJOR.
+
+Status: **DONE v20.0.0** — the ARM, i386 and Arduino demos are one program per algorithm over a shared core; the single-file suites are removed.

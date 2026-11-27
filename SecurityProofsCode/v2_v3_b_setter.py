@@ -64,6 +64,7 @@ Run:  python3 SecurityProofsCode/v2_v3_b_setter.py [--quick]
 import ast
 import importlib.util
 import math
+import glob
 import os
 import random
 import re
@@ -99,7 +100,19 @@ def _load(name, path):
 
 
 def _src(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+    """A file's text.  A 32-bit target (demos/arm, demos/i386, demos/arduino) is
+    read as its shared core followed by every one-algorithm program, in name
+    order: TODO #425 split each single-file suite that way, and the sites a
+    check counts sit in both halves."""
+    path = os.path.join(ROOT, rel)
+    if os.path.isdir(path):
+        core = {"demos/arm": "core.s", "demos/i386": "core.asm",
+                "demos/arduino": "libraries/Herradura32/src/Herradura32.h"}[rel]
+        progs = sorted(glob.glob(os.path.join(path, "*.s" if rel.endswith("arm") else "*.asm"))
+                       if not rel.endswith("arduino") else glob.glob(os.path.join(path, "*", "*.ino")))
+        files = [os.path.join(path, core)] + [p for p in progs if not p.endswith(core)]
+        return "\n".join(open(p, encoding="utf-8").read() for p in files)
+    with open(path, encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -299,16 +312,16 @@ EXPECTED = {
 # Their B is the demo's preshared key, the DH key, or hfscx_32 of key and tweak.
 ASM_CALL = re.compile(r"^\s*(?:bl|call)\s+nl_fscx_(?:revolve_)?v[23](?:_inv)?\b", re.M)
 INO_CALL = re.compile(r"\bnl_fscx_(?:revolve_)?v[23](?:_inv)?\(")
-EXPECTED_32 = {"Herradura cryptographic suite.s": 10,
-               "Herradura cryptographic suite.asm": 10,
-               "Herradura cryptographic suite.ino": 10}
+EXPECTED_32 = {"demos/arm": 10,
+               "demos/i386": 10,
+               "demos/arduino": 10}
 
 
 def census_32(override=None):
     out = {}
     for rel in EXPECTED_32:
         text = (override or {}).get(rel) or _src(rel)
-        if rel.endswith(".ino"):
+        if rel.endswith((".ino", "arduino")):
             text = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             out[rel] = sum(1 for m in INO_CALL.finditer(text)
                            if not re.search(r"uint32\s+$",
@@ -398,7 +411,7 @@ def section_1():
                                        "nl_fscx_revolve_v2_ba(ct, block, block, R_VALUE)", 1)})
     check((H, "twk_encrypt", "v2", "block") in probe,
           "CONTROL: a changed B argument is caught as a different row")
-    s = "Herradura cryptographic suite.s"
+    s = "demos/arm"
     check(census_32({s: _src(s) + "\n    bl      nl_fscx_revolve_v2\n"})[s] == 11,
           "CONTROL: an extra 32-bit call is counted")
     return rows

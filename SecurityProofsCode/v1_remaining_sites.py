@@ -88,7 +88,19 @@ def _load(name, path):
 
 
 def _src(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+    """A file's text.  A 32-bit target (demos/arm, demos/i386, demos/arduino) is
+    read as its shared core followed by every one-algorithm program, in name
+    order: TODO #425 split each single-file suite that way, and the sites a
+    check counts sit in both halves."""
+    path = os.path.join(ROOT, rel)
+    if os.path.isdir(path):
+        core = {"demos/arm": "core.s", "demos/i386": "core.asm",
+                "demos/arduino": "libraries/Herradura32/src/Herradura32.h"}[rel]
+        progs = sorted(glob.glob(os.path.join(path, "*.s" if rel.endswith("arm") else "*.asm"))
+                       if not rel.endswith("arduino") else glob.glob(os.path.join(path, "*", "*.ino")))
+        files = [os.path.join(path, core)] + [p for p in progs if not p.endswith(core)]
+        return "\n".join(open(p, encoding="utf-8").read() for p in files)
+    with open(path, encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -464,9 +476,9 @@ def section_7():
           and "hashDs(HPKS_NL_DS_CHALLENGE," in src["bindings/java/herradurakex/HerraduraNl.java"]
           and "hashDs(HerraduraNl.STERN_DS_HASH," in src["bindings/java/herradurakex/Stern.java"],
           "all four ports hash both sites with HFSCX-256-DS under tags 0x30 / 0x31")
-    T32 = ["Herradura cryptographic suite.s", "CryptosuiteTests/Herradura_tests.s",
-           "Herradura cryptographic suite.asm", "CryptosuiteTests/Herradura_tests.asm",
-           "Herradura cryptographic suite.ino", "CryptosuiteTests/Herradura_tests.ino"]
+    T32 = ["demos/arm", "CryptosuiteTests/Herradura_tests.s",
+           "demos/i386", "CryptosuiteTests/Herradura_tests.asm",
+           "demos/arduino", "CryptosuiteTests/Herradura_tests.ino"]
     bad = []
     for f in T32:
         t = _src(f)

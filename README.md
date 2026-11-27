@@ -209,31 +209,35 @@ have external consumers.
 ## Assembly
 
 ```bash
-# ARM Linux — full suite + tests (32-bit Thumb; classical + NL/PQC + Stern-F protocols)
-arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" "Herradura cryptographic suite.s"
-arm-linux-gnueabi-gcc -o CryptosuiteTests/Herradura_tests_arm CryptosuiteTests/Herradura_tests.s
-qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"
-qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
+# ARM Linux (32-bit Thumb) — one demo program per algorithm + the tests
+./build_arm.sh
+./run_arm.sh suite                          # every demo in demos/arm/, under qemu-arm
+qemu-arm -L /usr/arm-linux-gnueabi demos/arm/hpks_arm    # one demo
+./run_arm.sh tests
 
-# NASM i386 — full suite + tests (pure Linux syscalls, no libc)
+# NASM i386 (pure Linux syscalls, no libc) — the same demos + the tests
 # Requires: nasm, x86_64-linux-gnu-ld (or ld with elf_i386 support), qemu-i386
-nasm -f elf32 "Herradura cryptographic suite.asm" -o suite32.o
-nasm -f elf32 CryptosuiteTests/Herradura_tests.asm -o tests32.o
-x86_64-linux-gnu-ld -m elf_i386 -o "Herradura cryptographic suite_i386" suite32.o
-x86_64-linux-gnu-ld -m elf_i386 -o CryptosuiteTests/Herradura_tests_i386 tests32.o
-qemu-i386 "./Herradura cryptographic suite_i386"
-qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
+./build_asm_i386.sh
+./run_asm_i386.sh suite
+qemu-i386 demos/i386/hpks_i386
+./run_asm_i386.sh tests
 # On a native x86/x86_64 Linux host the binaries run directly without qemu-i386
 ```
 
+`demos/README.md` lists the twenty programs and what each one shows.
+
 ## Arduino
 
-The `.ino` files require the Arduino IDE or `arduino-cli` with the AVR board package installed. Open in the IDE and upload to a board with a serial monitor at 9600 baud, or:
+Each demo is a sketch of its own, `demos/arduino/<name>/<name>.ino`, over the
+`Herradura32` library in `demos/arduino/libraries/Herradura32`.  To use the Arduino
+IDE, copy that library into your sketchbook's `libraries/` folder, open a sketch and
+upload it to an Arduino Mega 2560, with the serial monitor at 9600 baud.  Without a
+board:
 
 ```bash
-# Compile-check only (requires arduino-cli with arduino:avr board package)
-arduino-cli compile --fqbn arduino:avr:uno "Herradura cryptographic suite.ino"
-arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
+./build_arduino.sh            # every demo + the tests, for the ATmega2560
+./run_arduino.sh suite        # every demo, under simavr
+./run_arduino.sh tests
 ```
 
 ---

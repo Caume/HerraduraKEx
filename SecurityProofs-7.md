@@ -1282,7 +1282,8 @@ preimage as a class on which the construction's entire claimed non-linearity van
 `qemu-arm`) was confirmed present on the development host, unblocking the port left open
 above.  A `nl_v2_key_is_valid` predicate matching `herradura.h`'s semantics exactly
 (returns invalid iff $\delta(K) \in \lbrace 0, 2^{31} \rbrace$ at $n = 32$) is now defined
-in `Herradura cryptographic suite.s`, `.asm`, and `.ino`, and duplicated in the
+in the 32-bit suites (since TODO #425 their cores, `demos/arm/core.s`,
+`demos/i386/core.asm` and the Arduino `Herradura32` library), and duplicated in the
 corresponding `CryptosuiteTests/Herradura_tests.{s,asm,ino}` files, which have no shared
 header to import it from. Since these targets have no CLI — the enforcement boundary used
 by Python/C/Go — the predicate is a plain return-code function, uncalled from the

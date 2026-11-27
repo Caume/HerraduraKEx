@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # HerraduraKEx — NASM i386 build script
-# Assembles the suite and tests from NASM i386 source using nasm + ld.
+# Assembles the demos (demos/i386/<algorithm>.asm, one program per algorithm
+# over the shared demos/i386/core.asm; TODO #425) and the tests from NASM i386
+# source using nasm + ld.
 # Produces static ELF32 binaries runnable under qemu-i386.
 #
 # Dependencies (build):
@@ -19,9 +21,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 VERSION="$(sed -nE '1s/.*\(v([0-9]+\.[0-9]+\.[0-9]+)\).*/\1/p' README.md)"  # README title is the one version source
 : "${VERSION:=unknown}"
-SUITE_SRC="Herradura cryptographic suite.asm"
-SUITE_OBJ="/tmp/herr_suite32.o"
-SUITE_BIN="Herradura cryptographic suite_i386"
+DEMO_DIR="demos/i386"
+DEMO_OBJ="/tmp/herr_demo32.o"
+DEMO_SRCS=()
+for SRC in "${DEMO_DIR}"/*.asm; do
+    [ "$(basename "${SRC}")" = "core.asm" ] || DEMO_SRCS+=("${SRC}")
+done
+if (( ${#DEMO_SRCS[@]} == 0 )); then
+    echo "ERROR: no demo programs under ${DEMO_DIR}"; exit 1
+fi
 TESTS_SRC="CryptosuiteTests/Herradura_tests.asm"
 TESTS_OBJ="/tmp/herr_tests32.o"
 TESTS_BIN="CryptosuiteTests/Herradura_tests_i386"
@@ -70,7 +78,7 @@ echo "=== HerraduraKEx v${VERSION} — NASM i386 build ==="
 # inside print_str, so every message has to go out through it.  print_str_raw
 # skips the counter and exists only for the gate's own verdict lines, which
 # carry the marker themselves.
-for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
+for SRC in "${DEMO_DIR}/core.asm" "${DEMO_SRCS[@]}" "${TESTS_SRC}"; do
     UNGATED=$(grep -n 'call[[:space:]]\+print_str_raw' "${SRC}" | grep -v 'GATE-EXEMPT' || true)
     if [ -n "${UNGATED}" ]; then
         echo "ERROR: ungated print_str_raw call site(s) in ${SRC}:"
@@ -82,11 +90,15 @@ for SRC in "${SUITE_SRC}" "${TESTS_SRC}"; do
 done
 echo "  Linker: ${LD}"
 
-echo "  Assembling suite..."
-nasm -f elf32 "${SUITE_SRC}" -o "${SUITE_OBJ}"
-${LD} -m elf_i386 -o "${SUITE_BIN}" "${SUITE_OBJ}"
-rm -f "${SUITE_OBJ}"
-echo "    -> ${SUITE_BIN}"
+# Each demo %includes core.asm, so nasm is told where it is.
+echo "  Assembling ${#DEMO_SRCS[@]} demos..."
+for SRC in "${DEMO_SRCS[@]}"; do
+    BIN="${SRC%.asm}_i386"
+    nasm -f elf32 -i "${DEMO_DIR}/" "${SRC}" -o "${DEMO_OBJ}"
+    ${LD} -m elf_i386 -o "${BIN}" "${DEMO_OBJ}"
+    echo "    -> ${BIN}"
+done
+rm -f "${DEMO_OBJ}"
 
 echo "  Assembling tests..."
 nasm -f elf32 "${TESTS_SRC}" -o "${TESTS_OBJ}"

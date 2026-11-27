@@ -14,7 +14,12 @@ HerraduraKEx is a cryptographic suite implementing four protocols — HKEX-GF (k
 ## Repository Structure
 
 ```
-Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite, one file per language
+Herradura cryptographic suite.{c,go,py}  — protocol suite, one file per language
+demos/                     — the 32-bit targets' demos, ONE PROGRAM PER ALGORITHM (TODO #425;
+                             demos/README.md lists them): arm/<name>.s and i386/<name>.asm
+                             include a shared core.s / core.asm; arduino/<name>/<name>.ino
+                             includes the Herradura32 library (arduino/libraries/).  A
+                             gate that reads a 32-bit suite reads core + programs
 herradura.h                — header-only C library (shared by CLI and external code)
 herradura/                 — root-level Go package (herradura.go, codec.go); used by the Go
                              FFI binding and fuzz tests
@@ -205,7 +210,10 @@ build-collision hazard above.
 
 ### Assembly
 
-Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"` or `qemu-i386 "./Herradura cryptographic suite_i386"`.
+Use `build_arm.sh` / `build_asm_i386.sh`; `run_arm.sh suite` / `run_asm_i386.sh suite` run every
+demo (one per algorithm, `demos/arm/<name>_arm`, `demos/i386/<name>_i386`; name some to run
+only those), and each demo must exit 0 AND print the OK line.  A new demo is a new
+`demos/<target>/<name>` program; the build and run scripts pick it up by glob.
 
 > **i386 linker portability:** `x86_64-linux-gnu-ld -m elf_i386` fails on ARM64 hosts
 > (e.g. Raspberry Pi 5 / Ubuntu) with "unrecognized emulation mode: elf_i386" because the
@@ -225,13 +233,15 @@ themselves, and **any `[FAIL]` fails the build**.
   output (`#define printf hprintf` in C, a `print` shadow in Python, an `os.Stdout` scanning
   pipe in Go) and exits non-zero, closing with `*** OK: ... ***` or `*** FAILED: n ... ***`.
   There is no allow-list and nothing to register: a new test is gated by printing `[FAIL]`.
-- **ARM / NASM i386 (TODO #234, #350):** harness AND suite demo route output through
+- **ARM / NASM i386 (TODO #234, #350):** harness AND every demo route output through
   `bl hprintf` / `call print_str`.  `build_arm.sh` and `build_asm_i386.sh` fail the build on
-  a call site in either file that bypasses the wrapper without a `GATE-EXEMPT` marker.
+  a call site in the harness, the core or any demo that bypasses the wrapper without a
+  `GATE-EXEMPT` marker.
 - **Arduino:** the harness's verdicts go through one `verdict(bool)` helper (the marker is
-  split across two `Serial` calls, so output scanning cannot work), the suite's through
-  `check(ok, pass, fail)`.  The firmware never exits, so `run_arduino.sh` (both modes) fails
-  on a `*** FAILED:` line **or on the OK line never arriving**.  Put every string literal in
+  split across two `Serial` calls, so output scanning cannot work), each demo's through
+  `check(ok, pass, fail)` and `demo_finish()`.  The firmware never exits, so `run_arduino.sh`
+  (both modes) fails on a `*** FAILED:` line **or on the OK line never arriving**; it stops
+  each demo at its first verdict (TODO #425).  Put every string literal in
   flash with `F()`: `build_arduino.sh` fails a firmware leaving under 2 KB of SRAM for the
   stack, which is what hung the suite in HKEX-RNL until #350.
 - **Java:** `SelfTest` asserts; `Demo` is `[FAIL]`-gated like the C/Go/Python demos.

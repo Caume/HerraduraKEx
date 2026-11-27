@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-26
 
-**One release for fifteen development steps (TODO #410–#424, and #415's redesign of
+**One release for sixteen development steps (TODO #410–#425, and #415's redesign of
 HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
 section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
 (§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
@@ -510,6 +510,57 @@ wire format or CLI is involved: these targets have no CLI.
   32 bits.
 - **SRAM.**  The Arduino suite leaves 3250 bytes for the stack (was 3342), and the
   harness 3106 (was 3658); the guard is 2048.
+
+### #425: the 32-bit demos are one program per algorithm
+
+The ARM Thumb-2, NASM i386 and Arduino suites were each ONE program that ran about twenty
+demos in a row, with the Eve checks gathered in a block in the middle.  Each target is
+now a shared core plus one small program per algorithm, under `demos/` (`demos/README.md`
+lists them):
+- **ARM:** `demos/arm/core.s`, and `demos/arm/<name>.s`, which includes the core.
+- **i386:** `demos/i386/core.asm`, and `demos/i386/<name>.asm`, which includes the core.
+- **Arduino:** the `Herradura32` library (`demos/arduino/libraries/`), and one sketch per
+  directory, `demos/arduino/<name>/<name>.ino`, as the Arduino IDE requires.
+
+`Herradura cryptographic suite.{s,asm,ino}` are removed, and their routines are the cores
+unchanged.  The core is included rather than linked: gas and NASM labels are file-local,
+so linking would need every routine and datum exported.  No routine is copied.
+
+- **Programs.**  There are twenty per target: HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2,
+  HKEX-RNL, HPKS-NL, HPKE-NL, HPKS-Stern-F, HPKE-Stern-F, HPKS-Stern-Ring, ZKP-RNL,
+  ZKP-NL, masked HSKE, ratchet, FPE, tweakable cipher, accumulator and OPRF.  None is
+  interactive.  Each prints its sample inputs, every intermediate and its verdict.
+- **Eve checks.**  Each Eve check now sits in its algorithm's program.  New refusals,
+  each exact:
+  - HPKS and HPKS-NL refuse the same (R, s) for `plain ^ 1`;
+  - the accumulator refuses a member's proof path for a leaf outside the set.
+
+  ZKP-NL and ZKP-RNL gain no tamper check.  A tampered message passes ZKP-NL with
+  probability 1/81 (3^4 challenges) and ZKP-RNL with about 1.7·10⁻⁶ (C(32,4)·2^4
+  challenges), which is a flaky verdict in a gated demo.  OPRF has no verifier.
+- **Programs that reuse another's keys.**  HPKE-Stern-F and the ring start from the
+  Stern-F keygen; ZKP-RNL from the HKEX-RNL keygen; HPKS, HPKE, HPKS-NL and HPKE-NL from
+  Alice's public key.  The split checked each program for a value read with no writer
+  in it.
+- **Build and run.**  The three build scripts build every program, found by glob, and
+  the ungated-call and IT-flag guards cover the core and every program.
+  `run_{arm,asm_i386,arduino}.sh suite [name...]` runs them all, or the named ones, and
+  fails on a non-zero exit, a `[FAIL]` or a missing OK line.  The Arduino runner stops
+  each firmware at its first verdict: twenty firmwares take ~7 s, not twenty timeouts.
+  Controls shown to fire, in scratch copies of the tree:
+  - a demo that reports `[FAIL]`, and one that exits 0 without the OK line, fail the ARM
+    and i386 runners;
+  - a `[FAIL]` sketch and a sketch that never prints a verdict fail the Arduino runner.
+
+  Each new Eve check fails, as it must, with its tamper removed.
+- **SRAM.**  Smaller firmwares leave 5100–7402 bytes of the ATmega2560's 8 KB for the
+  stack; the single suite left 3250.
+- **Gates.**  `SecurityProofsCode/hfscx_mmo_compression.py`, `v1_remaining_sites.py`,
+  `v1_mode_rounds.py` and `v2_v3_b_setter.py` read a 32-bit target as its core followed
+  by every program.  `v2_v3_b_setter.py`'s per-target count stays 10, and its planted-call
+  control and `v1_mode_rounds.py`'s 8-round control still fire.
+- **Unchanged.**  The test harnesses `CryptosuiteTests/Herradura_tests.{s,asm,ino}` stay
+  single programs.  Their `[13]` pins the ring vector that #424 added.
 
 ## [19.0.0] - 2026-11-24
 
