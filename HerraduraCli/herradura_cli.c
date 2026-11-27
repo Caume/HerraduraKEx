@@ -1663,17 +1663,38 @@ static uint64_t ots_state_read(const char *key_path, uint64_t max)
     char buf[16]; size_t n = 0;
     struct stat st;
 #ifndef _WIN32
-    int sr = lstat(p, &st);
+    /* Open first, then judge what was OPENED (CodeQL cpp/toctou-race-condition):
+     * an lstat of the name followed by an fopen of the same name let the entry
+     * be swapped in between.  O_NOFOLLOW refuses a link at the open itself, and
+     * O_NONBLOCK keeps a FIFO from hanging the open before fstat refuses it. */
+#ifdef O_NOFOLLOW
+    int fd = open(p, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
 #else
-    int sr = stat(p, &st);
+    int fd = open(p, O_RDONLY | O_NONBLOCK);
 #endif
-    if (sr != 0) why = "missing";
+    if (fd < 0) {
+        if (errno == ENOENT) why = "missing";
+        else if (errno == ELOOP || errno == EMLINK) why = "not a regular file";  /* EMLINK: FreeBSD */
+        else why = "unreadable";
+    } else {
+        if (fstat(fd, &st) != 0) why = "unreadable";
+        else if (!S_ISREG(st.st_mode)) why = "not a regular file";
+        else {
+            ssize_t r = 0;
+            while (n < sizeof buf && (r = read(fd, buf + n, sizeof buf - n)) > 0) n += (size_t)r;
+            if (r < 0) why = "unreadable";
+        }
+        close(fd);
+    }
+#else
+    if (stat(p, &st) != 0) why = "missing";
     else if (!S_ISREG(st.st_mode)) why = "not a regular file";
     else {
         FILE *f = fopen(p, "rb");
         if (!f) why = "unreadable";
         else { n = fread(buf, 1, sizeof buf, f); fclose(f); }
     }
+#endif
     uint64_t v = 0;
     if (!why) {
         size_t d = n;

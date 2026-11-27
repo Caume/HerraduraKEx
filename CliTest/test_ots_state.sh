@@ -18,7 +18,8 @@
 #           signs at the last leaf (.idx -> 4).
 #   damaged (WOTS) missing, empty, `garbage`, `1x`, `-1`, ` 0`, `0 `, `00`,
 #           `01`, `0\n\n`, `0\r\n`, `+0`, `2`, `99999999999`, a symlink to a
-#           file holding `0\n`, a directory; (XMSS) missing, empty, `garbage`,
+#           file holding `0\n`, a directory, a FIFO (refused, not a hang:
+#           the reader opens before it checks, CodeQL toctou); (XMSS) missing, empty, `garbage`,
 #           `-1`, `01`, `5` (> 2^h).  Each must exit non-zero, write NO
 #           signature, and leave the .idx exactly as it was.
 #   used    WOTS `1` and XMSS `4` (= 2^h, exhausted) are refused the same way.
@@ -89,6 +90,21 @@ signs() {
     else pass "$name"; fi
 }
 
+# fifo_refused NAME X KEY -- like refused, for a .idx that is a FIFO: reading it
+# to compare would block, so the cell checks the FIFO is still there, and a
+# sign that hangs on opening it fails after 20 s.
+fifo_refused() {
+    local name=$1 X=$2 key=$3 d rc; d=$(dirname "$key")
+    rm -f "$d/s.sig"
+    ( cd "$d" && timeout 20 $X sign --algo hpks-wots --key "$key" --in "$TMP/m" --out "$d/s.sig" ) >/dev/null 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then fail "$name: signed (exit 0)"
+    elif [ $rc -eq 124 ]; then fail "$name: hung opening the FIFO (timed out after 20 s)"
+    elif [ -e "$d/s.sig" ]; then fail "$name: refused but a signature file exists"
+    elif [ ! -p "$key.idx" ]; then fail "$name: refused but the .idx is no longer the FIFO"
+    else pass "$name"; fi
+}
+
 # put KEY CONTENT -- set <key>.idx to CONTENT exactly (no added newline).
 put() { rm -rf "$1.idx"; printf '%s' "$2" > "$1.idx"; }
 
@@ -117,6 +133,8 @@ state_cells() {
     refused "$l: damaged: WOTS .idx a symlink to '0'" "$X" "$d/w.pem" hpks-wots
     rm -f "$d/w.pem.idx"; mkdir "$d/w.pem.idx"
     refused "$l: damaged: WOTS .idx a directory" "$X" "$d/w.pem" hpks-wots
+    rm -rf "$d/w.pem.idx"; mkfifo "$d/w.pem.idx"
+    fifo_refused "$l: damaged: WOTS .idx a FIFO" "$X" "$d/w.pem"
     rm -rf "$d/w.pem.idx"
     rm -f "$d/x.pem.idx"; refused "$l: damaged: XMSS .idx missing" "$X" "$d/x.pem" hpks-xmss
     for c in "${XMSS_DAMAGED[@]}"; do
@@ -155,7 +173,7 @@ state_cells() {
 }
 
 for l in "${LANGS[@]}"; do state_cells "$l" "${CLI[$l]}"; done
-N_DAMAGED=$(( 1 + ${#WOTS_DAMAGED[@]} + 2 + 1 + ${#XMSS_DAMAGED[@]} ))
+N_DAMAGED=$(( 1 + ${#WOTS_DAMAGED[@]} + 3 + 1 + ${#XMSS_DAMAGED[@]} ))
 N_STDIN=8
 
 # ── negative controls ─────────────────────────────────────────────────────────

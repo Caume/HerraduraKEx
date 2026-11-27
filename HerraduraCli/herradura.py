@@ -2169,31 +2169,44 @@ def _ots_state_read(key_path: str, maximum: int) -> int:
     newline) no larger than max.  Anything else used to read as 0 (unused), so
     an empty file left by a crash let a WOTS key sign again."""
     sp = _xmss_state_path(key_path)
-    why, v = None, 0
+    why, v, b = None, 0, b''
+    # Open first, then judge what was OPENED: an lstat of the name followed by
+    # an open of the same name let the entry be swapped in between (the race
+    # CodeQL reported in the C CLI).  O_NOFOLLOW refuses a link at the open;
+    # O_NONBLOCK keeps a FIFO from hanging the open before fstat refuses it.
     try:
-        st = os.lstat(sp)
-    except OSError:
-        why = 'missing'
+        fd = os.open(sp, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                     | getattr(os, 'O_NONBLOCK', 0))
+    except OSError as e:
+        why = ('missing' if e.errno == errno.ENOENT else
+               'not a regular file' if e.errno in (errno.ELOOP, errno.EMLINK) else
+               'unreadable')
     else:
-        if not stat.S_ISREG(st.st_mode):
-            why = 'not a regular file'
-        else:
-            try:
-                with open(sp, 'rb') as f:
-                    b = f.read(16)
-            except OSError:
-                why = 'unreadable'
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                why = 'not a regular file'
             else:
-                d = b[:-1] if b.endswith(b'\n') else b
-                ok = (len(b) < 16 and 1 <= len(d) <= 10
-                      and all(0x30 <= c <= 0x39 for c in d)
-                      and not (len(d) > 1 and d[0] == 0x30))
-                if not ok:
-                    why = 'damaged (not one canonical decimal count)'
-                else:
-                    v = int(d)
-                    if v > maximum:
-                        why = 'damaged (count out of range)'
+                b = b''
+                while len(b) < 16:
+                    chunk = os.read(fd, 16 - len(b))
+                    if not chunk:
+                        break
+                    b += chunk
+        except OSError:
+            why = 'unreadable'
+        finally:
+            os.close(fd)
+    if why is None:
+        d = b[:-1] if b.endswith(b'\n') else b
+        ok = (len(b) < 16 and 1 <= len(d) <= 10
+              and all(0x30 <= c <= 0x39 for c in d)
+              and not (len(d) > 1 and d[0] == 0x30))
+        if not ok:
+            why = 'damaged (not one canonical decimal count)'
+        else:
+            v = int(d)
+            if v > maximum:
+                why = 'damaged (count out of range)'
     if why:
         sys.exit(f"sign: one-time-signature state file {sp} is {why}; refusing to sign "
                  "(restore it, or generate a new key)")

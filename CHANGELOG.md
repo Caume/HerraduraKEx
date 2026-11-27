@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-27
 
-**One release for sixteen development steps (TODO #410–#425, and #415's redesign of
+**One release for seventeen development steps (TODO #410–#426, and #415's redesign of
 HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
 section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
 (§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
@@ -561,6 +561,30 @@ so linking would need every routine and datum exported.  No routine is copied.
   control and `v1_mode_rounds.py`'s 8-round control still fire.
 - **Unchanged.**  The test harnesses `CryptosuiteTests/Herradura_tests.{s,asm,ino}` stay
   single programs.  Their `[13]` pins the ring vector that #424 added.
+
+### #426: the one-time-signature state reader checks what it opened
+
+CodeQL (`cpp/toctou-race-condition`, high) flagged `ots_state_read` in
+`HerraduraCli/herradura_cli.c` on PR #389.  #419's fail-closed reader `lstat`ed
+`<key>.idx` and then `fopen`ed the same name, so the entry could be swapped between the
+check and the open.  The Go and Python readers had the same check-then-open shape.
+Java already opened with `NOFOLLOW_LINKS`, which refuses a link at the open itself.
+
+The exposure was small.  Whoever can swap `<key>.idx` can write the key's directory,
+and so could simply write `0` into it.  But the fix is cheap and makes #419's check
+atomic, as it was meant to be:
+- **C, Python:** `open(O_RDONLY | O_NOFOLLOW | O_NONBLOCK)`, then `fstat` the
+  descriptor that was opened.  A link fails at the open (ELOOP, or EMLINK on FreeBSD).
+  `O_NONBLOCK` keeps a FIFO from hanging the open before `fstat` refuses it.
+- **Go:** after the pre-check, open, then require the opened file to be the same
+  regular, non-link entry that `Lstat` names (`os.SameFile`).  This is `writeOutFile`'s
+  #417 pattern, since `syscall.O_NOFOLLOW` is not on every GOOS.
+- **Java:** unchanged.
+
+`CliTest/test_ots_state.sh` gains a cell: a FIFO as `.idx` must be refused, not hang,
+in all four CLIs (150 cells).  Its fail-open control now fails all 23 damaged cells.
+The FIFO cell is shown to fire: a C CLI built without `O_NONBLOCK` hangs on it and
+times out.  Not MAJOR: refusals and messages are unchanged.
 
 ## [19.0.0] - 2026-11-24
 

@@ -1455,16 +1455,41 @@ func otsRequireKeyFile(cmd, path, flagName string) {
 // (`0`, or digits with no leading zero, at most 10, an optional single trailing
 // newline) no larger than max.  Anything else used to read as 0 (unused), so an
 // empty file left by a crash let a WOTS key sign again.
+// otsStateOpenRead opens a state sidecar and reads it, refusing an opened file
+// that is not the regular, non-link entry the path names.
+func otsStateOpenRead(p string) ([]byte, string) {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil, "unreadable"
+	}
+	defer f.Close()
+	opened, err1 := f.Stat()
+	named, err2 := os.Lstat(p)
+	if err1 != nil || err2 != nil || !opened.Mode().IsRegular() ||
+		named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+		return nil, "not a regular file"
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 64))
+	if err != nil {
+		return nil, "unreadable"
+	}
+	return b, ""
+}
+
 func otsStateRead(keyPath string, max uint64) uint64 {
 	p := wotsIdxPath(keyPath)
 	why := ""
 	var v uint64
+	// Judge what was OPENED, not only the name (the race CodeQL reported in the
+	// C CLI): the opened file must be the same regular, non-link entry that
+	// Lstat names, as writeOutFile checks (TODO #417).  The pre-check keeps a
+	// FIFO from being opened at all.
 	if st, err := os.Lstat(p); err != nil {
 		why = "missing"
 	} else if !st.Mode().IsRegular() {
 		why = "not a regular file"
-	} else if b, rerr := os.ReadFile(p); rerr != nil {
-		why = "unreadable"
+	} else if b, rerr := otsStateOpenRead(p); rerr != "" {
+		why = rerr
 	} else {
 		d := b
 		if len(d) > 0 && d[len(d)-1] == '\n' {

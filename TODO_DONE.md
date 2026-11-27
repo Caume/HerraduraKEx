@@ -28065,3 +28065,31 @@ firmware at its first verdict.  The four SecurityProofsCode gates read core plus
 programs, with their counts and controls intact.  Not MAJOR.
 
 Status: **DONE v20.0.0** — the ARM, i386 and Arduino demos are one program per algorithm over a shared core; the single-file suites are removed.
+
+---
+
+### #426: the one-time-signature state reader checks what it opened
+
+CodeQL (`cpp/toctou-race-condition`, high) flagged `ots_state_read` in
+`HerraduraCli/herradura_cli.c` on PR #389.  #419's fail-closed reader `lstat`ed
+`<key>.idx` and then `fopen`ed the same name, so the entry could be swapped between the
+check and the open.  The Go and Python readers had the same check-then-open shape.
+Java already opened with `NOFOLLOW_LINKS`, which refuses a link at the open itself.
+
+The exposure was small.  Whoever can swap `<key>.idx` can write the key's directory,
+and so could simply write `0` into it.  But the fix is cheap and makes #419's check
+atomic, as it was meant to be:
+- **C, Python:** `open(O_RDONLY | O_NOFOLLOW | O_NONBLOCK)`, then `fstat` the
+  descriptor that was opened.  A link fails at the open (ELOOP, or EMLINK on FreeBSD).
+  `O_NONBLOCK` keeps a FIFO from hanging the open before `fstat` refuses it.
+- **Go:** after the pre-check, open, then require the opened file to be the same
+  regular, non-link entry that `Lstat` names (`os.SameFile`).  This is `writeOutFile`'s
+  #417 pattern, since `syscall.O_NOFOLLOW` is not on every GOOS.
+- **Java:** unchanged.
+
+`CliTest/test_ots_state.sh` gains a cell: a FIFO as `.idx` must be refused, not hang,
+in all four CLIs (150 cells).  Its fail-open control now fails all 23 damaged cells.
+The FIFO cell is shown to fire: a C CLI built without `O_NONBLOCK` hangs on it and
+times out.  Not MAJOR: refusals and messages are unchanged.
+
+Status: **DONE v20.0.0** — the C, Go and Python one-time-signature state readers check the file they opened, not only its name (CodeQL toctou); FIFO cell added.
