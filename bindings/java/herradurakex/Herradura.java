@@ -120,6 +120,16 @@ public final class Herradura {
         return gfPow(theirPub, myPriv);
     }
 
+    /** ord(g) in GF(2^n)* (TODO #423).  g = 3 generates the whole group at n = 64
+     * and 256, but a subgroup of index 15 at n = 32 and index 3 at n = 128
+     * (under the field polynomials), so ord(g) = (2^n - 1) / index.  g^s
+     * depends on s mod ord(g) only: an HPKS scalar is reduced below it when
+     * signed and must lie below it when verified. */
+    public static BigInteger genOrder(int n) {
+        int index = n == 32 ? 15 : n == 128 ? 3 : 1;
+        return order(n).divide(BigInteger.valueOf(index));
+    }
+
     // -----------------------------------------------------------------
     // HSKE: E = fscx_revolve(P, key, i); D = fscx_revolve(E, key, r) == P
     // -----------------------------------------------------------------
@@ -153,7 +163,7 @@ public final class Herradura {
         // the protocol's own definition, so it crosses at the named boundary.
         BigInteger s = k.toBigInteger()
                         .subtract(priv.toBigInteger().multiply(e.toBigInteger()))
-                        .mod(order(n));
+                        .mod(genOrder(n));          // TODO #423: below ord(g)
         return new Signature(r, BitArray.fromBigInteger(s, n));
     }
 
@@ -163,6 +173,7 @@ public final class Herradura {
 
     public static boolean hpksVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!gfPubIsValid(pub)) return false;
+        if (s.toBigInteger().compareTo(genOrder(pub.size())) >= 0) return false;   // TODO #423
         BitArray e = fscxRevolve(r, msg, iSteps(pub.size()));
         BitArray lhs = gfMul(gfPow(gen(pub.size()), s), gfPow(pub, e));
         return lhs.equals(r);

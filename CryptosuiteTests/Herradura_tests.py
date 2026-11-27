@@ -1976,7 +1976,7 @@ def test_hpke_stern_f_correctness():
 def test_hpks_stern_ring_correctness():
     N_SDF = 32; SDF_RING_ROUNDS = 4; RING_K = 3
     print(f"[20] HPKS-Stern-Ring correctness: OR-composition, k={RING_K}, N={N_SDF}, rounds={SDF_RING_ROUNDS}  [CODE-BASED RING SIG]")
-    n_req = _iters(3); ok = 0; n_run = 0
+    n_req = _iters(3); ok = 0; n_run = 0; re_tried = re_refused = 0
     for i in _trange(n_req):
         n_run += 1
         ring_keys = []; ring_errors = []
@@ -1990,8 +1990,21 @@ def test_hpks_stern_ring_correctness():
         sig = hpks_stern_ring_sign_local(msg, e_j, j, ring_keys, N_SDF, SDF_RING_ROUNDS)
         if hpks_stern_ring_verify_local(msg, sig, ring_keys, N_SDF):
             ok += 1
-    status = "PASS" if ok == n_run else "FAIL"
-    print(f"    {ok} / {n_run} ring-verified  [{status}]\n")
+        # TODO #421: re-encode the first b = 2 entry as 5 (same residue mod 3);
+        # the verifier must refuse it, not read it as b = 2.
+        chals = sig[1]
+        hit = next(((mi, ri) for mi, row in enumerate(chals)
+                    for ri, b in enumerate(row) if b == 2), None)
+        if hit is not None:
+            mi, ri = hit; re_tried += 1
+            chals[mi][ri] = 5
+            if not hpks_stern_ring_verify_local(msg, sig, ring_keys, N_SDF):
+                re_refused += 1
+            chals[mi][ri] = 2
+    # A run with no b = 2 entry re-encoded nothing: n/a, never a pass or a fail.
+    status = "PASS" if ok == n_run and re_refused == re_tried else "FAIL"
+    na = " (n/a)" if re_tried == 0 else ""
+    print(f"    {ok} / {n_run} ring-verified; {re_refused} / {re_tried} b=2 re-encoded as 5 refused{na}  [{status}]\n")
 
 
 def test_hfscx_256():
@@ -3136,6 +3149,8 @@ def hpks_verify_checked(msg: 'BitArray', pub_int: int, R_int: int, s_int: int,
     otherwise trivially verify against any message."""
     if not gf_pub_is_valid(pub_int):
         return False
+    if not 0 <= s_int < ((1 << size) - 1) // {32: 15, 64: 1, 128: 3, 256: 1}[size]:
+        return False                     # TODO #423: s must lie below ord(g)
     e = fscx_revolve(BitArray(size, R_int), msg, _I_VALUE).uint
     lhs = gf_mul(gf_pow(GF_GEN, s_int, poly, size),
                  gf_pow(pub_int, e, poly, size), poly, size)

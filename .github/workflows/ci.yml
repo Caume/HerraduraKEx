@@ -512,7 +512,7 @@ jobs:
             case "$f" in test_wrong_secret_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #410)
             case "$f" in test_output_symlink.sh) continue ;; esac     # claimed by cross-lang-compat (TODO #417)
             case "$f" in test_ots_state.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #419, #420)
-            case "$f" in test_ring_challenge_bound.sh) continue ;; esac # claimed by cross-lang-compat (TODO #421)
+            case "$f" in test_hpks_s_bound.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #423)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_round_floor.sh) continue ;; esac        # claimed by cross-lang-compat (TODO #364)
             case "$f" in test_stern_128.sh) continue ;; esac          # claimed by cross-lang-compat (TODO #382)
@@ -907,11 +907,10 @@ jobs:
       - name: One-time-signature state is read fail-closed
         run: bash CliTest/test_ots_state.sh
 
-      # TODO #421: an HPKS-Ring challenge byte outside {0, 1, 2} is refused. Every
-      # verifier sent such a b to the b = 2 check while summing it mod 3, so an
-      # honest signature had many encodings that verified.
-      - name: HPKS-Ring challenge bytes are trits
-        run: bash CliTest/test_ring_challenge_bound.sh
+      # TODO #423: g generates a proper subgroup of GF(2^n)* at n = 32 and 128,
+      # so an HPKS scalar s + ord(g) was a second encoding every verifier took.
+      - name: HPKS scalars lie below ord(g)
+        run: bash CliTest/test_hpks_s_bound.sh
 
       # TODO #269: --digest is a 4-way concern for the same reason. The gap it
       # guards (Java had no --digest at all) was invisible to every existing

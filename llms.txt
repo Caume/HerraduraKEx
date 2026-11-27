@@ -72,7 +72,7 @@ exact choices list per subcommand.
   N = 256 by default (~2^24, demo); N = 2304 is the 128-bit set (--level 128), the "long
   form": N-bit values as byte strings, 256-bit commitments and message (SPEC.md §11.1).
 - HPKS-ring: ring signature built on HPKS-Stern-F.  BROKEN (TODO #415): forgeable
-  with no member's secret key; do not use.
+  with no member's secret key, so every CLI's sign and verify refuse it (TODO #422).
 - rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
   over Ring-LWR / NL-FSCX statements.
 - HPKS-t: threshold Schnorr signature (4-phase protocol: commit, aggregate, respond,
@@ -268,6 +268,7 @@ used to default 19 --in/--out flags to stdin/stdout); stdin and stdout are spell
     are predictably malleable: flipping bit j of E flips plaintext bit j
     (hske-nla1) or bits j and j +/- n/4 (the others), under every key.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
+    hpks-ring is DISABLED (TODO #422): sign and verify refuse it (it is forgeable, #415).
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {hfscx-256,none}] [--rounds N]
     --digest defaults to hfscx-256 (TODO #365, v15.0.0): the whole input is

@@ -17,9 +17,8 @@
 #     (the negative control, so a verifier that accepts everything fails);
 #   - hpke*: the writer encrypts to the reader's key and the reader decrypts.
 #   - hpks-stern (TODO #383 stage 2): as hpks, at SR reduced rounds (the
-#     verifier is given --min-rounds SR); and an hpks-ring signature by the
-#     writer over a ring of every listed CLI's key verifies under the reader,
-#     and not on a changed message.  hpke-stern runs the hpks-stern sign/verify
+#     verifier is given --min-rounds SR).  (An hpks-ring cell ran here until
+#     TODO #422 disabled hpks-ring.)  hpke-stern runs the hpks-stern sign/verify
 #     checks on its own key (TODO #413 retired enc/dec --algo hpke-stern).
 #   - hcred (TODO #383 stage 3): the writer's presentation proof verifies under
 #     the reader, and not under another message; a credential the writer issues
@@ -246,17 +245,8 @@ EOF
                     if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
                     else fail "$L: verify $dg on a changed message: rc=$RC, not 'Verification FAILED'"; fi
                 done
-                ring=$(printf "$D/%s_pub.pem," "${gens[@]}"); ring=${ring%,}
-                if [ "${#gens[@]}" -lt 2 ]; then ring="$ring,$ring"; fi
-                q "$g" sign --algo hpks-ring --rounds $SR --key "$D/$g.pem" --ring "$ring" --in "$D/m.bin" --out "$D/rs.pem"
-                if [ "$RC" -ne 0 ]; then fail "$L: ring sign (rc=$RC) $(head -c 160 "$TMP/err")"
-                else
-                    q "$r" verify --algo hpks-ring --min-rounds $SR --ring "$ring" --in "$D/m.bin" --sig "$D/rs.pem"
-                    if [ "$RC" -eq 0 ]; then pass; else fail "$L: ring verify refused a valid signature (rc=$RC) $(head -c 160 "$TMP/err")"; fi
-                    q "$r" verify --algo hpks-ring --min-rounds $SR --ring "$ring" --in "$D/m2.bin" --sig "$D/rs.pem"
-                    if [ "$RC" -eq 1 ] && grep -q 'Verification FAILED' "$TMP/out"; then pass
-                    else fail "$L: ring verify on a changed message: rc=$RC, not 'Verification FAILED'"; fi
-                fi ;;
+                # hpks-ring was checked here until TODO #422 disabled it. ;;
+                ;;
             hcred)
                 # one proof and one issuer key per CLI, made the first time it is needed
                 for c in "$g" "$r"; do
@@ -397,16 +387,9 @@ M="$TMP/mix"; mkdir -p "$M"; head -c 8 /dev/urandom > "$M/m.bin"
             q "$c" sign --algo hpks-stern --rounds $SR --key "$M/k128.pem" --in "$M/m.bin" --out "$M/s128.pem"
             q "$c" verify --algo hpks-stern --min-rounds $SR --pubkey "$M/k64_pub.pem" --in "$M/m.bin" --sig "$M/s128.pem"
             mixed "mixed-width hpks-stern verify ($c)" "signature n is 128, public key n is 64"
-            # a ring: members of two widths, and a signature of another width
-            q "$c" genpkey --algo hpks-stern --bits 64 --out "$M/j64.pem"
-            q "$c" pkey --in "$M/j64.pem" --pubout --out "$M/j64_pub.pem"
-            q "$c" sign --algo hpks-ring --rounds $SR --key "$M/k64.pem" --ring "$M/k64_pub.pem,$M/j64_pub.pem" --in "$M/m.bin" --out "$M/rs64.pem"
-            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k64_pub.pem,$M/j64_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
-            [ "$RC" -eq 0 ] && pass || fail "mixed control: same-width ring verify ($c) rc=$RC"
-            q "$c" sign --algo hpks-ring --rounds $SR --key "$M/k64.pem" --ring "$M/k64_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --out "$M/x.pem"
-            mixed "mixed-width ring members ($c)" "all ring members must share the same n"
-            q "$c" verify --algo hpks-ring --min-rounds $SR --ring "$M/k128_pub.pem,$M/k128_pub.pem" --in "$M/m.bin" --sig "$M/rs64.pem"
-            mixed "mixed-width ring signature ($c)" "signature n=64 != ring n=128" ;;
+            # (mixed-width ring members/signatures were checked here until TODO #422
+            # disabled hpks-ring.)
+            ;;
         hcred)   # TODO #383 stage 3: Go panicked on both; Python failed the credential unnamed
             q "$c" cred-prove --rounds $SR --in "$M/k64.pem" --out "$M/p64.pem"
             q "$c" cred-verify --min-rounds $SR --proof "$M/p64.pem" --pubkey "$M/k64_pub.pem"

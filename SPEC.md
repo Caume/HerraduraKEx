@@ -229,8 +229,11 @@ Given a private key `a`, message `msg`:
    `msg_digest` is `msg` reduced/padded to `n` bits (`i = n/4` as in §3.1)
    — this is the suite's Fiat-Shamir hash-substitute, binding the
    challenge to both the commitment and the message.
-4. Compute the response `s = (k − a·e) mod (2^n − 1)` (arithmetic mod the
-   group order, not mod `2^n`).
+4. Compute the response `s = (k − a·e) mod ord(g)`, the order of `g`.  `g = 3`
+   generates all of GF(2^n)* at `n = 64` and `256`, so there `ord(g) = 2^n − 1`;
+   at `n = 32` and `128` it generates a subgroup of index 15 and 3, so
+   `ord(g) = (2^n − 1)/15` and `(2^n − 1)/3` (TODO #423).  Arithmetic is mod
+   the order, not mod `2^n`.
 5. The signature is `(s, e)` (equivalently `(s, R)`, since `e` is
    recomputable from `R` and `msg`; the CLI stores `(s, e)`).
 
@@ -238,6 +241,8 @@ Given a private key `a`, message `msg`:
 
 Given public key `C`, message `msg`, signature `(s, e)`:
 
+0. Refuse `s ≥ ord(g)` (TODO #423): `g^s` depends on `s mod ord(g)` only, so a
+   larger `s` would be a second encoding of the same signature.
 1. Recompute `R' = g^s · C^e mod P(z)`.
 2. Recompute `e' = FSCX_REVOLVE(R', msg_digest, i)`.
 3. Accept iff `e' = e`.

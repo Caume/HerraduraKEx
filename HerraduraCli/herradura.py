@@ -86,7 +86,7 @@ from primitives import (
     rnl_sigma_sign, rnl_sigma_verify,
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
     zkp_nl_prove_pp, zkp_nl_verify_pp,
-    KEYBITS, GF_POLY, GF_GEN, ORD,
+    KEYBITS, GF_POLY, GF_GEN, ORD, gf_gen_order,
     RNLN, RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, R3_VALUE, I3_VALUE, SDFT, SDFNR, SDFR,
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS, _ZKP_NL_MAX_N,
@@ -158,8 +158,6 @@ _KEY_SITES = {
     ('verify', 'hpks-nl', '--pubkey'): ('hkex-gf, hpks, hpks-nl, hpke, hpke-nl', ('HERRADURA HKEX-GF PUBLIC KEY', 'HERRADURA HPKS PUBLIC KEY', 'HERRADURA HPKS-NL PUBLIC KEY', 'HERRADURA HPKE PUBLIC KEY', 'HERRADURA HPKE-NL PUBLIC KEY',)),
     ('sign', 'hpks-stern', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
     ('verify', 'hpks-stern', '--pubkey'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
-    ('sign', 'hpks-ring', '--key'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PRIVATE KEY', 'HERRADURA HPKE-STERN PRIVATE KEY',)),
-    ('verify', 'hpks-ring', '--ring'): ('hpks-stern, hpke-stern', ('HERRADURA HPKS-STERN PUBLIC KEY', 'HERRADURA HPKE-STERN PUBLIC KEY',)),
     ('sign', 'rnl-sigma', '--key'): ('hkex-rnl', ('HERRADURA HKEX-RNL PRIVATE KEY',)),
     ('verify', 'rnl-sigma', '--pubkey'): ('hkex-rnl', ('HERRADURA HKEX-RNL PUBLIC KEY',)),
     ('sign', 'nl-zkboo', '--key'): ('hpks-zkp-nl', ('HERRADURA ZKP-NL PRIVATE KEY',)),
@@ -209,7 +207,6 @@ _DER_ITEMS = {
     'HERRADURA HPKS PUBLIC KEY': (2, 2),
     'HERRADURA HPKS-NL PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-NL PUBLIC KEY': (2, 2),
-    'HERRADURA HPKS-RING SIGNATURE': (4, 4),
     'HERRADURA HPKS-STERN PRIVATE KEY': (3, 3),
     'HERRADURA HPKS-STERN PUBLIC KEY': (3, 3),
     'HERRADURA HPKS-WOTS PRIVATE KEY': (2, 2),
@@ -772,25 +769,6 @@ def _der_field_check(label, v, enc):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 1, enc[1][0], 67 * (F[4]//8))
             if n > 2 and enc[2][0] != (F[3] * 32) and not (enc[2][1] == 2 and enc[2][0] + 1 == (F[3] * 32)) and not ((F[3] * 32) == 0 and enc[2][0] == 1 and L[2] == 0):
                 return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 2, enc[2][0], F[3] * 32)
-            return None
-    elif label == 'HERRADURA HPKS-RING SIGNATURE':
-        if 4 <= n <= 4:
-            if n > 0 and L[0] > (1):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 0, L[0], 1)
-            if n > 1 and L[1] > (2):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 1, L[1], 2)
-            if n > 2 and L[2] > (2):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 2, L[2], 2)
-            if n > 3 and L[3] > (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)):
-                return '%s: field %d is %d bytes (expected at most %d)' % (label, 3, L[3], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
-            if n > 0 and enc[0][1] == 1:
-                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 0)
-            if n > 1 and enc[1][1] == 1:
-                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 1)
-            if n > 2 and enc[2][1] == 1:
-                return '%s: field %d is encoded with a leading zero byte (expected minimal)' % (label, 2)
-            if n > 3 and enc[3][0] != (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) and not (enc[3][1] == 2 and enc[3][0] + 1 == (F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))) and not ((F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1)) == 0 and enc[3][0] == 1 and L[3] == 0):
-                return '%s: field %d is encoded in %d bytes (expected exactly %d)' % (label, 3, enc[3][0], F[0] * F[1] * (3 * min(F[2]//8, 32) + 2 * (F[2]//8) + 1))
             return None
     elif label == 'HERRADURA OPRF PRIVATE KEY':
         if 2 <= n <= 2:
@@ -4226,6 +4204,11 @@ def cmd_verify(args):
         if e_int != e_v.uint:
             sys.exit("verify: signature challenge e is not the recomputed one "
                      "(rejected: non-canonical signature)")
+        # TODO #423: g^s depends on s mod ord(g), and g generates a proper
+        # subgroup at n = 32 and 128, so s + ord(g) is a second encoding.
+        if s_int >= gf_gen_order(nbits):
+            sys.exit("verify: signature scalar s is not below the order of g "
+                     "(rejected: non-canonical signature)")
         print("Signature OK")
         sys.exit(0)
 
@@ -5320,6 +5303,10 @@ _DISPATCH = {
 def main():
     parser = build_parser()
     args   = parser.parse_args()
+    # TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
+    # verify refuse it before any file is read, until the redesign.
+    if args.cmd in ('sign', 'verify') and getattr(args, 'algo', None) == 'hpks-ring':
+        sys.exit(f"{args.cmd}: --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature")
     # TODO #366: every key flag's label, against the generated table.
     _check_key_labels(args.cmd, getattr(args, 'algo', '') or '',
                       {'--' + k.replace('_', '-'): v for k, v in vars(args).items()

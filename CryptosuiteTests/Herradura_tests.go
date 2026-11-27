@@ -817,6 +817,7 @@ func testHpksSternRingCorrectness() {
 	fmt.Printf("[20] HPKS-Stern-Ring correctness: OR-composition, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
 	N  := testRounds(3)
 	ok := 0
+	reTried, reRefused := 0, 0
 	t0 := time.Now()
 	for i := 0; i < N; i++ {
 		const ringK = 3
@@ -831,11 +832,30 @@ func testHpksSternRingCorrectness() {
 		if HpksSternRingVerify(msg, rsig, rKeys) {
 			ok++
 		}
+		// TODO #421: re-encode the first b = 2 entry as 5 (same residue mod 3);
+		// the verifier must refuse it, not read it as b = 2.
+		found := false
+		for mi := range rsig.Members {
+			for ri := range rsig.Members[mi].Rounds {
+				if !found && rsig.Members[mi].Rounds[ri].B == 2 {
+					found = true
+					reTried++
+					rsig.Members[mi].Rounds[ri].B = 5
+					if !HpksSternRingVerify(msg, rsig, rKeys) {
+						reRefused++
+					}
+					rsig.Members[mi].Rounds[ri].B = 2
+				}
+			}
+		}
 		if timeExceeded(t0) { N = i + 1; break }
 	}
 	status := "PASS"
-	if ok != N { status = "FAIL" }
-	fmt.Printf("    %d / %d ring-verified  [%s]\n\n", ok, N, status)
+	if ok != N || reRefused != reTried { status = "FAIL" }
+	na := "" // a run with no b = 2 entry re-encoded nothing: n/a, never a pass or a fail
+	if reTried == 0 { na = " (n/a)" }
+	fmt.Printf("    %d / %d ring-verified; %d / %d b=2 re-encoded as 5 refused%s  [%s]\n\n",
+		ok, N, reRefused, reTried, na, status)
 }
 
 // ---------------------------------------------------------------------------

@@ -372,7 +372,8 @@ assert plaintext == recovered
 (authenticity/integrity), without encrypting anything — the "sign and verify" step,
 independent of both HKEX-GF and HSKE above (it uses its own keypair, generated below).
 
-Schnorr over GF(2^n)*: `R = g^k`; `e = fscx_revolve(R, msg, i)`; `s = (k - a·e) mod (2^n-1)`;
+Schnorr over GF(2^n)*: `R = g^k`; `e = fscx_revolve(R, msg, i)`; `s = (k - a·e) mod ord(g)` (the order of g: `2^n - 1` at n = 64 and 256, a third of it
+at 128 and a fifteenth at 32; TODO #423);
 verify `g^s · C^e == R`.
 
 #### CLI
@@ -433,37 +434,22 @@ v8.1.0 (TODO #308).
 See [Hash-based stateful signatures](#hash-based-stateful-signatures) — WOTS-F/XMSS-F are
 a separate, hash-based key type, not a variant of HPKS.
 
-#### Anonymous ring signatures (HPKS-Stern-Ring)
+#### Anonymous ring signatures (HPKS-Stern-Ring) — disabled
 
-`hpks-ring` is a code-based **ring signature** (#78.I): one member of an ad-hoc
-group signs on behalf of the whole group, and a verifier confirms *some* member
-signed without learning **which** one. Each ring member is an ordinary
-`hpks-stern` keypair; the ring is the ordered list of their public keys.
+`hpks-ring` was a code-based **ring signature** (#78.I): one member of an ad-hoc group
+signs on behalf of the group, and a verifier learns that *some* member signed, not which
+one. **It is disabled.** Anyone can forge a ring signature without any member's secret
+key (TODO #415, SECURITY.md), so `sign` and `verify --algo hpks-ring` refuse in all four
+CLIs until it is redesigned (TODO #422):
 
 ```bash
-# Three members each generate an hpks-stern keypair and publish their public key
-for m in 0 1 2; do
-  $CLI genpkey --algo hpks-stern --out m$m.pem
-  $CLI pkey    --in m$m.pem --pubout --out m${m}_pub.pem
-done
-RING=m0_pub.pem,m1_pub.pem,m2_pub.pem
-
-# Member 1 signs anonymously on behalf of the ring (its index is hidden)
-$CLI sign   --algo hpks-ring --key m1.pem --ring "$RING" --in msg.bin --out sig.pem
-
-# Anyone verifies against the ring; the signer's identity is not revealed
-$CLI verify --algo hpks-ring --ring "$RING" --in msg.bin --sig sig.pem
-# Prints: Signature OK
+$CLI sign --algo hpks-ring --key m1.pem --ring m0_pub.pem,m1_pub.pem --in msg.bin --out sig.pem
+# sign: --algo hpks-ring is disabled: a ring signature can be forged without any
+# member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a
+# single-signer signature
 ```
 
-The signer must be a member of `--ring` (its public key present), else signing is
-refused. Verification is anonymous: it succeeds for a signature from *any* ring
-member and fails for non-members, a tampered message, or a different ring.
-Signatures are byte-for-byte interoperable across all four CLIs
-(`CliTest/test_ring.sh`).
-
-> **Demo parameters.** Like `hpks-stern`, the ring signature uses N=256 / 32
-> Fiat-Shamir rounds, a low-soundness demo configuration — not for production use.
+Use `hpks-stern` for a single-signer signature; it binds its key.
 
 ### HPKE El Gamal encryption
 

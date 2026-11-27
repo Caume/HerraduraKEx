@@ -24,7 +24,7 @@
 # script instead: hpks-t's multi-phase protocol is
 # CliTest/test_threshold_interop.sh, hske-duplex (v2) is
 # CliTest/test_duplex.sh, and hske-duplex3 is CliTest/test_v3_family.sh.
-# hpks-ring's 4-way coverage is still open (TODO #260 step 6).
+# hpks-ring is disabled (TODO #422); CliTest/test_ring.sh asserts the refusal.
 #
 # OPRF and aPAKE are inherently role-asymmetric (blind/eval/unblind,
 # register/login) multi-party protocols rather than simple

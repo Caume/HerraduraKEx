@@ -4,11 +4,12 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-26
 
-**One release for eleven development steps (TODO #410–#421), five of them breaking.**
+**One release for thirteen development steps (TODO #410–#423), seven of them breaking.**
 Each breaking change has its own MIGRATING.md section: #412 (§54), #413 (§55), #417
-(§56), #419 and #420 (§57), and #421 (§58).  They were developed on `devtest` as
-v19.0.1–v24.0.0, and were folded into this one release before it shipped; those numbers
-appear only in commit messages.  The sections below follow the order the work was done.
+(§56), #419 and #420 (§57), #421 (§58), #422 (§59) and #423 (§60).  The first eleven
+were developed on `devtest` as v19.0.1–v24.0.0, and were folded into this one release
+before it shipped; those numbers appear only in commit messages.  The sections below
+follow the order the work was done.
 
 ### #410: a wrong-secret matrix for every acceptance decision
 
@@ -378,6 +379,52 @@ form) and 5 re-encodings: b = 2 → 5, b = 0 → 3, b = 1 → 4, one b = 2 → 2
 b = 2 → 5.  That makes 28 cells plus a control that reduces each byte mod 3 before
 verifying, which fails exactly the 5 re-encoded cells.  The pre-fix build fails 9 of the
 cells, which is the defect exactly.
+
+### #422: `sign` and `verify --algo hpks-ring` are refused (breaking, MIGRATING §59)
+
+HPKS-Ring is forgeable with no member's secret key (#415), so all four CLIs now refuse
+`sign` and `verify --algo hpks-ring` at the dispatch, before any file is read, with one
+message that names the reason and points to `hpks-stern`.  The suite library functions
+stay for the redesign.  `spec/` drops the two `hpks-ring` key-label rows and the
+ring-signature DER rows (no subcommand reads one now), and every CliTest script's ring
+cells are removed.  `CliTest/test_ring.sh` is rewritten into the refusal test.  Per CLI
+it has an `hpks-stern` accept-control, then sign refused with no `--out` written,
+verify refused even for a GENUINE signature (made by the shipped Python library with
+the member's real key), and a refusal that comes before any file read (a missing
+`--sig` gives the same message).  It also runs the shipped Python ring verifier at
+N = 256 and 2304, where an honest signature verifies, another message is refused, and
+a b = 2 → 5 re-encoding is refused.  Two stand-ins fire as controls.  36 cells pass.
+#421's CLI test `test_ring_challenge_bound.sh` is retired.  Its bound is now asserted
+inside harness test `[20]` (C, Go, Python) and Java `SelfTest [26]`, where a run with
+no `b = 2` entry reports n/a rather than passing; `[20]`'s verdict pins are refreshed.
+
+### #423: an HPKS / HPKS-NL scalar must lie below the order of g (breaking, MIGRATING §60)
+
+Found by reviewing HPKS sign and verify.  `g = 3` generates the whole of GF(2^n)* at
+n = 64 and 256, but only a subgroup of index 15 at n = 32 and index 3 at n = 128.  The
+signers reduced `s` mod 2^n − 1, and `g^s` depends on `s mod ord(g)` only, so
+`s + ord(g)` (whenever it still fits in n bits) was a second encoding.  All four CLIs
+accepted it, for both `hpks` and `hpks-nl`, at both widths; #372's check covered a
+re-encoded e but not s.  It was malleability, not forgery.  New `gf_gen_order` /
+`gf_gen_order_w` / `GfGenOrder` / `genOrder` (a primitive-manifest entry) give
+ord(g) = (2^n − 1)/{15, 1, 3, 1}.  Every signer reduces `s` below it.  Every suite
+verifier, and every CLI verifier (after the algebra and e checks, with one shared
+message), refuses `s ≥ ord(g)`.  So does the Python harness copy
+`hpks_verify_checked`.  Keys and n = 64/256 signatures are unchanged.
+
+New `CliTest/test_hpks_s_bound.sh` (cross-lang-compat) has 164 cells:
+- a table cell that checks the shipped table is the EXACT order, i.e. g^ord = 1 and
+  g^(ord/p) ≠ 1 for every prime p dividing it, computed independently from
+  2^n − 1's factorisation;
+- per-CLI signer cells: 16 signatures each, all with s < ord(g);
+- 128 accept cells: every signer against every verifier, at all four widths and for
+  both algorithms;
+- 16 cells refusing the s + ord(g) re-encoding;
+- three controls that each fire: a wrong table, a re-encoding signer and a reducing
+  verifier.
+
+The pre-fix build fails exactly its 33 signer, refused and table cells.  The assembly
+and Arduino suites, which run 32-bit HPKS demos with no CLI, are unchanged.
 
 ## [19.0.0] - 2026-11-24
 

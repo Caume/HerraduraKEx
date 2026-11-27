@@ -5936,6 +5936,11 @@ static void cmd_verify(int argc, char **argv)
         if (!ba_equal(&e_v, &e_stored))
             die("verify: signature challenge e is not the recomputed one "
                 "(rejected: non-canonical signature)");
+        /* TODO #423: g^s depends on s mod ord(g), and g generates a proper
+         * subgroup at n = 32 and 128, so s + ord(g) is a second encoding. */
+        if (!hpks_s_below_order(&s_ba))
+            die("verify: signature scalar s is not below the order of g "
+                "(rejected: non-canonical signature)");
         puts("Signature OK");
         exit(0);
 
@@ -7128,6 +7133,15 @@ int main(int argc, char **argv)
     argv = split_eq_args(cmd, &argc, argv);   /* TODO #381 */
     check_unknown_flags(cmd, argc, argv);
     check_arg_shape(cmd, argc, argv);         /* TODO #381 */
+    /* TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
+     * verify refuse it before any file is read, until the redesign. */
+    if (strcmp(cmd, "sign") == 0 || strcmp(cmd, "verify") == 0) {
+        const char *ra = get_arg(argc, argv, "--algo");
+        if (ra && strcmp(ra, "hpks-ring") == 0) {
+            fprintf(stderr, "%s: --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature\n", cmd);
+            return 1;
+        }
+    }
     check_key_labels(cmd, argc, argv);   /* TODO #366 */
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }

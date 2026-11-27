@@ -32,8 +32,8 @@ cp "$F/hpks-wots.pem" "$F/w1.pem"; cp "$F/hpks-wots.pem.idx" "$F/w1.pem.idx" 2>/
 q $C sign --algo hpks-wots --key "$F/w1.pem" --in "$F/msg.bin" --out "$F/sig_hpks-wots.pem"
 cp "$F/hpks-xmss.pem" "$F/x1.pem"; cp "$F/hpks-xmss.pem.idx" "$F/x1.pem.idx" 2>/dev/null || true
 q $C sign --algo hpks-xmss --key "$F/x1.pem" --in "$F/msg.bin" --out "$F/sig_hpks-xmss.pem"
-q $C sign --algo hpks-ring --rounds 2 --key "$F/hpks-stern.pem" \
-    --ring "$F/hpks-stern_pub.pem,$F/m2_pub.pem" --in "$F/msg.bin" --out "$F/sig_ring.pem"
+# No hpks-ring signature: sign and verify refuse hpks-ring (TODO #422), so the
+# HPKS-RING SIGNATURE label has no reader and no spec row while it is disabled.
 q $C kex --algo hkex-rnl --our "$F/rnl2.pem" --their "$F/hkex-rnl_pub.pem" --out "$F/rnl_resp.pem"
 q $C kex --algo hybrid-rnl-stern --our "$F/rnl2.pem" --their "$F/hkex-rnl_pub.pem" \
     --their-kem "$F/hpke-stern-kem_pub.pem" --out "$F/hyb_resp.pem"
@@ -87,7 +87,6 @@ T["HERRADURA HPKS-WOTS SIGNATURE"]="sig_hpks-wots.pem|verify --algo hpks-wots --
 T["HERRADURA HPKS-XMSS PRIVATE KEY"]="hpks-xmss.pem|sign --algo hpks-xmss --key {X} --in {F}/msg.bin --out {O}"
 T["HERRADURA HPKS-XMSS PUBLIC KEY"]="hpks-xmss_pub.pem|verify --algo hpks-xmss --pubkey {X} --in {F}/msg.bin --sig {F}/sig_hpks-xmss.pem"
 T["HERRADURA HPKS-XMSS SIGNATURE"]="sig_hpks-xmss.pem|verify --algo hpks-xmss --pubkey {F}/hpks-xmss_pub.pem --in {F}/msg.bin --sig {X}"
-T["HERRADURA HPKS-RING SIGNATURE"]="sig_ring.pem|verify --algo hpks-ring --min-rounds 1 --ring {F}/hpks-stern_pub.pem,{F}/m2_pub.pem --in {F}/msg.bin --sig {X}"
 T["HERRADURA OPRF PRIVATE KEY"]="oprf.pem|oprf-eval --key {X} --in {F}/oprf_state.pem --out {O}"
 T["HERRADURA OPRF CLIENT STATE"]="oprf_state.pem|oprf-eval --key {F}/oprf.pem --in {X} --out {O}"
 T["HERRADURA OPRF EVALUATION"]="oprf_eval.pem|oprf-unblind --state {F}/oprf_state.pem --eval {X}"

@@ -5444,6 +5444,11 @@ func cmdVerify(args []string) {
 		if eV.BigInt().Cmp(eStored) != 0 {
 			die("verify", errors.New("signature challenge e is not the recomputed one (rejected: non-canonical signature)"))
 		}
+		// TODO #423: g^s depends on s mod ord(g), and g generates a proper
+		// subgroup at n = 32 and 128, so s + ord(g) is a second encoding.
+		if sInt.Cmp(GfGenOrder(n)) >= 0 {
+			die("verify", errors.New("signature scalar s is not below the order of g (rejected: non-canonical signature)"))
+		}
 		fmt.Println("Signature OK")
 		os.Exit(0)
 
@@ -6256,8 +6261,6 @@ var keySites = []keySite{
 	{"verify", "hpks-nl", "--pubkey", "hkex-gf, hpks, hpks-nl, hpke, hpke-nl", []string{"HERRADURA HKEX-GF PUBLIC KEY", "HERRADURA HPKS PUBLIC KEY", "HERRADURA HPKS-NL PUBLIC KEY", "HERRADURA HPKE PUBLIC KEY", "HERRADURA HPKE-NL PUBLIC KEY"}},
 	{"sign", "hpks-stern", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
 	{"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
-	{"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY"}},
-	{"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern", []string{"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY"}},
 	{"sign", "rnl-sigma", "--key", "hkex-rnl", []string{"HERRADURA HKEX-RNL PRIVATE KEY"}},
 	{"verify", "rnl-sigma", "--pubkey", "hkex-rnl", []string{"HERRADURA HKEX-RNL PUBLIC KEY"}},
 	{"sign", "nl-zkboo", "--key", "hpks-zkp-nl", []string{"HERRADURA ZKP-NL PRIVATE KEY"}},
@@ -6307,7 +6310,6 @@ var derItems = map[string][2]int{
 	"HERRADURA HPKS PUBLIC KEY": {2, 2},
 	"HERRADURA HPKS-NL PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-NL PUBLIC KEY": {2, 2},
-	"HERRADURA HPKS-RING SIGNATURE": {4, 4},
 	"HERRADURA HPKS-STERN PRIVATE KEY": {3, 3},
 	"HERRADURA HPKS-STERN PUBLIC KEY": {3, 3},
 	"HERRADURA HPKS-WOTS PRIVATE KEY": {2, 2},
@@ -7040,34 +7042,6 @@ func derFieldCheck(label string, v [][]byte, ew []int, lz []uint8) string {
 			}
 			if c := int64(F(3) * 32); n > 2 && !(int64(ew[2]) == c || (lz[2] == 2 && int64(ew[2])+1 == c) || (c == 0 && ew[2] == 1 && L(2) == 0)) {
 				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 2, ew[2], c)
-			}
-			return ""
-		}
-	case "HERRADURA HPKS-RING SIGNATURE":
-		if n >= 4 && n <= 4 {
-			if c := int64(1); n > 0 && L(0) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 0, L(0), c)
-			}
-			if c := int64(2); n > 1 && L(1) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 1, L(1), c)
-			}
-			if c := int64(2); n > 2 && L(2) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 2, L(2), c)
-			}
-			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && L(3) > c {
-				return fmt.Sprintf("%s: field %d is %d bytes (expected at most %d)", label, 3, L(3), c)
-			}
-			if n > 0 && lz[0] == 1 {
-				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 0)
-			}
-			if n > 1 && lz[1] == 1 {
-				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 1)
-			}
-			if n > 2 && lz[2] == 1 {
-				return fmt.Sprintf("%s: field %d is encoded with a leading zero byte (expected minimal)", label, 2)
-			}
-			if c := int64(F(0) * F(1) * (3 * hkxMin(F(2)/8, 32) + 2 * (F(2)/8) + 1)); n > 3 && !(int64(ew[3]) == c || (lz[3] == 2 && int64(ew[3])+1 == c) || (c == 0 && ew[3] == 1 && L(3) == 0)) {
-				return fmt.Sprintf("%s: field %d is encoded in %d bytes (expected exactly %d)", label, 3, ew[3], c)
 			}
 			return ""
 		}
@@ -7808,6 +7782,15 @@ func pemFileLabel(path string) string {
 // the passphrase envelope is refused by name, TODO #397): a response, session key or hex key goes
 // on to the loader, whose own message is the more specific one.
 func checkKeyLabels(cmd string, fs *flag.FlagSet) {
+	// TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign and
+	// verify refuse it here, right after flag parsing and before any file is
+	// read (every subcommand calls this first), until the redesign.
+	if cmd == "sign" || cmd == "verify" {
+		if f := fs.Lookup("algo"); f != nil && f.Value.String() == "hpks-ring" {
+			fmt.Fprintln(os.Stderr, cmd+": --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature")
+			os.Exit(1)
+		}
+	}
 	algo := ""
 	if f := fs.Lookup("algo"); f != nil {
 		algo = f.Value.String()

@@ -973,6 +973,19 @@ const GfGen = 3
 // GfGenBA is GfGen as a BitArray of width n.
 func GfGenBA(n int) *BitArray { return NewFromUint(GfGen, n) }
 
+// GfGenIndex is the index of g's subgroup in GF(2^n)* per width (TODO #423): g
+// generates the whole group at n = 64 and 256, but a subgroup of index 15 at
+// n = 32 and index 3 at n = 128 (under GfPoly).  g^s depends on s mod ord(g)
+// only, so an HPKS scalar is reduced below ord(g) when signed and must lie
+// below it when verified.
+var GfGenIndex = map[int]int64{32: 15, 64: 1, 128: 3, 256: 1}
+
+// GfGenOrder returns ord(g) = (2^n - 1) / GfGenIndex[n] (TODO #423).
+func GfGenOrder(n int) *big.Int {
+	full := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+	return full.Div(full, big.NewInt(GfGenIndex[n]))
+}
+
 // TryGfMul computes a·b in GF(2^n) (carryless multiply mod the width's
 // primitive polynomial).  BITARRAY.md §4.6; the schedule consumes b from the
 // LSB up while doubling a, both constant-time in the operands.
@@ -1210,8 +1223,9 @@ func HpksSign(msg, priv *BitArray) (*BitArray, *BitArray) {
 	k := NewRandBitArray(n)
 	R := GfPow(GfGenBA(n), k)
 	e := FscxRevolve(R, msg, n/4)
-	// s = (k - priv*e) mod (2^n - 1)
-	return R, k.SubModOrd(priv.MulModOrd(e))
+	// s = (k - priv*e) mod ord(g) (TODO #423; was mod 2^n - 1)
+	s := k.SubModOrd(priv.MulModOrd(e))
+	return R, NewBitArray(n, new(big.Int).Mod(s.BigInt(), GfGenOrder(n)))
 }
 
 // HpksNlSign is the NL counterpart of HpksSign: the challenge hash is
@@ -1225,8 +1239,9 @@ func HpksNlSign(msg, priv *BitArray) (*BitArray, *BitArray) {
 	// s = (k - priv*e) mod (2^n - 1).  Written out rather than shared with
 	// HpksSign through a helper: a suite-internal Go-only function is exactly
 	// what the internal-surface census refuses, and the other three ports
-	// write this line out too.
-	return R, k.SubModOrd(priv.MulModOrd(e))
+	// write this line out too.  Reduced below ord(g) (TODO #423).
+	s := k.SubModOrd(priv.MulModOrd(e))
+	return R, NewBitArray(n, new(big.Int).Mod(s.BigInt(), GfGenOrder(n)))
 }
 
 // HpksVerify verifies an HPKS Schnorr signature (R, s) on msg under pub,
@@ -1238,6 +1253,9 @@ func HpksVerify(msg, pub, R, s *BitArray) bool {
 		return false
 	}
 	n := pub.Size()
+	if s.BigInt().Cmp(GfGenOrder(n)) >= 0 { // TODO #423: s + ord(g) is the same g^s
+		return false
+	}
 	e := FscxRevolve(R, msg, n/4)
 	lhs := GfMul(GfPow(GfGenBA(n), s), GfPow(pub, e))
 	return lhs.Equal(R)

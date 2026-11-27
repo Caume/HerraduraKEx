@@ -855,6 +855,16 @@ def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) ->
 # Primitive polynomials (lower n bits; the x^n coefficient is implicit).
 GF_POLY = {32: 0x00400007, 64: 0x0000001B, 128: 0x00000087, 256: 0x00000425}
 GF_GEN  = 3   # g = x+1 in GF(2^n)[x]; DH correctness holds for any non-zero g
+# TODO #423: g generates all of GF(2^n)* at n = 64 and 256, but only a subgroup of
+# index 15 at n = 32 and index 3 at n = 128 (under GF_POLY).  g^s depends on s
+# mod ord(g) only, so an HPKS scalar is reduced mod ord(g) when signed and must
+# lie below it when verified; otherwise s + ord(g) was a second encoding.
+GF_GEN_INDEX = {32: 15, 64: 1, 128: 3, 256: 1}
+
+
+def gf_gen_order(n: int) -> int:
+    """ord(g) in GF(2^n)*: (2^n - 1) / GF_GEN_INDEX[n] (TODO #423)."""
+    return ((1 << n) - 1) // GF_GEN_INDEX[n]
 
 def gf_mul(a: int, b: int, poly: int, n: int) -> int:
     """Carryless polynomial multiply mod p(x) in GF(2^n). O(n) XOR+shift ops."""
@@ -953,6 +963,8 @@ def hpks_verify(msg: 'BitArray', pub: int, R: 'BitArray', s: int,
     R=g^s) pair verify trivially against any message)."""
     if not gf_pub_is_valid(pub):
         return False
+    if not 0 <= s < gf_gen_order(n):     # TODO #423: s + ord(g) is the same g^s
+        return False
     e = fscx_revolve(R, msg, n // 4).uint
     lhs = gf_mul(gf_pow(GF_GEN, s, poly, n), gf_pow(pub, e, poly, n), poly, n)
     return lhs == R.uint
@@ -971,7 +983,7 @@ def hpks_sign(msg: 'BitArray', priv: int, poly: int, n: int):
     k = BitArray.random(n).uint
     R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
     e = fscx_revolve(R, msg, n // 4)
-    return R, (k - priv * e.uint) % ((1 << n) - 1)
+    return R, (k - priv * e.uint) % gf_gen_order(n)    # TODO #423: below ord(g)
 
 
 def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
@@ -981,7 +993,7 @@ def hpks_nl_sign(msg: 'BitArray', priv: int, poly: int, n: int):
     k = BitArray.random(n).uint
     R = BitArray(n, gf_pow(GF_GEN, k, poly, n))
     e = hpks_nl_challenge(R, msg)
-    return R, (k - priv * e.uint) % ((1 << n) - 1)
+    return R, (k - priv * e.uint) % gf_gen_order(n)    # TODO #423: below ord(g)
 
 
 def hpke_encrypt(pt: 'BitArray', pub: int, poly: int, n: int):

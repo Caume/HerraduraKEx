@@ -3831,7 +3831,7 @@ static void test_hpks_stern_ring_correctness(void)
 {
 #define RING_K 3
     struct timespec t0;
-    int N, ok = 0, i;
+    int N, ok = 0, i, re_tried = 0, re_refused = 0;
     printf("[20] HPKS-Stern-Ring (78.I): OR-composition, k=%d, N=256, rounds=%d"
            "  [CODE-BASED RING SIG]\n", RING_K, SDF_TEST_ROUNDS);
     N = TEST_ROUNDS(3);
@@ -3856,11 +3856,23 @@ static void test_hpks_stern_ring_correctness(void)
                         ring_seeds, ring_syndrs, urnd_fp);
         if (stern_ring_verify(&rsig, &msg, ring_seeds, ring_syndrs))
             ok++;
+        /* TODO #421: re-encode the first b = 2 entry as 5 (same residue mod 3);
+         * the verifier must refuse it, not read it as b = 2. */
+        { int x, nb = RING_K * SDF_TEST_ROUNDS;
+          for (x = 0; x < nb && rsig.b[x] != 2; x++) ;
+          if (x < nb) {
+              re_tried++;
+              rsig.b[x] = 5;
+              if (!stern_ring_verify(&rsig, &msg, ring_seeds, ring_syndrs)) re_refused++;
+              rsig.b[x] = 2;
+          } }
         stern_ring_free(&rsig);
         if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    %d / %d ring-verified  [%s]\n\n",
-           ok, N, ok == N ? "PASS" : "FAIL");
+    /* A run with no b = 2 entry re-encoded nothing: n/a, never a pass or a fail. */
+    printf("    %d / %d ring-verified; %d / %d b=2 re-encoded as 5 refused%s  [%s]\n\n",
+           ok, N, re_refused, re_tried, re_tried == 0 ? " (n/a)" : "",
+           ok == N && re_refused == re_tried ? "PASS" : "FAIL");
 #undef RING_K
 }
 

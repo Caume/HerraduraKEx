@@ -102,8 +102,6 @@ for s in "${LANGS[@]}"; do
     S=${CLI[$s]}
     $S sign --algo hpks-stern --key "$TMP/st.pem" --in "$TMP/msg.bin" \
             --rounds $R --out "$TMP/st_$s.pem" 2>/dev/null
-    $S sign --algo hpks-ring --key "$TMP/m1.pem" --ring "$RING" --in "$TMP/msg.bin" \
-            --rounds $R --out "$TMP/ring_$s.pem" 2>/dev/null
     $S sign --algo nl-zkboo --key "$TMP/zk.pem" --in "$TMP/msg.bin" \
             --rounds $R --out "$TMP/zb_$s.pem" 2>/dev/null
     $S sign --algo nl-zkbpp --key "$TMP/zk.pem" --in "$TMP/msg.bin" \
@@ -120,10 +118,9 @@ for v in "${LANGS[@]}"; do
     echo "=== verifier: $v ==="
     for s in "${LANGS[@]}"; do
         st=(verify --algo hpks-stern --pubkey "$TMP/st_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/st_$s.pem")
-        rg=(verify --algo hpks-ring --ring "$RING" --in "$TMP/msg.bin" --sig "$TMP/ring_$s.pem")
         zb=(verify --algo nl-zkboo --pubkey "$TMP/zk_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/zb_$s.pem")
         zp=(verify --algo nl-zkbpp --pubkey "$TMP/zk_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/zp_$s.pem")
-        for row in st rg zb zp; do
+        for row in st zb zp; do   # rg (hpks-ring) left with TODO #422
             declare -n argv=$row
             accepts "$row $s->$v at --min-rounds $R (control)" $V "${argv[@]}" --min-rounds $R
             floored "$row $s->$v refused at the default floor"   $V "${argv[@]}"
@@ -152,8 +149,9 @@ done
 # ── Round index above 255 (TODO #390) ─────────────────────────────────────────
 # Each round's challenge advances the Fiat-Shamir state by nl_fscx_v1(ch_st, i)
 # with i the WHOLE round index.  C and Go used i & 0xFF, so above 255 rounds their
-# signatures and Python's / Java's did not verify in each other.  hpks-stern,
-# hpks-ring and the HCRED credential (cred-issue) share the derivation; each is
+# signatures and Python's / Java's did not verify in each other.  hpks-stern and
+# the HCRED credential (cred-issue) share the derivation (hpks-ring did too, until
+# TODO #422 disabled it); each is
 # signed at RR rounds by every CLI and verified by every CLI at the default floor.
 # A rule all four got wrong would pass that matrix, so stern_ref restates the rule
 # and checks each signer's hpks-stern challenges against it; its low-byte variant
@@ -183,8 +181,6 @@ for s in "${LANGS[@]}"; do
     S=${CLI[$s]}
     $S sign --algo hpks-stern --key "$TMP/st.pem" --in "$TMP/msg.bin" \
             --rounds $RR --out "$TMP/st${RR}_$s.pem" 2>/dev/null || fail "hpks-stern $RR-round sign ($s)"
-    $S sign --algo hpks-ring --key "$TMP/m1.pem" --ring "$RING" --in "$TMP/msg.bin" \
-            --rounds $RR --out "$TMP/ring${RR}_$s.pem" 2>/dev/null || fail "hpks-ring $RR-round sign ($s)"
     $S cred-issue --our "$TMP/st.pem" --in "$TMP/hc_pub.pem" --rounds $RR \
             --out "$TMP/cred${RR}_$s.pem" 2>/dev/null || fail "cred-issue $RR rounds ($s)"
     got=$(stern_ref "$TMP/st${RR}_$s.pem" 2>&1 | tail -1)
@@ -196,8 +192,6 @@ for v in "${LANGS[@]}"; do
     for s in "${LANGS[@]}"; do
         accepts "hpks-stern $RR rounds $s->$v" $V verify --algo hpks-stern \
             --pubkey "$TMP/st_pub.pem" --in "$TMP/msg.bin" --sig "$TMP/st${RR}_$s.pem"
-        accepts "hpks-ring $RR rounds $s->$v" $V verify --algo hpks-ring \
-            --ring "$RING" --in "$TMP/msg.bin" --sig "$TMP/ring${RR}_$s.pem"
         accepts "hcred credential $RR rounds $s->$v" $V cred-verify --proof "$TMP/proof.pem" \
             --pubkey "$TMP/hc_pub.pem" --msg nonce --min-rounds $R \
             --cred "$TMP/cred${RR}_$s.pem" --issuer "$TMP/st_pub.pem"

@@ -27759,3 +27759,58 @@ and long form) plus a mod-3-reducing stand-in, which fails exactly the 5 re-enco
 cells.  The v20.0.0 build fails 9 cells, which is the defect exactly.
 
 Status: **DONE v20.0.0** — every HPKS-Ring verifier refuses a challenge byte outside {0, 1, 2}; MAJOR (MIGRATING §58).
+
+---
+
+### #422: HPKS-Ring is forgeable, so sign and verify must refuse it until the redesign
+
+The interim step #415 named, decided after the 2026-11-26 review.  `hpks-ring` is
+existentially forgeable with no member's secret key (#415), so a ring signature proves
+nothing.  Both `sign` and `verify --algo hpks-ring` are refused in all four CLIs, verify
+included, so that no relying party is told a forgery is "Signature OK".
+
+**MAJOR (MIGRATING entry required):** it removes what an existing `--algo` value does.
+Folded into the unreleased v20.0.0.
+
+**Done.**  Each CLI refuses at its central dispatch, before key-label checks and before
+any file is read: C `main`, Java `main`, Python `main`, and Go `checkKeyLabels`, which
+every Go subcommand calls right after parsing.  All four use the same message.  The
+suite library functions stay.  `spec/generate_spec.py` drops the `hpks-ring` rows from
+`KEY_LABEL_SITES` and the `HERRADURA HPKS-RING SIGNATURE` rows from `PEM_DER_ITEMS` and
+`PEM_DER_FIELD_CAPS`, since no subcommand reads one.  The ring cells come out of
+lib_der_fixtures, test_key_label_matrix, test_width_matrix, test_numeric_flags,
+test_wrong_secret_matrix, test_round_floor, test_stern_128 and lib_malformed.
+`CliTest/test_ring.sh` is rewritten as the refusal test (36 cells, two controls).
+`test_ring_challenge_bound.sh` (#421) is retired, and its bound now sits in harness
+`[20]` and Java `[26]`, with n/a when no `b = 2` entry occurs.  The TUTORIAL, llms.txt,
+SECURITY.md, spec notes and MCP field descriptions say the scheme is disabled.  MIGRATING §59.
+
+Status: **DONE v20.0.0** — every CLI refuses sign and verify --algo hpks-ring before reading a file; MAJOR (MIGRATING §59).
+
+---
+
+### #423: HPKS signatures at n = 32 and 128 are malleable: s + ord(g) also verifies
+
+Found 2026-11-26 by reviewing HPKS sign and verify.  `g = 3` generates GF(2^n)* at
+n = 64 and 256, but only a subgroup of index 15 at n = 32 and 3 at n = 128 (computed
+from 2^n − 1's factorisation).  Signers reduced `s` mod 2^n − 1, and verifiers never
+bounded `s`, so `s + ord(g) < 2^n` gave a second encoding.  Confirmed through all four
+CLIs, for `hpks` and `hpks-nl`, at both widths.  Malleability, not forgery.
+
+**MAJOR (MIGRATING entry required):** the fix refuses signature files existing builds
+verified.  Folded into the unreleased v20.0.0.
+
+**Done.**  Option (a) of the review.  `gf_gen_order` (Python), `gf_gen_order_w` (C),
+`GfGenOrder` (Go) and `Herradura.genOrder` (Java) return ord(g); this is a new
+primitive-manifest entry.  C's BitArray helpers `hpks_s_below_order` / `hpks_reduce_s`
+are census-exempt as arithmetic.  The signers `hpks_sign` / `hpks_nl_sign`
+(`HpksSign` / `HpksNlSign`, `hpksSign` / `hpksNlSign`) reduce `s` below ord(g).  The
+suite verifiers refuse `s ≥ ord(g)`, and so does each CLI verifier: after the algebra
+and e checks, with one shared message (Java computes its verdict with s reduced so its
+refusal order matches).  The Python harness's `hpks_verify_checked` is updated to
+match.  OPRF and HKEX keep 2^n − 1 as the exponent modulus: OPRF needs inverses in the
+whole group.  The new `CliTest/test_hpks_s_bound.sh` has 164 cells, with three
+controls shown to fire.  The pre-fix build fails exactly its 33 signer, refused and
+table cells.  The assembly and Arduino 32-bit demos are not changed.  MIGRATING §60.
+
+Status: **DONE v20.0.0** — HPKS/HPKS-NL signers reduce s below ord(g) and every verifier refuses s ≥ ord(g); MAJOR (MIGRATING §60).

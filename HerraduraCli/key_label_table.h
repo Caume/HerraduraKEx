@@ -52,10 +52,6 @@ static const HkxKeySite HKX_KEY_SITES[] = {
      {"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY", 0}},
     {"verify", "hpks-stern", "--pubkey", "hpks-stern, hpke-stern",
      {"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY", 0}},
-    {"sign", "hpks-ring", "--key", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PRIVATE KEY", "HERRADURA HPKE-STERN PRIVATE KEY", 0}},
-    {"verify", "hpks-ring", "--ring", "hpks-stern, hpke-stern",
-     {"HERRADURA HPKS-STERN PUBLIC KEY", "HERRADURA HPKE-STERN PUBLIC KEY", 0}},
     {"sign", "rnl-sigma", "--key", "hkex-rnl",
      {"HERRADURA HKEX-RNL PRIVATE KEY", 0}},
     {"verify", "rnl-sigma", "--pubkey", "hkex-rnl",
@@ -129,7 +125,6 @@ static const HkxDerItems HKX_DER_ITEMS[] = {
     {"HERRADURA HPKS PUBLIC KEY", 2, 2},
     {"HERRADURA HPKS-NL PRIVATE KEY", 3, 3},
     {"HERRADURA HPKS-NL PUBLIC KEY", 2, 2},
-    {"HERRADURA HPKS-RING SIGNATURE", 4, 4},
     {"HERRADURA HPKS-STERN PRIVATE KEY", 3, 3},
     {"HERRADURA HPKS-STERN PUBLIC KEY", 3, 3},
     {"HERRADURA HPKS-WOTS PRIVATE KEY", 2, 2},
@@ -634,20 +629,6 @@ static int hkx_der_field_check(const char *label, int n, const uint8_t *const *v
             if (n > 4) HKX_MINIMAL(4);
             if (n > 1) HKX_EXACT(1, 67LL * (F(4)/8LL));
             if (n > 2) HKX_EXACT(2, F(3) * 32LL);
-            return 0;
-        }
-        return 0;
-    }
-    if (strcmp(label, "HERRADURA HPKS-RING SIGNATURE") == 0) {
-        if (n >= 4 && n <= 4) {
-            if (n > 0) HKX_WIDE(0, 1LL);
-            if (n > 1) HKX_WIDE(1, 2LL);
-            if (n > 2) HKX_WIDE(2, 2LL);
-            if (n > 3) HKX_WIDE(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
-            if (n > 0) HKX_MINIMAL(0);
-            if (n > 1) HKX_MINIMAL(1);
-            if (n > 2) HKX_MINIMAL(2);
-            if (n > 3) HKX_EXACT(3, F(0) * F(1) * (3LL * HKX_MIN(F(2)/8LL, 32LL) + 2LL * (F(2)/8LL) + 1LL));
             return 0;
         }
         return 0;

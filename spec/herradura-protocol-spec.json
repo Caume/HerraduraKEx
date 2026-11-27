@@ -536,7 +536,7 @@
       "security": {
         "status": "broken",
         "quantum_resistant": "conjectured",
-        "notes": "BROKEN (TODO #415, v20.0.0): existentially forgeable with no member's secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition splits each round's challenge across members mod 3, which is sound only if a party without the witness can answer one challenge per round; in Stern, b = 0 and b = 1 never read the syndrome, so two keyless members cover every residue and nobody is ever forced to answer b = 2. Hashing the ring's keys does not help. A repair must replace the composition. Was demo-only, inheriting hpks-stern's caveats.",
+        "notes": "BROKEN (TODO #415, v20.0.0): existentially forgeable with no member's secret key, at N = 256 and N = 2304, at 219 rounds. The OR-composition splits each round's challenge across members mod 3, which is sound only if a party without the witness can answer one challenge per round; in Stern, b = 0 and b = 1 never read the syndrome, so two keyless members cover every residue and nobody is ever forced to answer b = 2. Hashing the ring's keys does not help. A repair must replace the composition. Every CLI's sign and verify refuse hpks-ring (TODO #422). Was demo-only, inheriting hpks-stern's caveats.",
         "source": [
           "herradura.h SDF_* constants",
           "TODO.md #415"
@@ -3112,34 +3112,6 @@
     },
     {
       "subcommand": "sign",
-      "algo": "hpks-ring",
-      "flag": "--key",
-      "role": "priv",
-      "accepts": [
-        "hpks-stern",
-        "hpke-stern"
-      ],
-      "labels": [
-        "HERRADURA HPKS-STERN PRIVATE KEY",
-        "HERRADURA HPKE-STERN PRIVATE KEY"
-      ]
-    },
-    {
-      "subcommand": "verify",
-      "algo": "hpks-ring",
-      "flag": "--ring",
-      "role": "pub",
-      "accepts": [
-        "hpks-stern",
-        "hpke-stern"
-      ],
-      "labels": [
-        "HERRADURA HPKS-STERN PUBLIC KEY",
-        "HERRADURA HPKE-STERN PUBLIC KEY"
-      ]
-    },
-    {
-      "subcommand": "sign",
       "algo": "rnl-sigma",
       "flag": "--key",
       "role": "priv",
@@ -3523,11 +3495,6 @@
       "label": "HERRADURA HPKS-NL PUBLIC KEY",
       "min": 2,
       "max": 2
-    },
-    {
-      "label": "HERRADURA HPKS-RING SIGNATURE",
-      "min": 4,
-      "max": 4
     },
     {
       "label": "HERRADURA HPKS-STERN PRIVATE KEY",
@@ -4417,35 +4384,6 @@
         {
           "field": 2,
           "cap": "f3*32",
-          "exact": true
-        }
-      ],
-      "rules": []
-    },
-    {
-      "label": "HERRADURA HPKS-RING SIGNATURE",
-      "min_items": 4,
-      "max_items": 4,
-      "when": "",
-      "caps": [
-        {
-          "field": 0,
-          "cap": "1",
-          "exact": false
-        },
-        {
-          "field": 1,
-          "cap": "2",
-          "exact": false
-        },
-        {
-          "field": 2,
-          "cap": "2",
-          "exact": false
-        },
-        {
-          "field": 3,
-          "cap": "f0*f1*(3*min(f2/8, 32)+2*(f2/8)+1)",
           "exact": true
         }
       ],

@@ -133,6 +133,11 @@ public final class HerraduraCli {
         String cmd = args[0];
         Map<String, String> opt = parseOpts(cmd, args, 1);
         checkUnknownFlags(cmd, opt);
+        // TODO #422: HPKS-Ring is forgeable with no secret key (#415); sign
+        // and verify refuse it before any file is read, until the redesign.
+        if ((cmd.equals("sign") || cmd.equals("verify")) && "hpks-ring".equals(opt.get("algo"))) {
+            throw new CliError(cmd + ": --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature");
+        }
         checkKeyLabels(cmd, opt);   // TODO #366
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
@@ -2015,15 +2020,20 @@ public final class HerraduraCli {
         }
         BitArray rBa = BitArray.fromBigInteger(sig.r, pub.nbits);
         BitArray mBa = BitArray.fromBigInteger(msgInt, pub.nbits);
+        // TODO #423: checked AFTER the algebra and e below, in the other three
+        // CLIs' order and words, so the suite verifier's own s bound must not
+        // turn this into a plain "Verification FAILED" first.
+        boolean sCanonical = sig.s.compareTo(Herradura.genOrder(pub.nbits)) < 0;
+        BigInteger sAlg = sCanonical ? sig.s : sig.s.mod(Herradura.genOrder(pub.nbits));
         BitArray eV = algo.equals("hpks") ? Herradura.fscxRevolve(rBa, mBa, pub.nbits / 4)
                                           : HerraduraNl.hpksNlChallenge(rBa, mBa);
         boolean ok = algo.equals("hpks")
             ? Herradura.hpksVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
-                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits))
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sAlg, pub.nbits))
             : HerraduraNl.hpksNlVerify(BitArray.fromBigInteger(msgInt, pub.nbits),
                                    BitArray.fromBigInteger(pub.pub, pub.nbits),
-                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sig.s, pub.nbits));
+                                   BitArray.fromBigInteger(sig.r, pub.nbits), BitArray.fromBigInteger(sAlg, pub.nbits));
         if (!ok) {
             System.out.println("Verification FAILED");
             System.exit(1);
@@ -2035,6 +2045,10 @@ public final class HerraduraCli {
         // ordinary "Verification FAILED".
         if (!eV.toBigInteger().equals(sig.e)) {
             throw new CliError("verify: signature challenge e is not the recomputed one "
+                + "(rejected: non-canonical signature)");
+        }
+        if (!sCanonical) {
+            throw new CliError("verify: signature scalar s is not below the order of g "
                 + "(rejected: non-canonical signature)");
         }
         System.out.println("Signature OK");

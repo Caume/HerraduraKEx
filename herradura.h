@@ -820,6 +820,47 @@ static void gf_gen_w(BitArray *g, int n)
     g->b[n / 8 - 1] = 0x03;
 }
 
+/* ord(g) at width n (TODO #423).  g = 3 generates all of GF(2^n)* at n = 64 and
+ * 256 but a subgroup of index 15 at n = 32 and index 3 at n = 128 (under
+ * GF_POLY), so ord(g) = (2^n - 1) / 15 = 0x11..11, (2^n - 1) / 3 = 0x55..55, or
+ * 2^n - 1.  g^s depends on s mod ord(g) only: an HPKS scalar is reduced below
+ * it when signed and must lie below it when verified. */
+static void gf_gen_order_w(BitArray *ord, int n)
+{
+    int i;
+    uint8_t fill = n == 32 ? 0x11 : n == 128 ? 0x55 : 0xFF;
+    ba_zero_w(ord, n);
+    for (i = 0; i < n / 8; i++) ord->b[i] = fill;
+}
+
+/* 1 if s < ord(g) at s's width (TODO #423).  s is a public signature value, so
+ * this compares in variable time. */
+static int hpks_s_below_order(const BitArray *s)
+{
+    BitArray ord = BA_INIT;
+    int i;
+    gf_gen_order_w(&ord, s->nbits);
+    for (i = 0; i < s->nbits / 8; i++)
+        if (s->b[i] != ord.b[i]) return s->b[i] < ord.b[i];
+    return 0;
+}
+
+/* s = s mod ord(g), for s < 2^n - 1 (TODO #423): at most 14 subtractions.  The
+ * result is published as the signature, so the loop may depend on it. */
+static void hpks_reduce_s(BitArray *s)
+{
+    BitArray ord = BA_INIT;
+    gf_gen_order_w(&ord, s->nbits);
+    while (!hpks_s_below_order(s)) {
+        int i, borrow = 0;
+        for (i = s->nbits / 8 - 1; i >= 0; i--) {
+            int d = (int)s->b[i] - (int)ord.b[i] - borrow;
+            borrow = d < 0;
+            s->b[i] = (uint8_t)(d + (borrow ? 256 : 0));
+        }
+    }
+}
+
 /* Returns 1 if pub is a valid, non-degenerate GF(2^KEYBITS)* public element:
  * neither the additive zero (not a group element at all) nor the
  * multiplicative identity g^0 = 1.  A pub of 1 collapses HKEX-GF/HPKS/HPKE
@@ -4379,6 +4420,7 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
     ba_fscx_revolve(&e, R_out, msg, n / 4);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
+    hpks_reduce_s(s_out);                /* TODO #423: below ord(g) */
 }
 
 /* HPKS-NL: sign msg with private key priv, using hpks_nl_challenge (HFSCX-256-DS
@@ -4398,6 +4440,7 @@ static inline void hpks_nl_sign(const BitArray *msg, const BitArray *priv,
     hpks_nl_challenge(&e, R_out, msg);
     ba_mul_mod_ord(&ae, priv, &e);
     ba_sub_mod_ord(s_out, &k, &ae);
+    hpks_reduce_s(s_out);                /* TODO #423: below ord(g) */
 }
 
 /* HPKS: verify Schnorr signature (R, s) on msg under public key pub.
@@ -4410,6 +4453,7 @@ static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
     BitArray e = BA_INIT, gs = BA_INIT, Ce = BA_INIT, lhs = BA_INIT, g = BA_INIT;
     if (!gf_pub_is_valid(pub)) return 0;
     if (pub->nbits != R->nbits || pub->nbits != s->nbits || pub->nbits != msg->nbits) return 0;
+    if (!hpks_s_below_order(s)) return 0;   /* TODO #423: s + ord(g) is the same g^s */
     gf_gen_w(&g, pub->nbits);
     ba_fscx_revolve(&e, R, msg, pub->nbits / 4);
     gf_pow_ba(&gs, &g, s);

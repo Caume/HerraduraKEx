@@ -2318,7 +2318,7 @@ _VERDICT_FINGERPRINTS = {
     ("c", 13): "158d13ae58", ("c", 14): "42037b4080",
     ("c", 15): "158d13ae58", ("c", 16): "158d13ae58",
     ("c", 17): "8965f8a720", ("c", 18): "c4ffefcf1b",
-    ("c", 19): "feaf67a743", ("c", 20): "83b3091774",
+    ("c", 19): "feaf67a743", ("c", 20): "5b3de48d1f",
     ("c", 21): "de94a6f57c", ("c", 22): "e38188098b",
     ("c", 23): "6e34b5a147", ("c", 24): "6e34b5a147",
     ("c", 25): "49b930b7b4", ("c", 26): "5f0407f2d7",
@@ -2348,7 +2348,7 @@ _VERDICT_FINGERPRINTS = {
     ("go", 13): "10a9b5fc23", ("go", 14): "4eddb7c1ac",
     ("go", 15): "10a9b5fc23", ("go", 16): "10a9b5fc23",
     ("go", 17): "10a9b5fc23", ("go", 18): "a72dd44d29",
-    ("go", 19): "72cc1ae9d3", ("go", 20): "10a9b5fc23",
+    ("go", 19): "72cc1ae9d3", ("go", 20): "864a8b1ada",
     ("go", 21): "b8cf3ad177", ("go", 22): "c8665d6d66",
     ("go", 23): "10a9b5fc23", ("go", 24): "10a9b5fc23",
     ("go", 25): "2ce2ccb1e5", ("go", 26): "5902fad95c",
@@ -2377,7 +2377,7 @@ _VERDICT_FINGERPRINTS = {
     ("python", 13): "db6ea492b7", ("python", 14): "d0396ab8e6",
     ("python", 15): "db6ea492b7", ("python", 16): "db6ea492b7",
     ("python", 17): "c5f298f1d9", ("python", 18): "8be0a29714",
-    ("python", 19): "63a190de9f", ("python", 20): "db6ea492b7",
+    ("python", 19): "63a190de9f", ("python", 20): "617e679eb0",
     ("python", 21): "19da1c270a", ("python", 22): "d7c00b291a",
     ("python", 23): "db6ea492b7", ("python", 24): "db6ea492b7",
     ("python", 25): "e3a6e8b264", ("python", 26): "d7997e3a5d",
@@ -4092,6 +4092,18 @@ PRIMITIVES = {
         "go": r"func GfPubIsValid\(",
         "python": r"^def gf_pub_is_valid\(",
         "java": r"public static boolean gfPubIsValid\(",
+    },
+    "gf-gen-order": {
+        # ord(g) per width (TODO #423): g = 3 generates a subgroup of index 15
+        # at n = 32 and 3 at n = 128 (all of GF(2^n)* at 64 and 256).  HPKS
+        # signers reduce s below it and verifiers refuse s at or above it, so a
+        # port without it accepts s + ord(g) as a second encoding.  The same
+        # four-entry table in all four; CliTest/test_hpks_s_bound.sh checks it
+        # is the EXACT order, from 2^n - 1's factorisation.
+        "c": r"static void gf_gen_order_w\(",
+        "go": r"func GfGenOrder\(",
+        "python": r"^def gf_gen_order\(",
+        "java": r"public static BigInteger genOrder\(",
     },
     "nl-v2-key-is-valid": {
         # Refuses NL-FSCX v2 keys whose delta(B) has a short cyclic arc,
@@ -5939,6 +5951,10 @@ CENSUS_EXEMPT = {
          "looks the polynomial up once instead of once per multiply; gf-mul and "
          "gf-pow remain the manifest's steps, and the lookup is BITARRAY.md 4.6's "
          "table, which ba_gf_poly already carries under the ba_ rule"),
+        (r"^hpks_(s_below_order|reduce_s)$",
+         "s < ord(g) and s mod ord(g) on a BitArray (TODO #423); Python, Go and "
+         "Java write them inline as an integer comparison and a % / Mod.  "
+         "Arithmetic around gf-gen-order, not protocol steps"),
         (r"^_oprf_is_(one|ord)$",
          "x == 1 and x == 2^n - 1 at x's width, the OPRF's rejection tests (TODO "
          "#385); Python, Go and Java write them inline as integer comparisons "

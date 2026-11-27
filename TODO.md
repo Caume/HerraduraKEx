@@ -125,8 +125,8 @@ is rejected.  No action.
 - **Documented in v20.0.0:** SECURITY.md and spec/ re-rate `hpks-ring` as broken, and
   record (b) as accepted for HPKS and HPKS-NL.  The CHANGELOG's #410 section line on #415
   ("no forgery under a fixed key") is superseded; the #415 section says so.  Not done (the
-  maintainer's call): making `hpks-ring` refuse to sign and verify (MAJOR) and the
-  redesign.  The challenge-byte bound was done as #421 (v20.0.0).
+  maintainer's call): the redesign.  The challenge-byte bound was done as #421, and
+  `sign` / `verify --algo hpks-ring` now refuse in every CLI (#422), both in v20.0.0.
 
 Status: **OPEN**
 

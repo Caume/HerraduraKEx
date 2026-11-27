@@ -2751,3 +2751,57 @@ closes the encoding gap.
 
 **Why this is MAJOR.** It refuses signature files that existing builds verified. That is
 the reading section 50 applied to non-canonical base64.
+
+## 59. `sign` and `verify --algo hpks-ring` are refused (v20.0.0)
+
+**Who is affected:** anyone who signs or verifies HPKS-Ring signatures with any of the
+four CLIs, or calls them through the MCP server.
+
+**What changed (TODO #422).** HPKS-Ring is existentially forgeable with no member's
+secret key (TODO #415; SECURITY.md rates it broken). So `sign` and `verify --algo
+hpks-ring` now refuse in all four CLIs, before reading any file:
+
+```
+sign: --algo hpks-ring is disabled: a ring signature can be forged without any member's secret key (TODO #415, SECURITY.md); use --algo hpks-stern for a single-signer signature
+```
+
+A ring verifier that accepts a signature tells the relying party nothing, because anyone
+could have produced it, and a signer has nothing worth producing; that is why both are
+refused, not just signing. The suite library functions (`hpks_stern_ring_sign` /
+`_verify` and the long forms) stay, for the redesign #415 tracks. `hpks-stern` keys are
+unaffected.
+
+**What to do.** Stop relying on HPKS-Ring signatures. Treat any you hold as unauthenticated:
+it cannot be told apart from a forgery. Use `hpks-stern` where one signer may be named.
+There is no replacement for anonymous group signing in this suite until #415 lands.
+
+**Why this is MAJOR.** It removes what an existing `--algo` value does (CLAUDE.md's
+version policy).
+
+## 60. An HPKS / HPKS-NL scalar must lie below the order of g (v20.0.0)
+
+**Who is affected:** anyone holding `hpks` or `hpks-nl` signatures made at `--bits 32` or
+`--bits 128` with an earlier build. Signatures at `--bits 64` and `--bits 256` (the
+default) are unaffected.
+
+**What changed (TODO #423).** `g = 3` generates the whole of GF(2^n)* at n = 64 and 256,
+but only a subgroup of index 15 at n = 32 and index 3 at n = 128. `g^s` depends on
+`s mod ord(g)` only. Signers reduced `s` mod `2^n − 1`, so a signature with
+`s + ord(g) < 2^n` had a second encoding that every verifier accepted (malleability, not
+forgery; about 2/3 of n = 128 signatures and almost all n = 32 ones). Signers now reduce
+`s` mod `ord(g)`, and every verifier refuses `s ≥ ord(g)`:
+
+```
+verify: signature scalar s is not below the order of g (rejected: non-canonical signature)
+```
+
+Signatures from earlier builds at those widths are refused whenever their `s` was at or
+above `ord(g)`: about 2/3 of n = 128 signatures and 14/15 of n = 32 ones. Keys do not
+change.
+
+**What to do.** Re-sign at `--bits 32` / `--bits 128` with this build. Or reduce an old
+signature's `s` mod `ord(g)`: `(2^32 − 1)/15 = 0x11111111` and
+`(2^128 − 1)/3 = 0x5555…5555`. The result is the same signature in its canonical encoding.
+
+**Why this is MAJOR.** It refuses signature files that existing builds verified (the
+section 50 reading).

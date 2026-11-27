@@ -725,9 +725,24 @@ public final class SelfTest {
             BigInteger badE = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
             SternRing.RingSignature forged = SternRing.sign(msg, badE, 0, ringPub, demoRounds, rng);
             boolean rejectsForgery = !SternRing.verify(msg, forged, ringPub);
-            if (!ok || !rejectsTamper || !rejectsForgery) {
+            // TODO #421: re-encode the first b = 2 entry as 5 (same residue
+            // mod 3); the verifier must refuse it, not read it as b = 2.
+            boolean reTried = false, rejectsReenc = false;
+            for (int mi = 0; mi < sig.challenges.length && !reTried; mi++) {
+                for (int ri = 0; ri < sig.challenges[mi].length && !reTried; ri++) {
+                    if (sig.challenges[mi][ri] == 2) {
+                        reTried = true;
+                        sig.challenges[mi][ri] = 5;
+                        rejectsReenc = !SternRing.verify(msg, sig, ringPub);
+                        sig.challenges[mi][ri] = 2;
+                    }
+                }
+            }
+            // No b = 2 entry: the re-encoding check did not run (n/a), not a fail.
+            if (!ok || !rejectsTamper || !rejectsForgery || (reTried && !rejectsReenc)) {
                 System.out.println("FAIL [26] hpks_stern_ring round-trip (verify=" + ok
-                    + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery + ")");
+                    + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery
+                    + " rejects_b2_as_5=" + (reTried ? String.valueOf(rejectsReenc) : "n/a") + ")");
                 fails++;
             } else {
                 System.out.println("PASS [26] hpks_stern_ring round-trip");

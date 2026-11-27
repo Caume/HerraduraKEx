@@ -770,7 +770,7 @@ public final class HerraduraNl {
         // crosses at the named boundary (BitArray.toBigInteger/fromBigInteger).
         BigInteger s = k.toBigInteger()
                         .subtract(priv.toBigInteger().multiply(e.toBigInteger()))
-                        .mod(Herradura.order(n));
+                        .mod(Herradura.genOrder(n));   // TODO #423: below ord(g)
         return new Herradura.Signature(r, BitArray.fromBigInteger(s, n));
     }
 
@@ -780,6 +780,7 @@ public final class HerraduraNl {
 
     public static boolean hpksNlVerify(BitArray msg, BitArray pub, BitArray r, BitArray s) {
         if (!Herradura.gfPubIsValid(pub)) return false;
+        if (s.toBigInteger().compareTo(Herradura.genOrder(pub.size())) >= 0) return false;   // TODO #423
         BitArray e = hpksNlChallenge(r, msg);
         BitArray lhs = Herradura.gfMul(Herradura.gfPow(Herradura.gen(pub.size()), s), Herradura.gfPow(pub, e));
         return lhs.equals(r);
