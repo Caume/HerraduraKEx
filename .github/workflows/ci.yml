@@ -1090,6 +1090,22 @@ jobs:
       - name: Build Arduino/AVR
         run: ./build_arduino.sh
 
+      # TODO #427: build_arduino.sh uses raw avr-g++ and -I; this builds every
+      # demo the way the Arduino IDE does, as a sketch over the Herradura32
+      # library (tools/check_arduino_cli.sh, with a control that fires).
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02  # v2.0.0
+        with:
+          version: 1.2.2
+
+      - name: Install the arduino:avr core
+        timeout-minutes: 20
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr@1.8.8
+
+      - name: Compile every demo sketch with arduino-cli (Arduino IDE path)
+        run: bash tools/check_arduino_cli.sh
+
       - name: Arduino test suite (simavr)
         run: ./run_arduino.sh tests
 

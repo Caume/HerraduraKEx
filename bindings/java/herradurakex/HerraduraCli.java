@@ -2930,22 +2930,57 @@ public final class HerraduraCli {
      * ({@code 0}, or digits with no leading zero, at most 10, an optional single
      * trailing newline) no larger than max.  Anything else used to read as 0
      * (unused), so an empty file left by a crash let a WOTS key sign again. */
+    /** TODO #427: how long a state sidecar's open may take before it is refused. */
+    private static final long OTS_OPEN_WAIT_MS = 3000;
+
     private static long readIdxState(String keyPath, long max) {
         String sp = keyPath + ".idx";
         java.nio.file.Path p = java.nio.file.Paths.get(sp);
         String why = null;
         long v = 0;
-        if (!java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            why = "missing";
-        } else if (!java.nio.file.Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+        // Open FIRST, then judge what was opened (TODO #426, #427): a check of the
+        // name before the open left a window in which a FIFO swapped in made the
+        // open block.  NIO has no O_NONBLOCK, so the open runs on a daemon thread
+        // under a deadline: a regular file opens at once, and an open still
+        // pending after OTS_OPEN_WAIT_MS is a FIFO with no writer (or a stalled
+        // filesystem), refused -- fail closed, never a hang.
+        byte[] b = null;
+        java.util.concurrent.CompletableFuture<java.io.InputStream> fut =
+            new java.util.concurrent.CompletableFuture<>();
+        Thread opener = new Thread(() -> {
+            try {
+                fut.complete(java.nio.file.Files.newInputStream(p, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+            } catch (Throwable t) {
+                fut.completeExceptionally(t);
+            }
+        }, "ots-state-open");
+        opener.setDaemon(true);   // a blocked open must not keep the JVM alive
+        opener.start();
+        java.io.InputStream in = null;
+        try {
+            in = fut.get(OTS_OPEN_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
             why = "not a regular file";
-        } else {
-            byte[] b = null;
-            try (java.io.InputStream in = java.nio.file.Files.newInputStream(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                b = in.readNBytes(16);
+        } catch (java.util.concurrent.ExecutionException | InterruptedException e) {
+            why = java.nio.file.Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                ? "not a regular file" : "missing";
+        }
+        if (in != null) {
+            // NIO cannot stat an open stream, so the type is read from the name
+            // just after the open.  What is left is a swap between the open and
+            // this check, which can only make a refusal or read a file whose
+            // writer could have written <key>.idx itself.
+            try (java.io.InputStream s = in) {
+                if (!java.nio.file.Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    why = "not a regular file";
+                } else {
+                    b = s.readNBytes(16);
+                }
             } catch (IOException e) {
                 why = "unreadable";
             }
+        }
+        if (why == null) {
             if (b != null) {
                 int d = b.length;
                 if (d > 0 && b[d - 1] == '\n') d--;

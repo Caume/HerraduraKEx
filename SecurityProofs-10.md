@@ -13,7 +13,7 @@
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
 > - **Part 9 — §11.37–§11.42** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation · The Quenched Check · The Certified Ladder · The Exact Slope
-> - **Part 10 — §11.43–§11.81** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key · The n = 22 Fail Share · The Fail-Share Fall · The Fall Within a Class · Would an Arc Screen Help?
+> - **Part 10 — §11.43–§11.82** (this file): The Local Certificate · The Local Certificate at n = 256 · The Linear Hull, Measured · Where the Cycles Pay · Two Routes Without a Potential · The Coupled Ladder · The Period Exponent · The Period Series to n = 19 · The Period Series to n = 20 · The v3 Trail Criterion · The v3 Linear Slope · The v2 Measurement Audit · The Period Series Over Keys · The Implicit Solver · The Transient Over Keys · The Quantiles Over Keys · The Short-Window Class · The Discount as a Share · The Long-Window Keys · The Series at n = 22 · The Tail and the Arc · The Arc Curve · The Gap Curve · The Gap at n = 23 · The Series at n = 23 · The v2 and v3 Rating Review · NL-FSCX v1 in Its n/4-Round Modes · The Floor Under v1's Cores · Breaking the Cores · v1's Modes at 3n/4 Rounds · v1's Remaining Sites · 32-bit Targets at 3n/4 · HFSCX-256 Moves to MMO · Schnorr and Stern Leave v1 · Who Sets v2's Key · The n = 22 Fail Share · The Fail-Share Fall · The Fall Within a Class · Would an Arc Screen Help? · The v3 Worst Class at n = 17
 
 ---
 
@@ -637,7 +637,7 @@ The gate checks the lemma directly. The full-width LAT entries between LSB-row m
 
 **Established:** a proven, width-independent ceiling of 1.4150 on the worst key's linear slope, from the LSB row alone. The linear margin at n = 256 cannot exceed 1.77×. There are also exact certified slopes at two more widths, all clearing 0.8 in sample.
 
-**Still open, and now sharper:** a lower bound. The question is whether some cycle cheaper than the LSB row's appears as n grows. Such a cycle must use rows that do receive a carry. On the comparable widths, the share of keys sitting at their LSB-row value grew and the least slope rose, which is the direction a ceiling-tight answer would take. But that rests on one exhaustive width and one sampled one, and §11.42–§11.51 show for v2 how far small-width figures can sit from n = 256. TODO #257's item (3) stays open, narrowed to the cycles below the LSB-row value.
+**Still open, and now sharper:** a lower bound. The question is whether some cycle cheaper than the LSB row's appears as n grows. Such a cycle must use rows that do receive a carry. On the comparable widths, the share of keys sitting at their LSB-row value grew and the least slope rose, which is the direction a ceiling-tight answer would take. But that rests on one exhaustive width and one sampled one, and §11.42–§11.51 show for v2 how far small-width figures can sit from n = 256. TODO #257's item (3) stays open, narrowed to the cycles below the LSB-row value. (§11.82 samples the worst class at n = 17: 96 of 96 keys sit on the ceiling.)
 
 **Unchanged:** every v3 rating. HSKE-NL-A3's status already reads "linear axis only". The ceiling does not move that.
 
@@ -2004,3 +2004,29 @@ The check costs 2–3 µs in C, Go and Java and about 4 µs in Python. That is u
 **Tests.** C/Go/Python [45] and Java [7] refuse constructed keys at arc 64, at arc 1 (B = 1 and B = 2^95) and at δ = 0. They accept a constructed key at arc 65 and a random key, with those accept-controls checked first. The 32-bit [18] does the same at n = 32: arc 9 is accepted, while arc 8 and B = 1 are refused. `CliTest/test_sym_width.sh` refuses 0xff…fe in all four CLIs and accepts an ordinary hex key first.
 
 **Unchanged:** every rating; every pinned KAT and PEM artifact (none has a short-arc key); the long-arc failures (§11.81.1), which no cheap test sees.
+
+## 11.82 v3's worst LSB class at n = 17 — TODO #257, item (3), fifteenth pass (v20.0.0)
+
+§11.53.3 proved a ceiling on v3's linear slope. Every key with δ(B) ≡ 5 (mod 8) has slope at most 1.4150 at every width, so the worst-key linear margin is at most 1.77×. What it left open is the floor: whether a cycle through rows that receive a carry undercuts the LSB-row value. Its n = 17 evidence was 24 uniform keys, and only a few of them are in the worst class. If a carry-receiving cycle can beat the ceiling, the first place it would show is a key whose ceiling is already the lowest. So this pass samples that class. The gate is `SecurityProofsCode/nl_fscx_v3_worst_class_n17.py`. It reads the pinned `nl_fscx_v3_worst_class_n17.json`, so its verdicts cannot flake.
+
+### 11.82.1 The draw
+
+96 keys B < 2^17 were drawn uniformly from the class δ(B) ≡ 5 (mod 8), with seed 2570317, disjoint from §11.53's 24. The class is 12.3% of all 2^17 keys, about one in eight as §11.53.3 predicts, and the gate checks that fraction as a control. Each key was solved with §11.53.1's certified solver (rows 5, 5, 7) in 161–182 s at 8 threads, about 4.5 h in all.
+
+### 11.82.2 The finding
+
+| n = 17, δ(B) ≡ 5 (mod 8) | keys | certified | above the ceiling | on it | below it | least / 0.8 |
+|---|---|---|---|---|---|---|
+| this pass | 96 | 96 | 0 | **96** | **0** | 1.77× |
+
+Every key's exact slope is 1.4150374993 = −log2(3/8), the LSB-row value, to 10⁻⁹, and every optimal cycle has length 1. No key above the ceiling means the solver agrees with the lemma on all 96 keys. No key below it means no carry-receiving cycle beats the LSB row anywhere in the sample. A control moves one pinned slope 10⁻⁶ below the ceiling and another 10⁻⁶ above it, and the gate counts them as below and above, so a key under the ceiling would have shown. In the default mode the gate also re-solves the least key, and its slope must reproduce.
+
+With a sample of 96 and no key below, the share of the class below the ceiling at n = 17 is under 3.1% at 95% confidence, by the rule of three.
+
+### 11.82.3 What it changes
+
+**Established:** at n = 17, floor = ceiling on every sampled key of the worst class. The least linear slope of the class is 1.4150, so v3's worst-key linear margin at n = 17 is the ceiling's 1.77×, not less, in sample.
+
+**Still open:** the floor at n = 256. A carry-receiving cycle needs rows that wider widths have more of, so a floor at n = 17 is not a floor at n = 256. This pass covers one width, and a sample rather than the class. TODO #257's item (3) stays open, now as a lower bound on the carry-receiving cycles at widths past 17.
+
+**Unchanged:** every v3 rating. HSKE-NL-A3's status already reads "linear axis only", and SECURITY.md already quotes 1.77× as a ceiling.

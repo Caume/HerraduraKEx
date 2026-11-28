@@ -63,6 +63,7 @@
   "nl_fscx_v2_kex.py": 5,
   "nl_fscx_v2_round_constants.py": 265,
   "nl_fscx_v3_linear_width.py": 23,
+  "nl_fscx_v3_worst_class_n17.py": 2,
   "nl_fscx_v3_round_count.py": 67,
   "nl_fscx_v3_trail_criterion.py": 16,
   "nl_fscx_v3_weak_keys.py": 33,
