@@ -19,7 +19,10 @@
 #   damaged (WOTS) missing, empty, `garbage`, `1x`, `-1`, ` 0`, `0 `, `00`,
 #           `01`, `0\n\n`, `0\r\n`, `+0`, `2`, `99999999999`, a symlink to a
 #           file holding `0\n`, a directory, a FIFO (refused, not a hang:
-#           the reader opens before it checks, CodeQL toctou); (XMSS) missing, empty, `garbage`,
+#           every reader opens before it checks, CodeQL toctou, TODO #427 --
+#           C and Python with O_NONBLOCK, Go and Java under a 3 s open
+#           deadline, so this cell reaches the open itself; with the deadline
+#           removed both hang here); (XMSS) missing, empty, `garbage`,
 #           `-1`, `01`, `5` (> 2^h).  Each must exit non-zero, write NO
 #           signature, and leave the .idx exactly as it was.
 #   used    WOTS `1` and XMSS `4` (= 2^h, exhausted) are refused the same way.

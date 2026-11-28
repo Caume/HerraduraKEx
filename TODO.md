@@ -14,25 +14,10 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 Neither is a security gap; both are recorded so they are not lost.
 
-1. **Go and Java check a one-time-signature state file before opening it.**  #426 made
-   the C and Python readers open `<key>.idx` first, with `O_NOFOLLOW | O_NONBLOCK`, and
-   then `fstat` the descriptor.  Go's `otsStateRead` and Java's `readIdxState` still
-   `Lstat` / `isRegularFile` the name first, and only then open it:
-   - Go then checks the opened file against the name (`os.SameFile`);
-   - Java opens with `NOFOLLOW_LINKS`.
-
-   Both refuse a symlink, and neither can be made to read a file other than the one
-   checked.  But a FIFO swapped in between the check and the open makes the open BLOCK.
-   That is a hang, not an acceptance.  To do: open without blocking, then check the
-   opened file:
-   - **Go:** `syscall.O_NONBLOCK` where the GOOS has it, behind a build-tagged helper
-     like the one #417 avoided.
-   - **Java:** `Files.newByteChannel` with `NOFOLLOW_LINKS` can still block on a FIFO,
-     so it may need a `FileChannel` opened from the `stat`-ed attributes' `fileKey`, or
-     an accepted residual window.
-
-   A test cell would need to win the race, so the evidence would be a deterministic
-   swap hook rather than `CliTest/test_ots_state.sh`.
+1. **DONE in v20.0.0** (CHANGELOG "#427, item 1"): Go and Java now open `<key>.idx`
+   first, under a 3 s deadline, and judge what they opened, so a FIFO swapped in is
+   refused rather than hanging the open.  `test_ots_state.sh`'s FIFO cell reaches the
+   open itself now, and hangs with the deadline removed.
 2. **The Arduino IDE path is untested.**  #425 put the 32-bit routines in a
    `Herradura32` library (`demos/arduino/libraries/Herradura32`: `library.properties`,
    `src/Herradura32.h`), with each demo a sketch of its own name.  Only
@@ -43,7 +28,9 @@ Neither is a security gap; both are recorded so they are not lost.
 
    To do: compile every sketch with `arduino-cli` (`arduino:avr:mega`) in CI or once by
    hand, and fix the library metadata if it complains.  Then restore the
-   `arduino-cli` line removed from README.md's Arduino section.
+   `arduino-cli` line removed from README.md's Arduino section.  (Not done with item
+   1: this host has no `arduino-cli`, installing it needs root or a binary download,
+   and a CI step nobody has run locally would gamble a required job.)
 
 Not MAJOR: no wire format or CLI surface.
 

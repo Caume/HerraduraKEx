@@ -586,6 +586,30 @@ in all four CLIs (150 cells).  Its fail-open control now fails all 23 damaged ce
 The FIFO cell is shown to fire: a C CLI built without `O_NONBLOCK` hangs on it and
 times out.  Not MAJOR: refusals and messages are unchanged.
 
+### #427, item 1: the Go and Java state readers cannot hang on a FIFO
+
+#426 left Go and Java checking `<key>.idx` by name before opening it.  Neither could be
+made to read a file other than the one checked, but a FIFO swapped in between the check
+and the open made the open block: a hang, not an acceptance.  Both now open first and
+then judge what they opened, as C and Python do:
+- **Go:** the CLI is one file built for every GOOS, and `syscall.O_NONBLOCK` does not
+  exist on js/wasm or wasip1 (`go vet` there).  So the open runs under a 3 s deadline
+  (`otsOpenWait`).  A regular file opens at once.  An open still pending is a FIFO with
+  no writer, or a stalled filesystem, and is refused.  Then `Stat` on the handle and
+  `os.SameFile` against `Lstat`, as before.  `go vet` passes on js/wasm, wasip1, plan9
+  and windows.
+- **Java:** NIO has no `O_NONBLOCK`, so the open runs on a daemon thread under the same
+  deadline, with `NOFOLLOW_LINKS`.  The type is then read from the name, because NIO
+  cannot stat an open stream.  The residual window, a swap between the open and that
+  check, can only cause a refusal, or a read of a file whose writer could have written
+  `<key>.idx` itself.
+
+Messages are unchanged: missing, not a regular file, damaged.  `test_ots_state.sh` passes
+150 of 150 cells.  With no pre-check, its FIFO cell now reaches the open itself.  It is
+shown to fire: a Go or Java build with the deadline set to an hour hangs on that cell
+and times out.  A FIFO with a writer attached is refused at once by both.  Item 2 of #427
+(the Arduino IDE path) stays open.  Not MAJOR.
+
 ### #257, fifteenth pass: v3's worst LSB class at n = 17 sits on the ceiling
 
 Research only; no code, wire format or rating changes.  §11.53 proved that every v3 key

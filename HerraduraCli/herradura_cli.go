@@ -39,6 +39,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	. "herradurakex/herradura"
@@ -1449,24 +1450,45 @@ func otsRequireKeyFile(cmd, path, flagName string) {
 	}
 }
 
-// otsStateRead is the ONE reader of a one-time-signature state sidecar, for
-// WOTS (max 1) and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must
-// exist, be a regular file (not a link), and hold exactly one canonical decimal
-// (`0`, or digits with no leading zero, at most 10, an optional single trailing
-// newline) no larger than max.  Anything else used to read as 0 (unused), so an
-// empty file left by a crash let a WOTS key sign again.
-// otsStateOpenRead opens a state sidecar and reads it, refusing an opened file
-// that is not the regular, non-link entry the path names.
+// otsOpenWait bounds the open of a state sidecar (TODO #427).  The CLI is one
+// file built for every GOOS, and syscall.O_NONBLOCK does not exist on js/wasm
+// or wasip1, so the open cannot be made non-blocking portably.  Instead it runs
+// under a deadline: opening a regular file returns at once, and an open still
+// pending when the deadline passes is a FIFO with no writer (or a stalled
+// filesystem), which is refused -- fail closed, never a hang.
+const otsOpenWait = 3 * time.Second
+
+// otsStateOpenRead opens a state sidecar FIRST and then judges what it opened,
+// as the C and Python readers do (TODO #426, #427): there is no check of the
+// name before the open, so no window in which a FIFO swapped in can make the
+// open block.  The opened file must be regular, and the same non-link entry
+// Lstat names (os.SameFile), as writeOutFile checks (TODO #417).
 func otsStateOpenRead(p string) ([]byte, string) {
-	f, err := os.Open(p)
-	if err != nil {
-		return nil, "unreadable"
+	type opened struct {
+		f   *os.File
+		err error
+	}
+	ch := make(chan opened, 1)
+	go func() { f, err := os.Open(p); ch <- opened{f, err} }()
+	var f *os.File
+	select {
+	case o := <-ch:
+		if o.err != nil {
+			if _, lerr := os.Lstat(p); lerr != nil {
+				return nil, "missing"
+			}
+			return nil, "not a regular file"
+		}
+		f = o.f
+	case <-time.After(otsOpenWait):
+		// The goroutine stays blocked; the caller exits on the refusal.
+		return nil, "not a regular file"
 	}
 	defer f.Close()
-	opened, err1 := f.Stat()
+	st, err1 := f.Stat()
 	named, err2 := os.Lstat(p)
-	if err1 != nil || err2 != nil || !opened.Mode().IsRegular() ||
-		named.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, named) {
+	if err1 != nil || err2 != nil || !st.Mode().IsRegular() ||
+		named.Mode()&os.ModeSymlink != 0 || !os.SameFile(st, named) {
 		return nil, "not a regular file"
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 64))
@@ -1476,19 +1498,19 @@ func otsStateOpenRead(p string) ([]byte, string) {
 	return b, ""
 }
 
+// otsStateRead is the ONE reader of a one-time-signature state sidecar, for
+// WOTS (max 1) and XMSS (max 2^h).  TODO #419: it fails CLOSED -- the file must
+// exist, be a regular file (not a link), and hold exactly one canonical decimal
+// (`0`, or digits with no leading zero, at most 10, an optional single trailing
+// newline) no larger than max.  Anything else used to read as 0 (unused), so an
+// empty file left by a crash let a WOTS key sign again.
 func otsStateRead(keyPath string, max uint64) uint64 {
 	p := wotsIdxPath(keyPath)
 	why := ""
 	var v uint64
-	// Judge what was OPENED, not only the name (the race CodeQL reported in the
-	// C CLI): the opened file must be the same regular, non-link entry that
-	// Lstat names, as writeOutFile checks (TODO #417).  The pre-check keeps a
-	// FIFO from being opened at all.
-	if st, err := os.Lstat(p); err != nil {
-		why = "missing"
-	} else if !st.Mode().IsRegular() {
-		why = "not a regular file"
-	} else if b, rerr := otsStateOpenRead(p); rerr != "" {
+	// Judge what was OPENED, not the name (the race CodeQL reported in the C
+	// CLI, TODO #426), and never block on the open (TODO #427).
+	if b, rerr := otsStateOpenRead(p); rerr != "" {
 		why = rerr
 	} else {
 		d := b
