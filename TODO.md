@@ -10,34 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #427: two gaps left after #426 and #425
-
-Neither is a security gap; both are recorded so they are not lost.
-
-1. **DONE in v20.0.0** (CHANGELOG "#427, item 1"): Go and Java now open `<key>.idx`
-   first, under a 3 s deadline, and judge what they opened, so a FIFO swapped in is
-   refused rather than hanging the open.  `test_ots_state.sh`'s FIFO cell reaches the
-   open itself now, and hangs with the deadline removed.
-2. **The Arduino IDE path is untested.**  #425 put the 32-bit routines in a
-   `Herradura32` library (`demos/arduino/libraries/Herradura32`: `library.properties`,
-   `src/Herradura32.h`), with each demo a sketch of its own name.  Only
-   `build_arduino.sh` (raw `avr-g++ -I…`) and simavr have run it.  Nobody has:
-   - copied the library into an Arduino IDE sketchbook;
-   - compiled a sketch with `arduino-cli compile --libraries demos/arduino/libraries`;
-   - uploaded one to a Mega 2560.
-
-   To do: compile every sketch with `arduino-cli` (`arduino:avr:mega`) in CI or once by
-   hand, and fix the library metadata if it complains.  Then restore the
-   `arduino-cli` line removed from README.md's Arduino section.  (Not done with item
-   1: this host has no `arduino-cli`, installing it needs root or a binary download,
-   and a CI step nobody has run locally would gamble a required job.)
-
-Not MAJOR: no wire format or CLI surface.
-
-Status: **OPEN**
-
----
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been

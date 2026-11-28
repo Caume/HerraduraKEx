@@ -98,7 +98,8 @@ tools/                     — check_fast.sh (CI's cheap consistency checks in o
                              over every C TU), check_runnable_coverage.py,
                              check_rate_format.py, check_docker_mirror.py,
                              check_ci_install_bounds.py, check_action_pinning.py,
-                             check_ba_width_guard.c
+                             check_ba_width_guard.c, check_arduino_cli.sh (every demo
+                             sketch built as the Arduino IDE builds it, TODO #427)
 benchmarks/                — cost measurements (host-specific; figures do not belong in CI,
                              but CI checks they still build/run).  rnl_deployed_ring_cost.*
                              is the deployed HKEX-RNL ring (benchmark [40] uses retired rings)

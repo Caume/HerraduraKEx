@@ -238,6 +238,10 @@ board:
 ./build_arduino.sh            # every demo + the tests, for the ATmega2560
 ./run_arduino.sh suite        # every demo, under simavr
 ./run_arduino.sh tests
+
+# The Arduino IDE path, without the IDE (needs arduino-cli and the arduino:avr core):
+arduino-cli compile --fqbn arduino:avr:mega --libraries demos/arduino/libraries demos/arduino/hske
+bash tools/check_arduino_cli.sh   # every demo sketch, as above
 ```
 
 ---

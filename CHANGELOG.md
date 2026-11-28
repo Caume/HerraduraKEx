@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [20.0.0] - 2026-11-27
 
-**One release for seventeen development steps (TODO #410–#426, and #415's redesign of
+**One release for eighteen development steps (TODO #410–#427, and #415's redesign of
 HPKS-Ring), eight of them breaking.**  Each breaking change has its own MIGRATING.md
 section: #412 (§54), #413 (§55), #417 (§56), #419 and #420 (§57), #421 (§58), #422
 (§59), #423 (§60) and #415 (§61).  #421 and #422 were interim steps on the ring that
@@ -609,6 +609,23 @@ Messages are unchanged: missing, not a regular file, damaged.  `test_ots_state.s
 shown to fire: a Go or Java build with the deadline set to an hour hangs on that cell
 and times out.  A FIFO with a writer attached is refused at once by both.  Item 2 of #427
 (the Arduino IDE path) stays open.  Not MAJOR.
+
+### #427, item 2: the demos build as Arduino IDE sketches
+
+#425 moved the 32-bit routines into the `Herradura32` library
+(`demos/arduino/libraries/Herradura32`), with each demo a sketch of its own.  Until now
+only `build_arduino.sh` had built them, with raw `avr-g++ -I…`, which is not how the IDE
+finds a library.  All 20 sketches now compile, unchanged, with
+`arduino-cli compile --fqbn arduino:avr:mega --libraries demos/arduino/libraries`
+(`arduino-cli` 1.2.2, `arduino:avr` 1.8.8).  None warns, and the tightest, `zkp_rnl`,
+leaves 5678 bytes of SRAM.  The library metadata needed no change.
+
+`tools/check_arduino_cli.sh` runs that compile over every sketch.  Its control compiles
+one sketch without `--libraries`, which must fail on `Herradura32.h`, so the library
+path is shown to be what resolves it.  With no `arduino-cli` or core it asserts nothing
+and exits 2.  The arduino CI job installs both, `arduino/setup-arduino-cli` pinned to
+v2.0.0 (v2.1.0 is ten days old) and the core under a 20-minute bound, and runs it.
+README's Arduino section has its `arduino-cli` line back.  No device upload was tried.
 
 ### #257, fifteenth pass: v3's worst LSB class at n = 17 sits on the ceiling
 
